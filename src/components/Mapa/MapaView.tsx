@@ -7,6 +7,8 @@ import "leaflet/dist/leaflet.css";
 import { useSession } from "@/context/SessionContext";
 import { apiPost, apiGet, apiDelete, ApiError } from "@/lib/api";
 import { distanciaTotalKm, type PuntoGps } from "@/lib/geo";
+import type { Publicacion } from "@/lib/publicaciones";
+import { combinarFechaHora, rodadaEnVentana } from "@/lib/rodadas";
 
 // Centro por defecto: entre Puerto Montt y Puerto Varas (sección 1 del PDF).
 const CENTRO_DEFECTO: [number, number] = [-41.4, -72.96];
@@ -51,6 +53,7 @@ export function MapaView() {
   const [resumen, setResumen] = useState<{ distanciaKm: number; duracionSeg: number } | null>(null);
   const [misRecorridos, setMisRecorridos] = useState<RecorridoResumen[]>([]);
   const [mensaje, setMensaje] = useState("");
+  const [rodadaActiva, setRodadaActiva] = useState<Publicacion | null>(null);
 
   const posicionRef = useRef<{ lat: number; lon: number } | null>(null);
   const grabandoRef = useRef(false);
@@ -179,6 +182,37 @@ export function MapaView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
+  // Detecta si tienes una rodada/evento confirmada (RSVP "Voy") dentro de la ventana
+  // de 30 min antes hasta 3h después (sección 5 y 11 del PDF), para ofrecer compartir
+  // tu ubicación específicamente para esa rodada.
+  useEffect(() => {
+    if (!token) return;
+
+    async function revisarRodadaActiva() {
+      try {
+        const [publicaciones, misRsvps] = await Promise.all([
+          apiGet<Publicacion[]>("/publicaciones", token),
+          apiGet<Record<number, string>>("/publicaciones/mis-rsvps", token),
+        ]);
+
+        const encontrada = publicaciones.find((p) => {
+          if (p.tipo !== "rodada" && p.tipo !== "evento") return false;
+          if (!p.activaEnMapa || misRsvps[p.id] !== "yes") return false;
+          const fechaHora = combinarFechaHora(p.fecha, p.hora);
+          return fechaHora ? rodadaEnVentana(fechaHora) : false;
+        });
+
+        setRodadaActiva(encontrada ?? null);
+      } catch {
+        // silencioso
+      }
+    }
+
+    revisarRodadaActiva();
+    const intervalo = setInterval(revisarRodadaActiva, 60000);
+    return () => clearInterval(intervalo);
+  }, [token]);
+
   const centro: [number, number] = posicion ? [posicion.lat, posicion.lon] : CENTRO_DEFECTO;
 
   return (
@@ -210,6 +244,33 @@ export function MapaView() {
 
       {errorGeo && <p className="text-xs text-fill-warning">{errorGeo}</p>}
       {mensaje && <p className="text-xs text-fill-warning">{mensaje}</p>}
+
+      {rodadaActiva && !patinando && (
+        <div className="card border-fill-warning bg-bg-accent flex flex-col gap-2 p-4">
+          <h2 className="text-sm font-semibold text-amber-text">
+            Tu rodada está por comenzar
+          </h2>
+          <p className="text-xs text-text-primary">
+            Confirmaste "Voy" a <strong>{rodadaActiva.titulo}</strong>
+            {rodadaActiva.hora ? ` a las ${rodadaActiva.hora}` : ""}. ¿Compartes tu
+            ubicación con la comunidad mientras dura?
+          </p>
+          <button
+            type="button"
+            disabled={!posicion}
+            onClick={activarPatinando}
+            className="btn-hero rounded-app px-4 py-2 text-sm disabled:opacity-50"
+          >
+            Compartir ubicación de esta rodada
+          </button>
+        </div>
+      )}
+
+      {rodadaActiva && patinando && (
+        <p className="text-xs text-fill-success">
+          Estás compartiendo tu ubicación para "{rodadaActiva.titulo}".
+        </p>
+      )}
 
       <div className="card flex flex-col gap-2 p-4">
         <h2 className="text-sm font-semibold text-text-accent">Rodando — Activo</h2>
