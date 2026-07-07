@@ -3,6 +3,7 @@ export type Rol = "usuario" | "admin" | "visitante";
 export interface Sesion {
   nombre: string;
   rol: Rol;
+  token: string | null; // null para Visitante (no pasa por el backend)
   expiraEn: number; // timestamp epoch ms
 }
 
@@ -16,10 +17,13 @@ export function rutaInicialParaRol(rol: Rol): string {
   return rol === "visitante" ? "/comunidad" : "/mapa";
 }
 
-export function guardarSesion(nombre: string, rol: Rol): Sesion {
+export function guardarSesion(datos: {
+  nombre: string;
+  rol: Rol;
+  token: string | null;
+}): Sesion {
   const sesion: Sesion = {
-    nombre,
-    rol,
+    ...datos,
     expiraEn: Date.now() + DIAS_VIGENCIA_SESION * 24 * 60 * 60 * 1000,
   };
   localStorage.setItem(CLAVE_SESION, JSON.stringify(sesion));

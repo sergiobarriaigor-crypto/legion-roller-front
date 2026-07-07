@@ -3,9 +3,20 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "@/context/SessionContext";
-import { rutaInicialParaRol } from "@/lib/session";
+import { rutaInicialParaRol, type Rol } from "@/lib/session";
+import { apiPost, ApiError } from "@/lib/api";
 
 type Panel = "roles" | "login-usuario" | "login-admin" | "registro" | null;
+
+interface LoginResponse {
+  accessToken: string;
+  nombre: string;
+  rol: Rol;
+}
+
+interface RegistroResponse {
+  mensaje: string;
+}
 
 export default function BienvenidaPage() {
   const { sesion, cargando, login } = useSession();
@@ -13,9 +24,13 @@ export default function BienvenidaPage() {
   const [panel, setPanel] = useState<Panel>("roles");
   const [telefono, setTelefono] = useState("");
   const [clave, setClave] = useState("");
+  const [enviando, setEnviando] = useState(false);
   const [nombreRegistro, setNombreRegistro] = useState("");
+  const [telefonoRegistro, setTelefonoRegistro] = useState("");
   const [ciudadRegistro, setCiudadRegistro] = useState("");
+  const [claveRegistro, setClaveRegistro] = useState("");
   const [mensajeRegistro, setMensajeRegistro] = useState("");
+  const [errorRegistro, setErrorRegistro] = useState("");
   const [errorLogin, setErrorLogin] = useState("");
 
   useEffect(() => {
@@ -24,36 +39,50 @@ export default function BienvenidaPage() {
     }
   }, [cargando, sesion, router]);
 
-  function entrarComoUsuario(e: React.FormEvent) {
+  async function entrarConClave(e: React.FormEvent) {
     e.preventDefault();
     if (!telefono || !clave) {
       setErrorLogin("Ingresa tu teléfono y contraseña.");
       return;
     }
-    login(`Usuario ${telefono}`, "usuario");
-    router.replace(rutaInicialParaRol("usuario"));
+    setErrorLogin("");
+    setEnviando(true);
+    try {
+      const res = await apiPost<LoginResponse>("/auth/login", { telefono, clave });
+      login({ nombre: res.nombre, rol: res.rol, token: res.accessToken });
+      router.replace(rutaInicialParaRol(res.rol));
+    } catch (err) {
+      setErrorLogin(err instanceof ApiError ? err.message : "No se pudo conectar con el servidor.");
+    } finally {
+      setEnviando(false);
+    }
   }
 
-  function entrarComoAdmin(e: React.FormEvent) {
+  async function enviarRegistro(e: React.FormEvent) {
     e.preventDefault();
-    if (!telefono || !clave) {
-      setErrorLogin("Ingresa tu teléfono y contraseña de administrador.");
+    if (!nombreRegistro || !telefonoRegistro || !claveRegistro) {
+      setErrorRegistro("Completa nombre, teléfono y contraseña.");
       return;
     }
-    login("Admin", "admin");
-    router.replace(rutaInicialParaRol("admin"));
-  }
-
-  function enviarRegistro(e: React.FormEvent) {
-    e.preventDefault();
-    if (!nombreRegistro || !ciudadRegistro) return;
-    setMensajeRegistro(
-      "Tu solicitud fue enviada. Un administrador debe aprobarla antes de que puedas ingresar.",
-    );
+    setErrorRegistro("");
+    setEnviando(true);
+    try {
+      const res = await apiPost<RegistroResponse>("/auth/registro", {
+        nombre: nombreRegistro,
+        telefono: telefonoRegistro,
+        ciudad: ciudadRegistro || undefined,
+        clave: claveRegistro,
+      });
+      setMensajeRegistro(res.mensaje);
+    } catch (err) {
+      setErrorRegistro(err instanceof ApiError ? err.message : "No se pudo conectar con el servidor.");
+    } finally {
+      setEnviando(false);
+    }
   }
 
   function entrarComoVisitante() {
-    login("Visitante", "visitante");
+    login({ nombre: "Visitante", rol: "visitante", token: null });
     router.replace(rutaInicialParaRol("visitante"));
   }
 
@@ -116,7 +145,7 @@ export default function BienvenidaPage() {
 
       {(panel === "login-usuario" || panel === "login-admin") && (
         <form
-          onSubmit={panel === "login-usuario" ? entrarComoUsuario : entrarComoAdmin}
+          onSubmit={entrarConClave}
           className="card flex w-full max-w-xs flex-col gap-3 p-5"
         >
           <h2 className="text-sm font-semibold text-text-primary">
@@ -137,8 +166,8 @@ export default function BienvenidaPage() {
             className="rounded-app border border-border bg-surface-2 px-3 py-2 text-text-primary outline-none"
           />
           {errorLogin && <p className="text-xs text-fill-warning">{errorLogin}</p>}
-          <button type="submit" className="btn-hero rounded-app px-4 py-2">
-            Ingresar
+          <button type="submit" disabled={enviando} className="btn-hero rounded-app px-4 py-2 disabled:opacity-60">
+            {enviando ? "Ingresando..." : "Ingresar"}
           </button>
           <button
             type="button"
@@ -166,17 +195,32 @@ export default function BienvenidaPage() {
             className="rounded-app border border-border bg-surface-2 px-3 py-2 text-text-primary outline-none"
           />
           <input
+            type="tel"
+            placeholder="Teléfono"
+            value={telefonoRegistro}
+            onChange={(e) => setTelefonoRegistro(e.target.value)}
+            className="rounded-app border border-border bg-surface-2 px-3 py-2 text-text-primary outline-none"
+          />
+          <input
             type="text"
             placeholder="Ciudad"
             value={ciudadRegistro}
             onChange={(e) => setCiudadRegistro(e.target.value)}
             className="rounded-app border border-border bg-surface-2 px-3 py-2 text-text-primary outline-none"
           />
+          <input
+            type="password"
+            placeholder="Contraseña"
+            value={claveRegistro}
+            onChange={(e) => setClaveRegistro(e.target.value)}
+            className="rounded-app border border-border bg-surface-2 px-3 py-2 text-text-primary outline-none"
+          />
+          {errorRegistro && <p className="text-xs text-fill-warning">{errorRegistro}</p>}
           {mensajeRegistro ? (
             <p className="text-xs text-fill-success">{mensajeRegistro}</p>
           ) : (
-            <button type="submit" className="btn-hero rounded-app px-4 py-2">
-              Enviar solicitud
+            <button type="submit" disabled={enviando} className="btn-hero rounded-app px-4 py-2 disabled:opacity-60">
+              {enviando ? "Enviando..." : "Enviar solicitud"}
             </button>
           )}
           <button
@@ -185,6 +229,7 @@ export default function BienvenidaPage() {
             onClick={() => {
               setPanel("roles");
               setMensajeRegistro("");
+              setErrorRegistro("");
             }}
           >
             Volver
