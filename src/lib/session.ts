@@ -1,9 +1,10 @@
 export type Rol = "usuario" | "admin" | "visitante";
 
 export interface Sesion {
+  id: number | null; // null para Visitante (no pasa por el backend)
   nombre: string;
   rol: Rol;
-  token: string | null; // null para Visitante (no pasa por el backend)
+  token: string | null;
   expiraEn: number; // timestamp epoch ms
 }
 
@@ -18,6 +19,7 @@ export function rutaInicialParaRol(rol: Rol): string {
 }
 
 export function guardarSesion(datos: {
+  id: number | null;
   nombre: string;
   rol: Rol;
   token: string | null;

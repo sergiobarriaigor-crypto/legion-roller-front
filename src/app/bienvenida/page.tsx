@@ -10,6 +10,7 @@ type Panel = "roles" | "login-usuario" | "login-admin" | "registro" | null;
 
 interface LoginResponse {
   accessToken: string;
+  id: number;
   nombre: string;
   rol: Rol;
 }
@@ -49,7 +50,7 @@ export default function BienvenidaPage() {
     setEnviando(true);
     try {
       const res = await apiPost<LoginResponse>("/auth/login", { telefono, clave });
-      login({ nombre: res.nombre, rol: res.rol, token: res.accessToken });
+      login({ id: res.id, nombre: res.nombre, rol: res.rol, token: res.accessToken });
       router.replace(rutaInicialParaRol(res.rol));
     } catch (err) {
       setErrorLogin(err instanceof ApiError ? err.message : "No se pudo conectar con el servidor.");
@@ -82,7 +83,7 @@ export default function BienvenidaPage() {
   }
 
   function entrarComoVisitante() {
-    login({ nombre: "Visitante", rol: "visitante", token: null });
+    login({ id: null, nombre: "Visitante", rol: "visitante", token: null });
     router.replace(rutaInicialParaRol("visitante"));
   }
 

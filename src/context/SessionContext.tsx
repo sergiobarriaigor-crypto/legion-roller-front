@@ -18,7 +18,7 @@ import {
 interface SessionContextValue {
   sesion: Sesion | null;
   cargando: boolean;
-  login: (datos: { nombre: string; rol: Rol; token: string | null }) => void;
+  login: (datos: { id: number | null; nombre: string; rol: Rol; token: string | null }) => void;
   logout: () => void;
 }
 
@@ -33,7 +33,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setCargando(false);
   }, []);
 
-  function login(datos: { nombre: string; rol: Rol; token: string | null }) {
+  function login(datos: { id: number | null; nombre: string; rol: Rol; token: string | null }) {
     setSesion(guardarSesion(datos));
   }
 
