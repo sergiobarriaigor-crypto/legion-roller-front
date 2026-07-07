@@ -8,7 +8,7 @@ import { useSession } from "@/context/SessionContext";
 import { apiPost, apiGet, apiDelete, ApiError } from "@/lib/api";
 import { distanciaTotalKm, type PuntoGps } from "@/lib/geo";
 import type { Publicacion } from "@/lib/publicaciones";
-import { combinarFechaHora, rodadaEnVentana } from "@/lib/rodadas";
+import { combinarFechaHora, rodadaEnVentana, rodadaActivable, minutosHasta } from "@/lib/rodadas";
 
 // Centro por defecto: entre Puerto Montt y Puerto Varas (sección 1 del PDF).
 const CENTRO_DEFECTO: [number, number] = [-41.4, -72.96];
@@ -245,30 +245,40 @@ export function MapaView() {
       {errorGeo && <p className="text-xs text-fill-warning">{errorGeo}</p>}
       {mensaje && <p className="text-xs text-fill-warning">{mensaje}</p>}
 
-      {rodadaActiva && !patinando && (
-        <div className="card border-fill-warning bg-bg-accent flex flex-col gap-2 p-4">
-          <h2 className="text-sm font-semibold text-amber-text">
-            Tu rodada está por comenzar
-          </h2>
-          <p className="text-xs text-text-primary">
-            Confirmaste "Voy" a <strong>{rodadaActiva.titulo}</strong>
-            {rodadaActiva.hora ? ` a las ${rodadaActiva.hora}` : ""}. ¿Compartes tu
-            ubicación con la comunidad mientras dura?
-          </p>
-          <button
-            type="button"
-            disabled={!posicion}
-            onClick={activarPatinando}
-            className="btn-hero rounded-app px-4 py-2 text-sm disabled:opacity-50"
-          >
-            Compartir ubicación de esta rodada
-          </button>
-        </div>
-      )}
+      {rodadaActiva && !patinando && (() => {
+        const fechaHora = combinarFechaHora(rodadaActiva.fecha, rodadaActiva.hora);
+        const activable = fechaHora ? rodadaActivable(fechaHora) : false;
+        const faltan = fechaHora ? minutosHasta(fechaHora) : 0;
+
+        return (
+          <div className="card border-fill-warning bg-bg-accent flex flex-col gap-2 p-4">
+            <h2 className="text-sm font-semibold text-amber-text">
+              Tu rodada está por comenzar
+            </h2>
+            <p className="text-xs text-text-primary">
+              Confirmaste &quot;Voy&quot; a <strong>{rodadaActiva.titulo}</strong>
+              {rodadaActiva.hora ? ` a las ${rodadaActiva.hora}` : ""}.
+            </p>
+            <p className="text-xs text-text-secondary">
+              {activable
+                ? "Ya puedes compartir tu ubicación con la comunidad."
+                : `Podrás activarlo a partir de las ${rodadaActiva.hora} (en ${faltan} min).`}
+            </p>
+            <button
+              type="button"
+              disabled={!posicion || !activable}
+              onClick={activarPatinando}
+              className="btn-hero rounded-app px-4 py-2 text-sm disabled:opacity-50"
+            >
+              Compartir ubicación de esta rodada
+            </button>
+          </div>
+        );
+      })()}
 
       {rodadaActiva && patinando && (
         <p className="text-xs text-fill-success">
-          Estás compartiendo tu ubicación para "{rodadaActiva.titulo}".
+          Estás compartiendo tu ubicación para &quot;{rodadaActiva.titulo}&quot;.
         </p>
       )}
 
