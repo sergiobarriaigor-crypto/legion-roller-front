@@ -1,0 +1,58 @@
+"use client";
+
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react";
+import {
+  cerrarSesion,
+  guardarSesion,
+  leerSesionGuardada,
+  type Rol,
+  type Sesion,
+} from "@/lib/session";
+
+interface SessionContextValue {
+  sesion: Sesion | null;
+  cargando: boolean;
+  login: (nombre: string, rol: Rol) => void;
+  logout: () => void;
+}
+
+const SessionContext = createContext<SessionContextValue | null>(null);
+
+export function SessionProvider({ children }: { children: ReactNode }) {
+  const [sesion, setSesion] = useState<Sesion | null>(null);
+  const [cargando, setCargando] = useState(true);
+
+  useEffect(() => {
+    setSesion(leerSesionGuardada());
+    setCargando(false);
+  }, []);
+
+  function login(nombre: string, rol: Rol) {
+    setSesion(guardarSesion(nombre, rol));
+  }
+
+  function logout() {
+    cerrarSesion();
+    setSesion(null);
+  }
+
+  return (
+    <SessionContext.Provider value={{ sesion, cargando, login, logout }}>
+      {children}
+    </SessionContext.Provider>
+  );
+}
+
+export function useSession() {
+  const ctx = useContext(SessionContext);
+  if (!ctx) {
+    throw new Error("useSession debe usarse dentro de <SessionProvider>");
+  }
+  return ctx;
+}

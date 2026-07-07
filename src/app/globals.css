@@ -1,26 +1,91 @@
 @import "tailwindcss";
 
+/* Design tokens — traducidos de la sección 2 de la especificación (legion-roller-especificacion.pdf) */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --page-bg: #0b121c;
+  --surface-1: #101a26;
+  --surface-2: #152234;
+
+  --text-primary: #f2ead8;
+  --text-secondary: #9aa6b2;
+  --text-muted: #6b7684;
+
+  --border: rgba(201, 154, 61, 0.22);
+  --text-accent: #e7c168;
+  --bg-accent: rgba(201, 154, 61, 0.14);
+  --border-accent: #c99a3d;
+
+  --fill-success: #5fae4e;
+  --fill-warning: #e0a93a;
+  --fill-primary: #c99a3d;
+  --on-primary: #171008;
+
+  --amber-bg: rgba(201, 154, 61, 0.14);
+  --amber-text: #e7c168;
+  --blue-bg: rgba(90, 150, 220, 0.14);
+  --blue-text: #7eb3ee;
+
+  --radius: 8px;
+  --radius-card: 16px;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-page-bg: var(--page-bg);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
+
+  --color-border: var(--border);
+  --color-text-accent: var(--text-accent);
+  --color-bg-accent: var(--bg-accent);
+  --color-border-accent: var(--border-accent);
+
+  --color-fill-success: var(--fill-success);
+  --color-fill-warning: var(--fill-warning);
+  --color-fill-primary: var(--fill-primary);
+  --color-on-primary: var(--on-primary);
+
+  --color-amber-bg: var(--amber-bg);
+  --color-amber-text: var(--amber-text);
+  --color-blue-bg: var(--blue-bg);
+  --color-blue-text: var(--blue-text);
+
+  --radius-app: var(--radius);
+  --radius-card: var(--radius-card);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html,
+body {
+  height: 100%;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--page-bg);
+  color: var(--text-primary);
+  font-family:
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    Helvetica,
+    Arial,
+    sans-serif;
+}
+
+/* Tarjeta genérica reutilizable — sección 2 y 12 de la especificación */
+.card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+
+/* Botón "hero" dorado — sección 2 de la especificación */
+.btn-hero {
+  background: linear-gradient(180deg, #e0b24e, #b9852c);
+  color: var(--on-primary);
+  border-radius: var(--radius);
+  font-weight: 600;
 }
