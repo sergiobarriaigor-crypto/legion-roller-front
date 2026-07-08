@@ -89,3 +89,41 @@ body {
   border-radius: var(--radius);
   font-weight: 600;
 }
+
+/* Fase 11: transición suave entre pestañas (swipe o clic en la barra inferior) */
+@keyframes slideFromRight {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes slideFromLeft {
+  from {
+    transform: translateX(-24px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.animate-slide-from-right {
+  animation: slideFromRight 0.22s ease-out;
+}
+
+.animate-slide-from-left {
+  animation: slideFromLeft 0.22s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-slide-from-right,
+  .animate-slide-from-left {
+    animation: none;
+  }
+}

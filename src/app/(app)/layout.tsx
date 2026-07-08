@@ -5,6 +5,7 @@ import { useRouter, usePathname } from "next/navigation";
 import { AppHeader } from "@/components/AppHeader";
 import { BottomNav } from "@/components/BottomNav";
 import { EmergenciaBanner } from "@/components/EmergenciaBanner";
+import { SwipeNavigator } from "@/components/SwipeNavigator";
 import { useSession } from "@/context/SessionContext";
 import { RUTAS_RESTRINGIDAS_VISITANTE } from "@/lib/session";
 
@@ -59,7 +60,7 @@ export default function AppGroupLayout({
         </div>
       )}
 
-      <main className="flex-1 overflow-y-auto px-4 py-4">{children}</main>
+      <SwipeNavigator>{children}</SwipeNavigator>
 
       <BottomNav />
     </div>
