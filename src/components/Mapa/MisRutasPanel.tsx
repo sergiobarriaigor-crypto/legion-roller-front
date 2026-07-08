@@ -105,42 +105,13 @@ function FichaRecorrido({ recorrido }: { recorrido: Recorrido }) {
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-baseline justify-between">
-        <h3 className="text-sm font-semibold text-text-accent">Recorrido</h3>
-        <span className="text-sm font-semibold text-text-primary">
-          {recorrido.distanciaKm.toFixed(2)} km
-        </span>
-      </div>
-      <div className="overflow-hidden rounded-app" style={{ height: 200 }}>
-        <MapContainer
-          bounds={bounds}
-          boundsOptions={{ padding: [20, 20] }}
-          style={{ height: "100%", width: "100%" }}
-          zoomControl={false}
-          dragging={false}
-          scrollWheelZoom={false}
-          doubleClickZoom={false}
-          touchZoom={false}
-        >
-          <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          />
-          <Polyline
-            positions={puntos.map((p) => [p.lat, p.lon])}
-            pathOptions={{ color: "#C99A3D", weight: 4 }}
-          />
-          <CircleMarker
-            center={[inicio.lat, inicio.lon]}
-            radius={6}
-            pathOptions={{ color: "#171008", fillColor: "#5fae4e", fillOpacity: 1 }}
-          />
-          <CircleMarker
-            center={[fin.lat, fin.lon]}
-            radius={6}
-            pathOptions={{ color: "#171008", fillColor: "#d8342f", fillOpacity: 1 }}
-          />
-        </MapContainer>
+      {/* Encabezado discreto: solo contexto (fecha/hora/lugar), texto chico a propósito. */}
+      <div className="flex flex-col gap-0.5 text-xs text-text-secondary">
+        <p className="capitalize">{fechaCompleta}</p>
+        <p>
+          {horaInicio} — {horaFin}
+        </p>
+        <p>{sector}</p>
       </div>
 
       <div className="grid grid-cols-3 gap-2">
@@ -149,12 +120,49 @@ function FichaRecorrido({ recorrido }: { recorrido: Recorrido }) {
         <TarjetaStat etiqueta="Vel. máxima" valor={`${Math.round(velocidadMaxima)} km/h`} />
       </div>
 
-      <div className="card flex flex-col gap-1 p-4 text-xs text-text-secondary">
-        <p className="capitalize text-text-primary">{fechaCompleta}</p>
-        <p>
-          {horaInicio} — {horaFin}
-        </p>
-        <p>{sector}</p>
+      {/* Elemento principal: el Recorrido en sí, con más protagonismo visual
+          (borde y brillo dorados) ya que es el resultado central de la actividad. */}
+      <div
+        className="overflow-hidden rounded-app border-2 border-border-accent"
+        style={{ boxShadow: "0 0 22px rgba(201, 154, 61, 0.35)" }}
+      >
+        <div className="flex items-center justify-between bg-bg-accent px-3 py-2">
+          <h3 className="text-sm font-semibold text-text-accent">Recorrido</h3>
+          <span className="text-sm font-semibold text-text-primary">
+            {recorrido.distanciaKm.toFixed(2)} km
+          </span>
+        </div>
+        <div style={{ height: 240 }}>
+          <MapContainer
+            bounds={bounds}
+            boundsOptions={{ padding: [20, 20] }}
+            style={{ height: "100%", width: "100%" }}
+            zoomControl={false}
+            dragging={false}
+            scrollWheelZoom={false}
+            doubleClickZoom={false}
+            touchZoom={false}
+          >
+            <TileLayer
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            />
+            <Polyline
+              positions={puntos.map((p) => [p.lat, p.lon])}
+              pathOptions={{ color: "#C99A3D", weight: 4 }}
+            />
+            <CircleMarker
+              center={[inicio.lat, inicio.lon]}
+              radius={6}
+              pathOptions={{ color: "#171008", fillColor: "#5fae4e", fillOpacity: 1 }}
+            />
+            <CircleMarker
+              center={[fin.lat, fin.lon]}
+              radius={6}
+              pathOptions={{ color: "#171008", fillColor: "#d8342f", fillOpacity: 1 }}
+            />
+          </MapContainer>
+        </div>
       </div>
     </div>
   );
