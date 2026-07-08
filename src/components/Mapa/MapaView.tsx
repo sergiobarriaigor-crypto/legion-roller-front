@@ -32,6 +32,59 @@ interface OtroMiembro {
   lon: number;
 }
 
+function PopupOtroMiembro({
+  miembro,
+  token,
+}: {
+  miembro: OtroMiembro;
+  token: string | null;
+}) {
+  const [texto, setTexto] = useState("");
+  const [enviando, setEnviando] = useState(false);
+  const [enviado, setEnviado] = useState(false);
+
+  async function enviar() {
+    if (!token || !texto.trim()) return;
+    setEnviando(true);
+    try {
+      await apiPost(`/perfil/${miembro.miembroId}/reconocimientos`, { texto }, token);
+      setEnviado(true);
+      setTexto("");
+    } catch {
+      // silencioso dentro del popup
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-1" style={{ minWidth: 160 }}>
+      <p className="font-semibold">{miembro.nombre}</p>
+      {enviado ? (
+        <p className="text-xs text-green-700">¡Reconocimiento enviado!</p>
+      ) : (
+        <>
+          <input
+            type="text"
+            placeholder="Ej: Tremendo avance 💪"
+            value={texto}
+            onChange={(e) => setTexto(e.target.value)}
+            className="rounded border border-gray-300 px-2 py-1 text-xs text-black outline-none"
+          />
+          <button
+            type="button"
+            disabled={enviando || !texto.trim()}
+            onClick={enviar}
+            className="rounded bg-amber-600 px-2 py-1 text-xs text-white disabled:opacity-50"
+          >
+            {enviando ? "Enviando..." : "Reconocer"}
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
 interface RecorridoResumen {
   id: number;
   tipo: string;
@@ -230,7 +283,9 @@ export function MapaView() {
           )}
           {otros.map((o) => (
             <Marker key={o.miembroId} position={[o.lat, o.lon]} icon={iconoOtro}>
-              <Popup>{o.nombre}</Popup>
+              <Popup>
+                <PopupOtroMiembro miembro={o} token={token} />
+              </Popup>
             </Marker>
           ))}
           {puntosGrabados.length > 1 && (

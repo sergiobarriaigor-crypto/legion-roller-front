@@ -40,6 +40,32 @@ export async function apiPost<T>(
   return manejarRespuesta<T>(res);
 }
 
+export async function apiPut<T>(
+  ruta: string,
+  body: unknown,
+  token: string | null = null,
+): Promise<T> {
+  const res = await fetch(`${API_URL}${ruta}`, {
+    method: "PUT",
+    headers: headersConToken(token),
+    body: JSON.stringify(body),
+  });
+  return manejarRespuesta<T>(res);
+}
+
+export async function apiPatch<T>(
+  ruta: string,
+  body: unknown,
+  token: string | null = null,
+): Promise<T> {
+  const res = await fetch(`${API_URL}${ruta}`, {
+    method: "PATCH",
+    headers: headersConToken(token),
+    body: JSON.stringify(body),
+  });
+  return manejarRespuesta<T>(res);
+}
+
 export async function apiGet<T>(ruta: string, token: string | null): Promise<T> {
   const res = await fetch(`${API_URL}${ruta}`, {
     headers: headersConToken(token),
