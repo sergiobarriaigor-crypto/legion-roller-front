@@ -11,6 +11,7 @@ import { distanciaTotalKm, distanciaHaversineKm, type PuntoGps } from "@/lib/geo
 import type { Publicacion } from "@/lib/publicaciones";
 import { combinarFechaHora, rodadaEnVentana, rodadaActivable, minutosHasta } from "@/lib/rodadas";
 import { ETIQUETA_MOTIVO, type EmergenciaActiva } from "@/lib/emergencias";
+import { PatinadoresActivosPanel } from "@/components/Mapa/PatinadoresActivosPanel";
 
 // Centro por defecto: entre Puerto Montt y Puerto Varas (sección 1 del PDF).
 const CENTRO_DEFECTO: [number, number] = [-41.4, -72.96];
@@ -91,6 +92,8 @@ interface OtroMiembro {
   estado: string | null;
   lat: number;
   lon: number;
+  modo: string;
+  iniciadoEn: string;
 }
 
 function PopupOtroMiembro({
@@ -264,7 +267,7 @@ export function MapaView() {
 
         if (necesitaEnvioInicialRef.current && tokenRef.current) {
           necesitaEnvioInicialRef.current = false;
-          apiPost("/mapa/patinando", punto, tokenRef.current).catch(() => {});
+          apiPost("/mapa/patinando", { ...punto, modo: modoRef.current }, tokenRef.current).catch(() => {});
         }
 
         if (necesitaCentrarInicialRef.current && mapRef.current) {
@@ -322,7 +325,7 @@ export function MapaView() {
 
     const intervalo = setInterval(() => {
       if (posicionRef.current) {
-        apiPost("/mapa/patinando", posicionRef.current, token).catch(() => {});
+        apiPost("/mapa/patinando", { ...posicionRef.current, modo }, token).catch(() => {});
       }
     }, 20000);
 
@@ -710,6 +713,10 @@ export function MapaView() {
               </p>
             )}
           </div>
+
+          <PatinadoresActivosPanel
+            patinadores={otros.filter((o) => o.modo === "patinando")}
+          />
 
           {misRecorridos.length > 0 && (
             <div className="card flex flex-col gap-2 p-4">
