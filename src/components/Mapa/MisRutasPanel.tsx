@@ -199,11 +199,16 @@ export function MisRutasPanel({
   }
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-50 flex justify-center pointer-events-none">
-      <div
-        className="card pointer-events-auto flex w-full max-w-md flex-col gap-3 rounded-b-none p-4 shadow-2xl transition-[height] duration-150"
-        style={{ height: `${alturaVh}vh` }}
-      >
+    <>
+      {/* Velo oscuro sobre el mapa: se sigue viendo de fondo (a pedido del usuario),
+          pero atenuado para no competir visualmente con el panel. Tocarlo cierra. */}
+      <div className="fixed inset-0 z-40 bg-black/45" onClick={onClose} />
+
+      <div className="fixed inset-x-0 bottom-0 z-50 flex justify-center pointer-events-none">
+        <div
+          className="card pointer-events-auto flex w-full max-w-md flex-col gap-3 rounded-b-none p-4 shadow-2xl transition-[height] duration-150"
+          style={{ height: `${alturaVh}vh` }}
+        >
         <div
           className="-mt-1 flex cursor-grab flex-col items-center gap-2 pt-1 active:cursor-grabbing"
           onTouchStart={onDragStart}
@@ -270,7 +275,8 @@ export function MisRutasPanel({
             </>
           )}
         </div>
+        </div>
       </div>
-    </div>
+    </>
   );
 }

@@ -536,7 +536,11 @@ export function MapaView() {
   return (
     <div className={pantallaCompleta ? "fixed inset-0 z-50 bg-page-bg" : "flex flex-col gap-3"}>
       <div
-        className={pantallaCompleta ? "relative h-dvh w-full" : "card relative overflow-hidden"}
+        className={
+          pantallaCompleta
+            ? "relative isolate h-dvh w-full"
+            : "card relative isolate overflow-hidden"
+        }
         style={pantallaCompleta ? undefined : { height: 320 }}
       >
         <MapContainer
