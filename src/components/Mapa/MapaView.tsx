@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { MapContainer, TileLayer, Marker, Popup, Polyline } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, Popup, Polyline, ZoomControl } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+import { IconMaximize, IconX, IconCurrentLocation } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
 import { apiPost, apiGet, apiDelete, ApiError } from "@/lib/api";
 import { distanciaTotalKm, type PuntoGps } from "@/lib/geo";
@@ -111,9 +112,12 @@ export function MapaView() {
   const [mensaje, setMensaje] = useState("");
   const [rodadaActiva, setRodadaActiva] = useState<Publicacion | null>(null);
 
+  const [pantallaCompleta, setPantallaCompleta] = useState(false);
+
   const posicionRef = useRef<{ lat: number; lon: number } | null>(null);
   const grabandoRef = useRef(false);
   const inicioGrabacionRef = useRef<number>(0);
+  const mapRef = useRef<L.Map | null>(null);
 
   // Ubicación del navegador: se sigue en todo momento mientras la pantalla está abierta.
   useEffect(() => {
@@ -289,10 +293,32 @@ export function MapaView() {
 
   const centro: [number, number] = posicion ? [posicion.lat, posicion.lon] : CENTRO_DEFECTO;
 
+  function centrarEnMiUbicacion() {
+    if (!posicion || !mapRef.current) return;
+    mapRef.current.flyTo([posicion.lat, posicion.lon], mapRef.current.getZoom());
+  }
+
+  // El contenedor del mapa cambia de tamaño al entrar/salir de pantalla completa;
+  // Leaflet necesita que se le avise para no quedar con los tiles mal recortados.
+  useEffect(() => {
+    const id = setTimeout(() => mapRef.current?.invalidateSize(), 80);
+    return () => clearTimeout(id);
+  }, [pantallaCompleta]);
+
   return (
-    <div className="flex flex-col gap-3">
-      <div className="card overflow-hidden" style={{ height: 320 }}>
-        <MapContainer center={centro} zoom={13} style={{ height: "100%", width: "100%" }}>
+    <div className={pantallaCompleta ? "fixed inset-0 z-50 bg-page-bg" : "flex flex-col gap-3"}>
+      <div
+        className={pantallaCompleta ? "relative h-dvh w-full" : "card relative overflow-hidden"}
+        style={pantallaCompleta ? undefined : { height: 320 }}
+      >
+        <MapContainer
+          ref={mapRef}
+          center={centro}
+          zoom={13}
+          zoomControl={false}
+          style={{ height: "100%", width: "100%" }}
+        >
+          <ZoomControl position="topright" />
           <TileLayer
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -335,14 +361,35 @@ export function MapaView() {
               </Marker>
             ))}
         </MapContainer>
+
+        <button
+          type="button"
+          aria-label={pantallaCompleta ? "Salir de pantalla completa" : "Ver mapa en pantalla completa"}
+          onClick={() => setPantallaCompleta((v) => !v)}
+          className="absolute left-2 top-2 z-[1000] flex h-9 w-9 items-center justify-center rounded-full bg-surface-1/90 text-text-primary shadow"
+        >
+          {pantallaCompleta ? <IconX size={20} /> : <IconMaximize size={20} />}
+        </button>
+
+        <button
+          type="button"
+          aria-label="Centrar en mi ubicación"
+          disabled={!posicion}
+          onClick={centrarEnMiUbicacion}
+          className="absolute bottom-2 right-2 z-[1000] flex h-9 w-9 items-center justify-center rounded-full bg-surface-1/90 text-text-accent shadow disabled:opacity-40"
+        >
+          <IconCurrentLocation size={20} />
+        </button>
       </div>
 
-      {emergenciasActivas.length > 0 && (
+      {!pantallaCompleta && emergenciasActivas.length > 0 && (
         <div className="card border-fill-warning bg-red-700/10 p-3 text-xs text-fill-warning">
           🚨 {emergenciasActivas.length === 1 ? "Hay una emergencia activa" : `Hay ${emergenciasActivas.length} emergencias activas`} en el mapa.
         </div>
       )}
 
+      {!pantallaCompleta && (
+        <>
       {errorGeo && <p className="text-xs text-fill-warning">{errorGeo}</p>}
       {mensaje && <p className="text-xs text-fill-warning">{mensaje}</p>}
 
@@ -448,6 +495,8 @@ export function MapaView() {
             ))}
           </ul>
         </div>
+      )}
+        </>
       )}
     </div>
   );

@@ -15,8 +15,6 @@ import { useSession } from "@/context/SessionContext";
 import { RutasMapeadasModal } from "@/components/RutasMapeadasModal";
 
 const HOLD_MS = 1500;
-const RADIO = 26;
-const CIRCUNFERENCIA = 2 * Math.PI * RADIO;
 
 interface NavItem {
   href: string;
@@ -56,21 +54,13 @@ export function BottomNav() {
   const esVisitante = sesion?.rol === "visitante";
   const esAdmin = sesion?.rol === "admin";
 
-  const [manteniendo, setManteniendo] = useState(false);
-  const [progreso, setProgreso] = useState(0);
   const [mostrarRutas, setMostrarRutas] = useState(false);
   const holdTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const progresoIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const holdActivadoRef = useRef(false);
   const [logoError, setLogoError] = useState(false);
 
   function iniciarHoldMapa() {
     holdActivadoRef.current = false;
-    setManteniendo(true);
-    const inicio = Date.now();
-    progresoIntervalRef.current = setInterval(() => {
-      setProgreso(Math.min(100, ((Date.now() - inicio) / HOLD_MS) * 100));
-    }, 30);
     holdTimeoutRef.current = setTimeout(() => {
       holdActivadoRef.current = true;
       limpiarHoldMapa();
@@ -80,11 +70,7 @@ export function BottomNav() {
 
   function limpiarHoldMapa() {
     if (holdTimeoutRef.current) clearTimeout(holdTimeoutRef.current);
-    if (progresoIntervalRef.current) clearInterval(progresoIntervalRef.current);
     holdTimeoutRef.current = null;
-    progresoIntervalRef.current = null;
-    setManteniendo(false);
-    setProgreso(0);
   }
 
   function onPointerUpMapa() {
@@ -113,7 +99,7 @@ export function BottomNav() {
               onPointerUp={onPointerUpMapa}
               onPointerLeave={limpiarHoldMapa}
               onPointerCancel={limpiarHoldMapa}
-              className={`relative -mt-6 flex h-14 w-14 select-none items-center justify-center rounded-full border-4 border-surface-1 bg-fill-primary shadow-lg ${
+              className={`relative -mt-6 flex h-14 w-14 select-none items-center justify-center rounded-full border-4 border-surface-1 bg-fill-primary shadow-lg animate-pulse-mapa ${
                 pathname.startsWith("/mapa") ? "ring-2 ring-text-accent" : ""
               }`}
             >
@@ -127,20 +113,6 @@ export function BottomNav() {
                   className="h-full w-full rounded-full object-cover"
                   onError={() => setLogoError(true)}
                 />
-              )}
-              {manteniendo && (
-                <svg className="pointer-events-none absolute inset-0 -rotate-90" width={56} height={56}>
-                  <circle
-                    cx={28}
-                    cy={28}
-                    r={RADIO}
-                    fill="none"
-                    stroke="var(--text-accent)"
-                    strokeWidth={3}
-                    strokeDasharray={CIRCUNFERENCIA}
-                    strokeDashoffset={CIRCUNFERENCIA * (1 - progreso / 100)}
-                  />
-                </svg>
               )}
             </button>
             <span className={pathname.startsWith("/mapa") ? "text-text-accent" : "text-text-secondary"}>

@@ -127,3 +127,25 @@ body {
     animation: none;
   }
 }
+
+/* Ajuste post-Fase 11: pulso sutil y continuo en el botón central de Mapa
+   (reemplaza el anillo de progreso del hold, que resultaba muy ruidoso). */
+@keyframes pulseMapa {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.06);
+  }
+}
+
+.animate-pulse-mapa {
+  animation: pulseMapa 2.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-pulse-mapa {
+    animation: none;
+  }
+}
