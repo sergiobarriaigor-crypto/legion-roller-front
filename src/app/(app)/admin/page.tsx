@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useSession } from "@/context/SessionContext";
 import { apiGet, apiPost, apiDelete, ApiError } from "@/lib/api";
 import { ETIQUETA_TIPO, TIPOS_PUBLICACION, type Publicacion } from "@/lib/publicaciones";
+import type { Emprendedor } from "@/lib/emprendedores";
 
 const RUTAS_QUE_USAN_FECHA_HORA = ["rodada", "evento"];
 
@@ -23,6 +24,7 @@ export default function AdminPage() {
   const [activaEnMapa, setActivaEnMapa] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState("");
+  const [solicitudesEmprendedor, setSolicitudesEmprendedor] = useState<Emprendedor[]>([]);
 
   async function cargar() {
     if (!token) return;
@@ -34,10 +36,41 @@ export default function AdminPage() {
     }
   }
 
+  async function cargarSolicitudesEmprendedor() {
+    if (!token) return;
+    try {
+      const lista = await apiGet<Emprendedor[]>("/emprendedores/solicitudes", token);
+      setSolicitudesEmprendedor(lista);
+    } catch {
+      // ignorar
+    }
+  }
+
   useEffect(() => {
     cargar();
+    cargarSolicitudesEmprendedor();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
+
+  async function aprobarEmprendedor(id: number) {
+    if (!token) return;
+    try {
+      await apiPost(`/emprendedores/${id}/aprobar`, {}, token);
+      cargarSolicitudesEmprendedor();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "No se pudo aprobar.");
+    }
+  }
+
+  async function rechazarEmprendedor(id: number) {
+    if (!token) return;
+    try {
+      await apiPost(`/emprendedores/${id}/rechazar`, {}, token);
+      cargarSolicitudesEmprendedor();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "No se pudo rechazar.");
+    }
+  }
 
   async function crear(e: React.FormEvent) {
     e.preventDefault();
@@ -202,6 +235,41 @@ export default function AdminPage() {
             >
               Eliminar
             </button>
+          </div>
+        ))}
+      </div>
+
+      <div className="card flex flex-col gap-2 p-4">
+        <h2 className="text-sm font-semibold text-text-primary">
+          Solicitudes de Impulsa (emprendedores)
+        </h2>
+        {solicitudesEmprendedor.length === 0 && (
+          <p className="text-xs text-text-secondary">No hay solicitudes pendientes.</p>
+        )}
+        {solicitudesEmprendedor.map((s) => (
+          <div key={s.id} className="flex items-center justify-between border-t border-border pt-2">
+            <div>
+              <p className="text-sm font-semibold text-text-accent">{s.nombreNegocio}</p>
+              <p className="text-xs text-text-muted">
+                {s.rubro} · {s.nombreDuenio}
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => aprobarEmprendedor(s.id)}
+                className="text-xs text-fill-success underline"
+              >
+                Aprobar
+              </button>
+              <button
+                type="button"
+                onClick={() => rechazarEmprendedor(s.id)}
+                className="text-xs text-fill-warning underline"
+              >
+                Rechazar
+              </button>
+            </div>
           </div>
         ))}
       </div>
