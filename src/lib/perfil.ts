@@ -32,6 +32,7 @@ export interface MiPerfil {
   nombre: string;
   ciudad: string | null;
   rol: string;
+  fotoUrl: string | null;
   stats: StatsPerfil;
   tecnicas: TecnicasPerfil;
   estado: EstadoPerfil | null;

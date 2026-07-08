@@ -6,14 +6,30 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { IconMaximize, IconX, IconCurrentLocation } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
-import { apiPost, apiGet, apiDelete, ApiError } from "@/lib/api";
-import { distanciaTotalKm, type PuntoGps } from "@/lib/geo";
+import { apiPost, apiPut, apiGet, apiDelete, ApiError } from "@/lib/api";
+import { distanciaTotalKm, distanciaHaversineKm, type PuntoGps } from "@/lib/geo";
 import type { Publicacion } from "@/lib/publicaciones";
 import { combinarFechaHora, rodadaEnVentana, rodadaActivable, minutosHasta } from "@/lib/rodadas";
 import { ETIQUETA_MOTIVO, type EmergenciaActiva } from "@/lib/emergencias";
 
 // Centro por defecto: entre Puerto Montt y Puerto Varas (sección 1 del PDF).
 const CENTRO_DEFECTO: [number, number] = [-41.4, -72.96];
+
+// Ajuste post-Fase 11: detección de inactividad para cerrar solo el recorrido.
+const KM_MOVIMIENTO_SIGNIFICATIVO = 0.03; // ~30 metros
+const MIN_AVISO_INACTIVIDAD = 25; // dentro del rango pedido (20 a 30 min)
+const MIN_CIERRE_AUTOMATICO = 10;
+
+type Modo = "patinando" | "ruta" | null;
+
+function escapeHtml(texto: string) {
+  return texto
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
 
 function crearIcono(color: string) {
   return L.divIcon({
@@ -24,13 +40,51 @@ function crearIcono(color: string) {
   });
 }
 
-const iconoYo = crearIcono("#C99A3D");
-const iconoOtro = crearIcono("#7EB3EE");
 const iconoEmergencia = crearIcono("#D8342F");
+
+// Avatar circular (foto o inicial) con burbuja de estado opcional, para verse
+// en el mapa mientras un miembro comparte su ubicación (sección de este ajuste).
+function crearIconoAvatar({
+  fotoUrl,
+  nombre,
+  estado,
+  colorBorde,
+}: {
+  fotoUrl: string | null;
+  nombre: string;
+  estado?: string | null;
+  colorBorde: string;
+}) {
+  const TAM = 40;
+  const inicial = escapeHtml((nombre.charAt(0) || "?").toUpperCase());
+  const contenido = fotoUrl
+    ? `<img src="${escapeHtml(fotoUrl)}" style="width:100%;height:100%;object-fit:cover;" />`
+    : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-weight:600;color:#171008;">${inicial}</div>`;
+
+  const burbuja = estado
+    ? `<div style="position:absolute;bottom:${TAM + 6}px;left:50%;transform:translateX(-50%);max-width:110px;background:#171008;color:#f2ead8;font-size:10px;line-height:1.25;padding:4px 8px;border-radius:10px;text-align:center;box-shadow:0 1px 4px rgba(0,0,0,0.4);">${escapeHtml(estado)}</div>`
+    : "";
+
+  return L.divIcon({
+    className: "",
+    html: `
+      <div style="position:relative;width:${TAM}px;height:${TAM}px;">
+        ${burbuja}
+        <div style="width:${TAM}px;height:${TAM}px;border-radius:9999px;background:#e7c168;border:3px solid ${colorBorde};box-shadow:0 1px 4px rgba(0,0,0,0.4);overflow:hidden;">
+          ${contenido}
+        </div>
+      </div>
+    `,
+    iconSize: [TAM, TAM],
+    iconAnchor: [TAM / 2, TAM / 2],
+  });
+}
 
 interface OtroMiembro {
   miembroId: number;
   nombre: string;
+  fotoUrl: string | null;
+  estado: string | null;
   lat: number;
   lon: number;
 }
@@ -103,7 +157,7 @@ export function MapaView() {
   const [posicion, setPosicion] = useState<{ lat: number; lon: number } | null>(null);
   const [errorGeo, setErrorGeo] = useState("");
   const [otros, setOtros] = useState<OtroMiembro[]>([]);
-  const [patinando, setPatinando] = useState(false);
+  const [modo, setModo] = useState<Modo>(null);
   const [grabando, setGrabando] = useState(false);
   const [puntosGrabados, setPuntosGrabados] = useState<PuntoGps[]>([]);
   const [resumen, setResumen] = useState<{ distanciaKm: number; duracionSeg: number } | null>(null);
@@ -114,13 +168,78 @@ export function MapaView() {
 
   const [pantallaCompleta, setPantallaCompleta] = useState(false);
 
+  const [miFotoUrl, setMiFotoUrl] = useState<string | null>(null);
+  const [miEstadoTexto, setMiEstadoTexto] = useState<string | null>(null);
+  const [mostrarEditorEstado, setMostrarEditorEstado] = useState(false);
+  const [textoEstadoForm, setTextoEstadoForm] = useState("");
+  const [guardandoEstado, setGuardandoEstado] = useState(false);
+
+  const [avisoInactividad, setAvisoInactividad] = useState(false);
+
   const posicionRef = useRef<{ lat: number; lon: number } | null>(null);
   const grabandoRef = useRef(false);
   const inicioGrabacionRef = useRef<number>(0);
   const mapRef = useRef<L.Map | null>(null);
 
-  // Ubicación del navegador: se sigue en todo momento mientras la pantalla está abierta.
+  // Espejos en refs de estado/token, para poder leerlos desde callbacks de
+  // geolocalización y temporizadores de larga duración sin closures obsoletas.
+  const modoRef = useRef<Modo>(null);
+  const puntosGrabadosRef = useRef<PuntoGps[]>([]);
+  const tokenRef = useRef<string | null>(null);
+  const necesitaEnvioInicialRef = useRef(false);
+  const ultimaPosSignificativaRef = useRef<PuntoGps | null>(null);
+  const ultimoMovimientoEnRef = useRef<number>(Date.now());
+  const avisoInactividadRef = useRef(false);
+  const cierreAutomaticoTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
+    modoRef.current = modo;
+  }, [modo]);
+  useEffect(() => {
+    puntosGrabadosRef.current = puntosGrabados;
+  }, [puntosGrabados]);
+  useEffect(() => {
+    tokenRef.current = token;
+  }, [token]);
+
+  // Mi foto y estado (para mostrarme en el mapa apenas comparta ubicación).
+  useEffect(() => {
+    if (!token) return;
+    apiGet<{ fotoUrl: string | null; estado: { texto: string } | null }>("/perfil/mio", token)
+      .then((p) => {
+        setMiFotoUrl(p.fotoUrl);
+        setMiEstadoTexto(p.estado?.texto ?? null);
+      })
+      .catch(() => {});
+  }, [token]);
+
+  function registrarMovimiento(punto: { lat: number; lon: number }) {
+    const anterior = ultimaPosSignificativaRef.current;
+    const ahora: PuntoGps = { ...punto, timestamp: Date.now() };
+    if (!anterior) {
+      ultimaPosSignificativaRef.current = ahora;
+      ultimoMovimientoEnRef.current = Date.now();
+      return;
+    }
+    const distanciaKm = distanciaHaversineKm(anterior, ahora);
+    if (distanciaKm >= KM_MOVIMIENTO_SIGNIFICATIVO) {
+      ultimaPosSignificativaRef.current = ahora;
+      ultimoMovimientoEnRef.current = Date.now();
+      if (avisoInactividadRef.current) {
+        continuarPatinando();
+      }
+    }
+  }
+
+  // GPS: solo se activa mientras haya un modo seleccionado (privacidad primero).
+  // Al desactivar un modo, la posición se borra de inmediato y el navegador deja
+  // de usar el GPS para esta función.
+  useEffect(() => {
+    if (!modo) {
+      setPosicion(null);
+      posicionRef.current = null;
+      return;
+    }
     if (!navigator.geolocation) {
       setErrorGeo("Tu navegador no soporta geolocalización.");
       return;
@@ -132,12 +251,15 @@ export function MapaView() {
         posicionRef.current = punto;
         setPosicion(punto);
         setErrorGeo("");
+        registrarMovimiento(punto);
 
         if (grabandoRef.current) {
-          setPuntosGrabados((prev) => [
-            ...prev,
-            { ...punto, timestamp: Date.now() },
-          ]);
+          setPuntosGrabados((prev) => [...prev, { ...punto, timestamp: Date.now() }]);
+        }
+
+        if (necesitaEnvioInicialRef.current && tokenRef.current) {
+          necesitaEnvioInicialRef.current = false;
+          apiPost("/mapa/patinando", punto, tokenRef.current).catch(() => {});
         }
       },
       () => setErrorGeo("No se pudo obtener tu ubicación (revisa los permisos)."),
@@ -145,7 +267,8 @@ export function MapaView() {
     );
 
     return () => navigator.geolocation.clearWatch(watchId);
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modo]);
 
   // Ver quién más está patinando ahora (polling cada 15s).
   useEffect(() => {
@@ -183,9 +306,9 @@ export function MapaView() {
     return () => clearInterval(intervalo);
   }, [token]);
 
-  // Mientras "patinando" está activo, reenvía la ubicación cada 20s para no expirar (HORAS_VIGENCIA_PATINANDO).
+  // Mientras haya un modo activo, reenvía la ubicación cada 20s para no expirar (HORAS_VIGENCIA_PATINANDO).
   useEffect(() => {
-    if (!patinando || !token) return;
+    if (!modo || !token) return;
 
     const intervalo = setInterval(() => {
       if (posicionRef.current) {
@@ -194,54 +317,97 @@ export function MapaView() {
     }, 20000);
 
     return () => clearInterval(intervalo);
-  }, [patinando, token]);
+  }, [modo, token]);
 
-  async function activarPatinando() {
-    if (!token || !posicion) return;
-    try {
-      await apiPost("/mapa/patinando", posicion, token);
-      setPatinando(true);
-      setMensaje("");
-    } catch (err) {
-      setMensaje(err instanceof ApiError ? err.message : "No se pudo activar.");
+  // Aviso de inactividad: revisa cada 30s si pasó el umbral sin movimiento significativo.
+  useEffect(() => {
+    if (!modo) return;
+
+    const intervalo = setInterval(() => {
+      if (avisoInactividadRef.current) return;
+      const inactivoMs = Date.now() - ultimoMovimientoEnRef.current;
+      if (inactivoMs >= MIN_AVISO_INACTIVIDAD * 60000) {
+        setAvisoInactividad(true);
+        avisoInactividadRef.current = true;
+        cierreAutomaticoTimeoutRef.current = setTimeout(() => {
+          finalizarModo();
+        }, MIN_CIERRE_AUTOMATICO * 60000);
+      }
+    }, 30000);
+
+    return () => clearInterval(intervalo);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modo]);
+
+  function activarModo(nuevoModo: "patinando" | "ruta") {
+    setMensaje("");
+    necesitaEnvioInicialRef.current = true;
+    ultimaPosSignificativaRef.current = null;
+    ultimoMovimientoEnRef.current = Date.now();
+
+    if (nuevoModo === "ruta") {
+      setPuntosGrabados([]);
+      puntosGrabadosRef.current = [];
+      inicioGrabacionRef.current = Date.now();
+      grabandoRef.current = true;
+      setGrabando(true);
+      setResumen(null);
     }
+
+    setModo(nuevoModo);
   }
 
-  async function terminarPatinando() {
-    if (!token) return;
-    try {
-      await apiDelete("/mapa/patinando", token);
-    } finally {
-      setPatinando(false);
+  function continuarPatinando() {
+    ultimoMovimientoEnRef.current = Date.now();
+    if (cierreAutomaticoTimeoutRef.current) {
+      clearTimeout(cierreAutomaticoTimeoutRef.current);
+      cierreAutomaticoTimeoutRef.current = null;
     }
+    setAvisoInactividad(false);
+    avisoInactividadRef.current = false;
   }
 
-  function iniciarGrabacion() {
-    setPuntosGrabados(posicion ? [{ ...posicion, timestamp: Date.now() }] : []);
-    inicioGrabacionRef.current = Date.now();
-    grabandoRef.current = true;
-    setGrabando(true);
-    setResumen(null);
-  }
+  async function finalizarModo() {
+    if (cierreAutomaticoTimeoutRef.current) {
+      clearTimeout(cierreAutomaticoTimeoutRef.current);
+      cierreAutomaticoTimeoutRef.current = null;
+    }
+    setAvisoInactividad(false);
+    avisoInactividadRef.current = false;
 
-  async function detenerGrabacion() {
-    grabandoRef.current = false;
-    setGrabando(false);
+    const modoAlFinalizar = modoRef.current;
+    const tokenActual = tokenRef.current;
+    setModo(null);
 
-    const duracionSeg = Math.round((Date.now() - inicioGrabacionRef.current) / 1000);
-    const distanciaKm = distanciaTotalKm(puntosGrabados);
-    setResumen({ distanciaKm, duracionSeg });
+    if (tokenActual) {
+      try {
+        await apiDelete("/mapa/patinando", tokenActual);
+      } catch {
+        // ya se limpia igual del lado del cliente
+      }
+    }
 
-    if (!token || puntosGrabados.length < 2) return;
-    try {
-      await apiPost(
-        "/mapa/recorridos",
-        { tipo: "libre", distanciaKm, duracionSeg, puntos: puntosGrabados },
-        token,
-      );
-      cargarMisRecorridos();
-    } catch (err) {
-      setMensaje(err instanceof ApiError ? err.message : "No se pudo guardar el recorrido.");
+    if (modoAlFinalizar === "ruta") {
+      grabandoRef.current = false;
+      setGrabando(false);
+
+      const puntos = puntosGrabadosRef.current;
+      const duracionSeg = Math.round((Date.now() - inicioGrabacionRef.current) / 1000);
+      const distanciaKm = distanciaTotalKm(puntos);
+      setResumen({ distanciaKm, duracionSeg });
+
+      if (tokenActual && puntos.length >= 2) {
+        try {
+          await apiPost(
+            "/mapa/recorridos",
+            { tipo: "libre", distanciaKm, duracionSeg, puntos },
+            tokenActual,
+          );
+          cargarMisRecorridos();
+        } catch (err) {
+          setMensaje(err instanceof ApiError ? err.message : "No se pudo guardar el recorrido.");
+        }
+      }
     }
   }
 
@@ -305,6 +471,39 @@ export function MapaView() {
     return () => clearTimeout(id);
   }, [pantallaCompleta]);
 
+  function abrirEditorEstado() {
+    setTextoEstadoForm(miEstadoTexto ?? "");
+    setMostrarEditorEstado(true);
+  }
+
+  async function guardarEstadoMapa() {
+    if (!token || !textoEstadoForm.trim()) return;
+    setGuardandoEstado(true);
+    try {
+      await apiPut("/perfil/estado", { texto: textoEstadoForm.trim() }, token);
+      setMiEstadoTexto(textoEstadoForm.trim());
+      setMostrarEditorEstado(false);
+    } catch (err) {
+      setMensaje(err instanceof ApiError ? err.message : "No se pudo publicar el estado.");
+    } finally {
+      setGuardandoEstado(false);
+    }
+  }
+
+  async function quitarEstadoMapa() {
+    if (!token) return;
+    setGuardandoEstado(true);
+    try {
+      await apiDelete("/perfil/estado", token);
+      setMiEstadoTexto(null);
+      setMostrarEditorEstado(false);
+    } catch (err) {
+      setMensaje(err instanceof ApiError ? err.message : "No se pudo quitar el estado.");
+    } finally {
+      setGuardandoEstado(false);
+    }
+  }
+
   return (
     <div className={pantallaCompleta ? "fixed inset-0 z-50 bg-page-bg" : "flex flex-col gap-3"}>
       <div
@@ -324,12 +523,28 @@ export function MapaView() {
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
           {posicion && (
-            <Marker position={[posicion.lat, posicion.lon]} icon={iconoYo}>
-              <Popup>Tú</Popup>
-            </Marker>
+            <Marker
+              position={[posicion.lat, posicion.lon]}
+              icon={crearIconoAvatar({
+                fotoUrl: miFotoUrl,
+                nombre: sesion?.nombre ?? "Yo",
+                estado: miEstadoTexto,
+                colorBorde: "#C99A3D",
+              })}
+              eventHandlers={{ click: abrirEditorEstado }}
+            />
           )}
           {otros.map((o) => (
-            <Marker key={o.miembroId} position={[o.lat, o.lon]} icon={iconoOtro}>
+            <Marker
+              key={o.miembroId}
+              position={[o.lat, o.lon]}
+              icon={crearIconoAvatar({
+                fotoUrl: o.fotoUrl,
+                nombre: o.nombre,
+                estado: o.estado,
+                colorBorde: "#7EB3EE",
+              })}
+            >
               <Popup>
                 <PopupOtroMiembro miembro={o} token={token} />
               </Popup>
@@ -390,113 +605,193 @@ export function MapaView() {
 
       {!pantallaCompleta && (
         <>
-      {errorGeo && <p className="text-xs text-fill-warning">{errorGeo}</p>}
-      {mensaje && <p className="text-xs text-fill-warning">{mensaje}</p>}
+          {errorGeo && <p className="text-xs text-fill-warning">{errorGeo}</p>}
+          {mensaje && <p className="text-xs text-fill-warning">{mensaje}</p>}
 
-      {rodadaActiva && !patinando && (() => {
-        const fechaHora = combinarFechaHora(rodadaActiva.fecha, rodadaActiva.hora);
-        const activable = fechaHora ? rodadaActivable(fechaHora) : false;
-        const faltan = fechaHora ? minutosHasta(fechaHora) : 0;
+          {rodadaActiva &&
+            !modo &&
+            (() => {
+              const fechaHora = combinarFechaHora(rodadaActiva.fecha, rodadaActiva.hora);
+              const activable = fechaHora ? rodadaActivable(fechaHora) : false;
+              const faltan = fechaHora ? minutosHasta(fechaHora) : 0;
 
-        return (
-          <div className="card border-fill-warning bg-bg-accent flex flex-col gap-2 p-4">
-            <h2 className="text-sm font-semibold text-amber-text">
-              Tu rodada está por comenzar
-            </h2>
-            <p className="text-xs text-text-primary">
-              Confirmaste &quot;Voy&quot; a <strong>{rodadaActiva.titulo}</strong>
-              {rodadaActiva.hora ? ` a las ${rodadaActiva.hora}` : ""}.
+              return (
+                <div className="card border-fill-warning bg-bg-accent flex flex-col gap-2 p-4">
+                  <h2 className="text-sm font-semibold text-amber-text">
+                    Tu rodada está por comenzar
+                  </h2>
+                  <p className="text-xs text-text-primary">
+                    Confirmaste &quot;Voy&quot; a <strong>{rodadaActiva.titulo}</strong>
+                    {rodadaActiva.hora ? ` a las ${rodadaActiva.hora}` : ""}.
+                  </p>
+                  <p className="text-xs text-text-secondary">
+                    {activable
+                      ? "Ya puedes compartir tu ubicación con la comunidad."
+                      : `Podrás activarlo a partir de las ${rodadaActiva.hora} (en ${faltan} min).`}
+                  </p>
+                  <button
+                    type="button"
+                    disabled={!activable}
+                    onClick={() => activarModo("patinando")}
+                    className="btn-hero rounded-app px-4 py-2 text-sm disabled:opacity-50"
+                  >
+                    Compartir ubicación de esta rodada
+                  </button>
+                </div>
+              );
+            })()}
+
+          {rodadaActiva && modo && (
+            <p className="text-xs text-fill-success">
+              Estás compartiendo tu ubicación para &quot;{rodadaActiva.titulo}&quot;.
             </p>
-            <p className="text-xs text-text-secondary">
-              {activable
-                ? "Ya puedes compartir tu ubicación con la comunidad."
-                : `Podrás activarlo a partir de las ${rodadaActiva.hora} (en ${faltan} min).`}
-            </p>
+          )}
+
+          <div className="card flex flex-col gap-2 p-4">
+            <h2 className="text-sm font-semibold text-text-accent">Compartir mi ubicación</h2>
+            {!modo ? (
+              <>
+                <p className="text-xs text-text-secondary">
+                  Tu ubicación solo se usa mientras uno de estos modos está activo. Al finalizar,
+                  desapareces del mapa y el GPS deja de usarse para esto.
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => activarModo("patinando")}
+                    className="btn-hero flex-1 rounded-app px-4 py-2 text-sm"
+                  >
+                    Estoy patinando ahora
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => activarModo("ruta")}
+                    className="btn-hero flex-1 rounded-app px-4 py-2 text-sm"
+                  >
+                    Estoy en ruta
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-xs text-fill-success">
+                  {modo === "ruta"
+                    ? `Grabando tu ruta... ${puntosGrabados.length} puntos registrados.`
+                    : "Estás compartiendo tu ubicación con la comunidad."}
+                </p>
+                {!posicion && (
+                  <p className="text-xs text-text-secondary">Obteniendo tu ubicación por GPS...</p>
+                )}
+                <button
+                  type="button"
+                  onClick={finalizarModo}
+                  className="card rounded-app px-4 py-2 text-sm text-fill-warning"
+                >
+                  {modo === "ruta" ? "Finalizar recorrido" : "Terminar de patinar"}
+                </button>
+              </>
+            )}
+
+            {resumen && (
+              <p className="text-xs text-fill-success">
+                Recorrido guardado: {resumen.distanciaKm.toFixed(2)} km en{" "}
+                {Math.round(resumen.duracionSeg / 60)} min.
+              </p>
+            )}
+          </div>
+
+          {misRecorridos.length > 0 && (
+            <div className="card flex flex-col gap-2 p-4">
+              <h2 className="text-sm font-semibold text-text-accent">Historial de recorridos</h2>
+              <ul className="flex flex-col gap-1">
+                {misRecorridos.map((r) => (
+                  <li key={r.id} className="text-xs text-text-secondary">
+                    {new Date(r.createdAt).toLocaleDateString("es-CL")} — {r.distanciaKm.toFixed(2)} km —{" "}
+                    {Math.round(r.duracionSeg / 60)} min
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </>
+      )}
+
+      {mostrarEditorEstado && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-6"
+          onClick={() => setMostrarEditorEstado(false)}
+        >
+          <div
+            className="card flex w-full max-w-xs flex-col gap-3 p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-sm font-semibold text-text-accent">Tu estado en el mapa</h2>
+            <textarea
+              value={textoEstadoForm}
+              onChange={(e) => setTextoEstadoForm(e.target.value.slice(0, 50))}
+              maxLength={50}
+              rows={2}
+              placeholder="Ej: Descansando 5 min ☕"
+              className="rounded-app border border-border bg-surface-2 px-3 py-2 text-sm text-text-primary outline-none"
+            />
+            <p className="text-right text-[10px] text-text-muted">{textoEstadoForm.length}/50</p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                disabled={guardandoEstado || !textoEstadoForm.trim()}
+                onClick={guardarEstadoMapa}
+                className="btn-hero flex-1 rounded-app px-4 py-2 text-sm disabled:opacity-50"
+              >
+                Guardar
+              </button>
+              {miEstadoTexto && (
+                <button
+                  type="button"
+                  disabled={guardandoEstado}
+                  onClick={quitarEstadoMapa}
+                  className="rounded-app border border-border px-4 py-2 text-sm text-fill-warning"
+                >
+                  Quitar
+                </button>
+              )}
+            </div>
             <button
               type="button"
-              disabled={!posicion || !activable}
-              onClick={activarPatinando}
-              className="btn-hero rounded-app px-4 py-2 text-sm disabled:opacity-50"
+              onClick={() => setMostrarEditorEstado(false)}
+              className="text-xs text-text-secondary underline"
             >
-              Compartir ubicación de esta rodada
+              Cancelar
             </button>
           </div>
-        );
-      })()}
-
-      {rodadaActiva && patinando && (
-        <p className="text-xs text-fill-success">
-          Estás compartiendo tu ubicación para &quot;{rodadaActiva.titulo}&quot;.
-        </p>
-      )}
-
-      <div className="card flex flex-col gap-2 p-4">
-        <h2 className="text-sm font-semibold text-text-accent">Rodando — Activo</h2>
-        <p className="text-xs text-text-secondary">
-          {patinando
-            ? "Estás compartiendo tu ubicación con la comunidad."
-            : "Activa esto para que otros te vean patinando ahora."}
-        </p>
-        <button
-          type="button"
-          disabled={!posicion}
-          onClick={patinando ? terminarPatinando : activarPatinando}
-          className={`rounded-app px-4 py-2 text-sm disabled:opacity-50 ${
-            patinando ? "card text-fill-warning" : "btn-hero"
-          }`}
-        >
-          {patinando ? "Terminar de patinar" : "Estoy patinando ahora"}
-        </button>
-      </div>
-
-      <div className="card flex flex-col gap-2 p-4">
-        <h2 className="text-sm font-semibold text-text-accent">Grabar recorrido</h2>
-        {grabando ? (
-          <>
-            <p className="text-xs text-text-secondary">
-              Grabando... {puntosGrabados.length} puntos registrados.
-            </p>
-            <button
-              type="button"
-              onClick={detenerGrabacion}
-              className="card rounded-app px-4 py-2 text-sm text-fill-warning"
-            >
-              Detener grabación
-            </button>
-          </>
-        ) : (
-          <button
-            type="button"
-            disabled={!posicion}
-            onClick={iniciarGrabacion}
-            className="btn-hero rounded-app px-4 py-2 text-sm disabled:opacity-50"
-          >
-            Iniciar grabación
-          </button>
-        )}
-
-        {resumen && (
-          <p className="text-xs text-fill-success">
-            Recorrido guardado: {resumen.distanciaKm.toFixed(2)} km en{" "}
-            {Math.round(resumen.duracionSeg / 60)} min.
-          </p>
-        )}
-      </div>
-
-      {misRecorridos.length > 0 && (
-        <div className="card flex flex-col gap-2 p-4">
-          <h2 className="text-sm font-semibold text-text-accent">Historial de recorridos</h2>
-          <ul className="flex flex-col gap-1">
-            {misRecorridos.map((r) => (
-              <li key={r.id} className="text-xs text-text-secondary">
-                {new Date(r.createdAt).toLocaleDateString("es-CL")} — {r.distanciaKm.toFixed(2)} km —{" "}
-                {Math.round(r.duracionSeg / 60)} min
-              </li>
-            ))}
-          </ul>
         </div>
       )}
-        </>
+
+      {avisoInactividad && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-6">
+          <div className="card flex w-full max-w-xs flex-col gap-3 p-5">
+            <h2 className="text-sm font-semibold text-text-accent">¿Has terminado tu patinada?</h2>
+            <p className="text-xs text-text-secondary">
+              No detectamos movimiento en los últimos {MIN_AVISO_INACTIVIDAD} minutos. Si no
+              respondes, finalizaremos automáticamente en {MIN_CIERRE_AUTOMATICO} minutos.
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={finalizarModo}
+                className="btn-hero rounded-app px-4 py-2 text-sm"
+              >
+                ✅ Finalizar recorrido
+              </button>
+              <button
+                type="button"
+                onClick={continuarPatinando}
+                className="rounded-app border border-border px-4 py-2 text-sm text-text-primary"
+              >
+                ▶️ Continuar patinando
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -6,6 +6,7 @@ import { apiGet, apiPatch, apiPut, apiDelete, ApiError } from "@/lib/api";
 import { ETIQUETA_TECNICA, type MiPerfil, type TecnicasPerfil } from "@/lib/perfil";
 import { ETIQUETA_MOTIVO, type MiEmergencia } from "@/lib/emergencias";
 import type { Post } from "@/lib/posts";
+import { ImageUploadCrop } from "@/components/ImageUploadCrop";
 
 interface RecorridoResumen {
   id: number;
@@ -93,6 +94,26 @@ export default function PerfilPage() {
     }
   }
 
+  async function guardarFoto(url: string) {
+    if (!token) return;
+    try {
+      await apiPut("/perfil/foto", { fotoUrl: url }, token);
+      cargar();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "No se pudo guardar la foto.");
+    }
+  }
+
+  async function quitarFoto() {
+    if (!token) return;
+    try {
+      await apiDelete("/perfil/foto", token);
+      cargar();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "No se pudo quitar la foto.");
+    }
+  }
+
   async function cancelarEmergencia() {
     if (!token) return;
     try {
@@ -109,11 +130,39 @@ export default function PerfilPage() {
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="card flex flex-col gap-1 p-5">
-        <h1 className="text-lg font-semibold text-text-accent">{perfil.nombre}</h1>
-        <p className="text-xs text-text-secondary">
-          {perfil.ciudad ?? "Sin ciudad"} · {perfil.rol}
-        </p>
+      <div className="card flex flex-col items-center gap-3 p-5">
+        {perfil.fotoUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={perfil.fotoUrl}
+            alt={perfil.nombre}
+            className="h-20 w-20 rounded-full border-2 border-border-accent object-cover"
+          />
+        ) : (
+          <div className="flex h-20 w-20 items-center justify-center rounded-full border-2 border-border-accent bg-bg-accent text-2xl font-semibold text-text-accent">
+            {perfil.nombre.charAt(0).toUpperCase()}
+          </div>
+        )}
+
+        <div className="flex flex-col items-center gap-1">
+          <h1 className="text-lg font-semibold text-text-accent">{perfil.nombre}</h1>
+          <p className="text-xs text-text-secondary">
+            {perfil.ciudad ?? "Sin ciudad"} · {perfil.rol}
+          </p>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <ImageUploadCrop
+            token={token}
+            onSubido={guardarFoto}
+            etiqueta={perfil.fotoUrl ? "Cambiar foto" : "Agregar foto de perfil"}
+          />
+          {perfil.fotoUrl && (
+            <button type="button" onClick={quitarFoto} className="text-xs text-fill-warning underline">
+              Quitar foto
+            </button>
+          )}
+        </div>
       </div>
 
       {error && <p className="text-xs text-fill-warning">{error}</p>}
