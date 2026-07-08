@@ -26,3 +26,18 @@ export function distanciaTotalKm(puntos: PuntoGps[]): number {
   }
   return total;
 }
+
+// Velocidad máxima entre dos puntos consecutivos (km/h), usada en la ficha de
+// detalle de "Mis rutas". Como los puntos vienen decimados desde el backend,
+// esto es una aproximación (no ve cada micro-tramo real del recorrido).
+export function velocidadMaximaKmH(puntos: PuntoGps[]): number {
+  let maxima = 0;
+  for (let i = 1; i < puntos.length; i++) {
+    const dtSeg = (puntos[i].timestamp - puntos[i - 1].timestamp) / 1000;
+    if (dtSeg <= 0) continue;
+    const distKm = distanciaHaversineKm(puntos[i - 1], puntos[i]);
+    const kmh = (distKm / dtSeg) * 3600;
+    if (kmh > maxima) maxima = kmh;
+  }
+  return maxima;
+}

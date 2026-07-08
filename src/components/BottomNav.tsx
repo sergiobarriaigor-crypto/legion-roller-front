@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
@@ -12,7 +13,15 @@ import {
   IconShieldLock,
 } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
-import { RutasMapeadasModal } from "@/components/RutasMapeadasModal";
+
+// MisRutasPanel usa Leaflet (necesita el navegador) para la ficha de detalle;
+// BottomNav se renderiza en el servidor en cada pantalla, así que este import
+// no puede ser estático (mismo motivo por el que /mapa carga MapaView con
+// ssr: false).
+const MisRutasPanel = dynamic(
+  () => import("@/components/Mapa/MisRutasPanel").then((m) => m.MisRutasPanel),
+  { ssr: false },
+);
 
 const HOLD_MS = 1500;
 
@@ -139,7 +148,7 @@ export function BottomNav() {
       </nav>
 
       {mostrarRutas && (
-        <RutasMapeadasModal token={sesion?.token ?? null} onClose={() => setMostrarRutas(false)} />
+        <MisRutasPanel token={sesion?.token ?? null} onClose={() => setMostrarRutas(false)} />
       )}
     </>
   );

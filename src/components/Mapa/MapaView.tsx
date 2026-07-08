@@ -12,6 +12,7 @@ import type { Publicacion } from "@/lib/publicaciones";
 import { combinarFechaHora, rodadaEnVentana, rodadaActivable, minutosHasta } from "@/lib/rodadas";
 import { ETIQUETA_MOTIVO, type EmergenciaActiva } from "@/lib/emergencias";
 import { PatinadoresActivosPanel } from "@/components/Mapa/PatinadoresActivosPanel";
+import { MisRutasPanel } from "@/components/Mapa/MisRutasPanel";
 
 // Centro por defecto: entre Puerto Montt y Puerto Varas (sección 1 del PDF).
 const CENTRO_DEFECTO: [number, number] = [-41.4, -72.96];
@@ -24,6 +25,9 @@ const MIN_CIERRE_AUTOMATICO = 10;
 // Zoom usado para centrar el mapa automáticamente al activar un modo (más cercano
 // que el zoom inicial de la sección 1 del PDF, pensado para ubicarte de un vistazo).
 const ZOOM_CENTRADO_AUTOMATICO = 16;
+
+// Mismo patrón de tap-vs-hold que el botón central del bottom-nav.
+const HOLD_MS_CENTRAR = 1500;
 
 type Modo = "patinando" | "ruta" | null;
 
@@ -149,14 +153,6 @@ function PopupOtroMiembro({
   );
 }
 
-interface RecorridoResumen {
-  id: number;
-  tipo: string;
-  distanciaKm: number;
-  duracionSeg: number;
-  createdAt: string;
-}
-
 export function MapaView() {
   const { sesion } = useSession();
   const token = sesion?.token ?? null;
@@ -168,7 +164,6 @@ export function MapaView() {
   const [grabando, setGrabando] = useState(false);
   const [puntosGrabados, setPuntosGrabados] = useState<PuntoGps[]>([]);
   const [resumen, setResumen] = useState<{ distanciaKm: number; duracionSeg: number } | null>(null);
-  const [misRecorridos, setMisRecorridos] = useState<RecorridoResumen[]>([]);
   const [emergenciasActivas, setEmergenciasActivas] = useState<EmergenciaActiva[]>([]);
   const [mensaje, setMensaje] = useState("");
   const [rodadaActiva, setRodadaActiva] = useState<Publicacion | null>(null);
@@ -182,6 +177,8 @@ export function MapaView() {
   const [guardandoEstado, setGuardandoEstado] = useState(false);
 
   const [avisoInactividad, setAvisoInactividad] = useState(false);
+  const [mostrarPreguntaMapeo, setMostrarPreguntaMapeo] = useState(false);
+  const [mostrarMisRutas, setMostrarMisRutas] = useState(false);
 
   const posicionRef = useRef<{ lat: number; lon: number } | null>(null);
   const grabandoRef = useRef(false);
@@ -199,6 +196,8 @@ export function MapaView() {
   const avisoInactividadRef = useRef(false);
   const cierreAutomaticoTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const necesitaCentrarInicialRef = useRef(false);
+  const holdCentrarTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const holdCentrarActivadoRef = useRef(false);
 
   useEffect(() => {
     modoRef.current = modo;
@@ -358,17 +357,24 @@ export function MapaView() {
     necesitaCentrarInicialRef.current = true;
     ultimaPosSignificativaRef.current = null;
     ultimoMovimientoEnRef.current = Date.now();
-
-    if (nuevoModo === "ruta") {
-      setPuntosGrabados([]);
-      puntosGrabadosRef.current = [];
-      inicioGrabacionRef.current = Date.now();
-      grabandoRef.current = true;
-      setGrabando(true);
-      setResumen(null);
-    }
-
+    setResumen(null);
     setModo(nuevoModo);
+    setMostrarPreguntaMapeo(true);
+  }
+
+  // El mapeo de ruta ahora es independiente del modo elegido: se pregunta
+  // apenas se activa cualquiera de los dos, en vez de asumirlo solo con "en ruta".
+  function confirmarMapeoSi() {
+    setPuntosGrabados([]);
+    puntosGrabadosRef.current = [];
+    inicioGrabacionRef.current = Date.now();
+    grabandoRef.current = true;
+    setGrabando(true);
+    setMostrarPreguntaMapeo(false);
+  }
+
+  function confirmarMapeoNo() {
+    setMostrarPreguntaMapeo(false);
   }
 
   function continuarPatinando() {
@@ -389,9 +395,10 @@ export function MapaView() {
     setAvisoInactividad(false);
     avisoInactividadRef.current = false;
 
-    const modoAlFinalizar = modoRef.current;
+    const estabaGrabando = grabandoRef.current;
     const tokenActual = tokenRef.current;
     setModo(null);
+    setMostrarPreguntaMapeo(false);
 
     if (tokenActual) {
       try {
@@ -401,7 +408,7 @@ export function MapaView() {
       }
     }
 
-    if (modoAlFinalizar === "ruta") {
+    if (estabaGrabando) {
       grabandoRef.current = false;
       setGrabando(false);
 
@@ -417,28 +424,12 @@ export function MapaView() {
             { tipo: "libre", distanciaKm, duracionSeg, puntos },
             tokenActual,
           );
-          cargarMisRecorridos();
         } catch (err) {
           setMensaje(err instanceof ApiError ? err.message : "No se pudo guardar el recorrido.");
         }
       }
     }
   }
-
-  async function cargarMisRecorridos() {
-    if (!token) return;
-    try {
-      const lista = await apiGet<RecorridoResumen[]>("/mapa/recorridos", token);
-      setMisRecorridos(lista);
-    } catch {
-      // ignorar
-    }
-  }
-
-  useEffect(() => {
-    cargarMisRecorridos();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
 
   // Detecta si tienes una rodada/evento confirmada (RSVP "Voy") dentro de la ventana
   // de 30 min antes hasta 3h después (sección 5 y 11 del PDF), para ofrecer compartir
@@ -476,6 +467,30 @@ export function MapaView() {
   function centrarEnMiUbicacion() {
     if (!posicion || !mapRef.current) return;
     mapRef.current.flyTo([posicion.lat, posicion.lon], mapRef.current.getZoom());
+  }
+
+  // Mismo patrón tap-vs-hold que el botón central del bottom-nav: toque simple
+  // centra el mapa, mantener presionado 1.5s abre el panel de "Mis rutas".
+  function iniciarHoldCentrar() {
+    holdCentrarActivadoRef.current = false;
+    holdCentrarTimeoutRef.current = setTimeout(() => {
+      holdCentrarActivadoRef.current = true;
+      limpiarHoldCentrar();
+      setMostrarMisRutas(true);
+    }, HOLD_MS_CENTRAR);
+  }
+
+  function limpiarHoldCentrar() {
+    if (holdCentrarTimeoutRef.current) clearTimeout(holdCentrarTimeoutRef.current);
+    holdCentrarTimeoutRef.current = null;
+  }
+
+  function onPointerUpCentrar() {
+    const seActivoElHold = holdCentrarActivadoRef.current;
+    limpiarHoldCentrar();
+    if (!seActivoElHold) {
+      centrarEnMiUbicacion();
+    }
   }
 
   // El contenedor del mapa cambia de tamaño al entrar/salir de pantalla completa;
@@ -602,9 +617,12 @@ export function MapaView() {
 
         <button
           type="button"
-          aria-label="Centrar en mi ubicación"
+          aria-label="Centrar en mi ubicación: mantén presionado para ver tus rutas"
           disabled={!posicion}
-          onClick={centrarEnMiUbicacion}
+          onPointerDown={iniciarHoldCentrar}
+          onPointerUp={onPointerUpCentrar}
+          onPointerLeave={limpiarHoldCentrar}
+          onPointerCancel={limpiarHoldCentrar}
           className="absolute bottom-2 right-2 z-[1000] flex h-9 w-9 items-center justify-center rounded-full bg-surface-1/90 text-text-accent shadow disabled:opacity-40"
         >
           <IconCurrentLocation size={20} />
@@ -689,7 +707,7 @@ export function MapaView() {
             ) : (
               <>
                 <p className="text-xs text-fill-success">
-                  {modo === "ruta"
+                  {grabando
                     ? `Grabando tu ruta... ${puntosGrabados.length} puntos registrados.`
                     : "Estás compartiendo tu ubicación con la comunidad."}
                 </p>
@@ -701,7 +719,7 @@ export function MapaView() {
                   onClick={finalizarModo}
                   className="card rounded-app px-4 py-2 text-sm text-fill-warning"
                 >
-                  {modo === "ruta" ? "Finalizar recorrido" : "Terminar de patinar"}
+                  {grabando ? "Finalizar recorrido" : "Terminar de patinar"}
                 </button>
               </>
             )}
@@ -717,20 +735,6 @@ export function MapaView() {
           <PatinadoresActivosPanel
             patinadores={otros.filter((o) => o.modo === "patinando")}
           />
-
-          {misRecorridos.length > 0 && (
-            <div className="card flex flex-col gap-2 p-4">
-              <h2 className="text-sm font-semibold text-text-accent">Historial de recorridos</h2>
-              <ul className="flex flex-col gap-1">
-                {misRecorridos.map((r) => (
-                  <li key={r.id} className="text-xs text-text-secondary">
-                    {new Date(r.createdAt).toLocaleDateString("es-CL")} — {r.distanciaKm.toFixed(2)} km —{" "}
-                    {Math.round(r.duracionSeg / 60)} min
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
         </>
       )}
 
@@ -810,6 +814,38 @@ export function MapaView() {
             </div>
           </div>
         </div>
+      )}
+
+      {mostrarPreguntaMapeo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-6">
+          <div className="card flex w-full max-w-xs flex-col gap-3 p-5">
+            <h2 className="text-sm font-semibold text-text-accent">¿Quieres mapear tu ruta?</h2>
+            <p className="text-xs text-text-secondary">
+              Además de compartir tu ubicación, podemos dibujar tu recorrido en el mapa y
+              guardarlo con distancia, tiempo y velocidad al terminar.
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={confirmarMapeoSi}
+                className="btn-hero rounded-app px-4 py-2 text-sm"
+              >
+                Sí, mapear ruta
+              </button>
+              <button
+                type="button"
+                onClick={confirmarMapeoNo}
+                className="rounded-app border border-border px-4 py-2 text-sm text-text-primary"
+              >
+                No, gracias
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {mostrarMisRutas && (
+        <MisRutasPanel token={token} onClose={() => setMostrarMisRutas(false)} />
       )}
     </div>
   );
