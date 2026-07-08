@@ -20,6 +20,10 @@ const KM_MOVIMIENTO_SIGNIFICATIVO = 0.03; // ~30 metros
 const MIN_AVISO_INACTIVIDAD = 25; // dentro del rango pedido (20 a 30 min)
 const MIN_CIERRE_AUTOMATICO = 10;
 
+// Zoom usado para centrar el mapa automáticamente al activar un modo (más cercano
+// que el zoom inicial de la sección 1 del PDF, pensado para ubicarte de un vistazo).
+const ZOOM_CENTRADO_AUTOMATICO = 16;
+
 type Modo = "patinando" | "ruta" | null;
 
 function escapeHtml(texto: string) {
@@ -191,6 +195,7 @@ export function MapaView() {
   const ultimoMovimientoEnRef = useRef<number>(Date.now());
   const avisoInactividadRef = useRef(false);
   const cierreAutomaticoTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const necesitaCentrarInicialRef = useRef(false);
 
   useEffect(() => {
     modoRef.current = modo;
@@ -260,6 +265,11 @@ export function MapaView() {
         if (necesitaEnvioInicialRef.current && tokenRef.current) {
           necesitaEnvioInicialRef.current = false;
           apiPost("/mapa/patinando", punto, tokenRef.current).catch(() => {});
+        }
+
+        if (necesitaCentrarInicialRef.current && mapRef.current) {
+          necesitaCentrarInicialRef.current = false;
+          mapRef.current.flyTo([punto.lat, punto.lon], ZOOM_CENTRADO_AUTOMATICO);
         }
       },
       () => setErrorGeo("No se pudo obtener tu ubicación (revisa los permisos)."),
@@ -342,6 +352,7 @@ export function MapaView() {
   function activarModo(nuevoModo: "patinando" | "ruta") {
     setMensaje("");
     necesitaEnvioInicialRef.current = true;
+    necesitaCentrarInicialRef.current = true;
     ultimaPosSignificativaRef.current = null;
     ultimoMovimientoEnRef.current = Date.now();
 
