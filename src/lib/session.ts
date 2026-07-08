@@ -11,8 +11,9 @@ export interface Sesion {
 const CLAVE_SESION = "legion-roller:sesion";
 export const DIAS_VIGENCIA_SESION = 30;
 
-// Rutas ocultas para el rol Visitante (ver sección 3 de la especificación: Mapa y Perfil ocultos)
-export const RUTAS_RESTRINGIDAS_VISITANTE = ["/mapa", "/perfil"];
+// Rutas ocultas para el rol Visitante (ver sección 3 de la especificación: Mapa y Perfil ocultos;
+// Chat depende de Perfil, así que también queda oculto)
+export const RUTAS_RESTRINGIDAS_VISITANTE = ["/mapa", "/perfil", "/chat"];
 
 export function rutaInicialParaRol(rol: Rol): string {
   return rol === "visitante" ? "/comunidad" : "/mapa";
