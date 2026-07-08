@@ -23,6 +23,7 @@ export interface Emprendedor {
   instagram: string | null;
   facebook: string | null;
   tiktok: string | null;
+  fotos: string[];
   aprobado: boolean;
   solicitadoAt: string;
   reaccionesCount: number;

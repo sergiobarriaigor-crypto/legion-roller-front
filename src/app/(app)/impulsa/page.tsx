@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useSession } from "@/context/SessionContext";
 import { apiGet, apiPost, apiDelete, ApiError } from "@/lib/api";
 import type { Emprendedor } from "@/lib/emprendedores";
+import { ImageUploadCrop } from "@/components/ImageUploadCrop";
 
 type SubTab = "directorio" | "ficha";
 
@@ -27,6 +28,7 @@ export default function ImpulsaPage() {
   const [directorio, setDirectorio] = useState<Emprendedor[]>([]);
   const [miFicha, setMiFicha] = useState<Emprendedor | null>(null);
   const [form, setForm] = useState(FICHA_VACIA);
+  const [fotos, setFotos] = useState<string[]>([]);
   const [nuevoAnuncio, setNuevoAnuncio] = useState("");
   const [resenaAbierta, setResenaAbierta] = useState<number | null>(null);
   const [textoResena, setTextoResena] = useState("");
@@ -58,6 +60,7 @@ export default function ImpulsaPage() {
           facebook: ficha.facebook ?? "",
           tiktok: ficha.tiktok ?? "",
         });
+        setFotos(ficha.fotos ?? []);
       }
     } catch {
       // ignorar
@@ -84,6 +87,7 @@ export default function ImpulsaPage() {
           instagram: form.instagram || undefined,
           facebook: form.facebook || undefined,
           tiktok: form.tiktok || undefined,
+          fotos: fotos.length > 0 ? fotos : undefined,
         },
         token,
       );
@@ -192,6 +196,19 @@ export default function ImpulsaPage() {
                   {e.rubro} · {e.nombreDuenio}
                 </p>
               </div>
+              {e.fotos.length > 0 && (
+                <div className="flex gap-2 overflow-x-auto">
+                  {e.fotos.map((url) => (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      key={url}
+                      src={url}
+                      alt={e.nombreNegocio}
+                      className="h-20 w-20 shrink-0 rounded-app object-cover"
+                    />
+                  ))}
+                </div>
+              )}
               <p className="text-sm text-text-secondary">{e.descripcion}</p>
               <p className="text-xs text-text-primary">Contacto: {e.contacto}</p>
               {e.ubicacion && <p className="text-xs text-text-muted">{e.ubicacion}</p>}
@@ -333,6 +350,23 @@ export default function ImpulsaPage() {
               onChange={(e) => setForm({ ...form, tiktok: e.target.value })}
               className="rounded-app border border-border bg-surface-2 px-3 py-2 text-text-primary outline-none"
             />
+            <div className="flex flex-wrap gap-2">
+              {fotos.map((url, i) => (
+                <div key={url} className="relative">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={url} alt="Foto del negocio" className="h-16 w-16 rounded-app object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => setFotos(fotos.filter((_, idx) => idx !== i))}
+                    className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-fill-warning text-[10px] text-on-primary"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+            <ImageUploadCrop token={token} onSubido={(url) => setFotos([...fotos, url])} etiqueta="Agregar foto del negocio" />
+
             <button
               type="submit"
               disabled={enviando}

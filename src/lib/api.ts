@@ -80,3 +80,22 @@ export async function apiDelete<T>(ruta: string, token: string | null): Promise<
   });
   return manejarRespuesta<T>(res);
 }
+
+export async function apiUpload<T>(
+  ruta: string,
+  archivo: Blob,
+  token: string | null,
+  nombreArchivo = "foto.jpg",
+): Promise<T> {
+  const formData = new FormData();
+  formData.append("archivo", archivo, nombreArchivo);
+  const headers: HeadersInit = {};
+  if (token) (headers as Record<string, string>).Authorization = `Bearer ${token}`;
+
+  const res = await fetch(`${API_URL}${ruta}`, {
+    method: "POST",
+    headers,
+    body: formData,
+  });
+  return manejarRespuesta<T>(res);
+}

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useSession } from "@/context/SessionContext";
 import { apiGet, apiPost, apiDelete, ApiError } from "@/lib/api";
 import type { Post } from "@/lib/posts";
+import { ImageUploadCrop } from "@/components/ImageUploadCrop";
 
 function tiempoRelativo(fecha: string): string {
   const minutos = Math.round((Date.now() - new Date(fecha).getTime()) / 60000);
@@ -147,13 +148,21 @@ export default function PostPage() {
                 onChange={(e) => setUbicacion(e.target.value)}
                 className="rounded-app border border-border bg-surface-2 px-3 py-2 text-text-primary outline-none"
               />
-              <input
-                type="url"
-                placeholder="URL de una foto (opcional)"
-                value={fotoUrl}
-                onChange={(e) => setFotoUrl(e.target.value)}
-                className="rounded-app border border-border bg-surface-2 px-3 py-2 text-text-primary outline-none"
-              />
+              {fotoUrl ? (
+                <div className="flex items-center gap-2">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={fotoUrl} alt="Foto elegida" className="h-16 w-16 rounded-app object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => setFotoUrl("")}
+                    className="text-xs text-fill-warning underline"
+                  >
+                    Quitar foto
+                  </button>
+                </div>
+              ) : (
+                <ImageUploadCrop token={token} onSubido={setFotoUrl} etiqueta="Agregar foto (opcional)" />
+              )}
               <div className="flex gap-2">
                 <button
                   type="submit"

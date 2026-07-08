@@ -33,6 +33,7 @@ export interface Publicacion {
   rsvp: boolean;
   duracionHoras: number | null;
   activaEnMapa: boolean;
+  fotos: string[];
   createdAt: string;
   rsvpCounts: { yes: number; maybe: number; no: number };
 }

@@ -91,6 +91,20 @@ export default function ComunidadPage() {
             <h2 className="text-sm font-semibold text-text-primary">{p.titulo}</h2>
             <p className="text-sm text-text-secondary">{p.texto}</p>
 
+            {p.fotos.length > 0 && (
+              <div className="flex gap-2 overflow-x-auto">
+                {p.fotos.map((url) => (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    key={url}
+                    src={url}
+                    alt={p.titulo}
+                    className="h-24 w-24 shrink-0 rounded-app object-cover"
+                  />
+                ))}
+              </div>
+            )}
+
             {(p.fecha || p.hora || p.puntoEncuentro) && (
               <p className="text-xs text-text-muted">
                 {[p.fecha, p.hora, p.puntoEncuentro].filter(Boolean).join(" · ")}
