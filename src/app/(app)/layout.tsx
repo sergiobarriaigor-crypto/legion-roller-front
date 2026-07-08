@@ -4,6 +4,7 @@ import { useEffect, type ReactNode } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { AppHeader } from "@/components/AppHeader";
 import { BottomNav } from "@/components/BottomNav";
+import { EmergenciaBanner } from "@/components/EmergenciaBanner";
 import { useSession } from "@/context/SessionContext";
 import { RUTAS_RESTRINGIDAS_VISITANTE } from "@/lib/session";
 
@@ -47,6 +48,7 @@ export default function AppGroupLayout({
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-md flex-1 flex-col bg-page-bg">
       <AppHeader />
+      {sesion.rol !== "visitante" && <EmergenciaBanner />}
 
       {sesion.rol === "visitante" && (
         <div className="flex items-center justify-between bg-bg-accent px-4 py-2 text-xs text-amber-text">

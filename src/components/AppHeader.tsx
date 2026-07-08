@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { IconAlertTriangle, IconBell, IconMessageCircle2 } from "@tabler/icons-react";
+import { IconBell, IconMessageCircle2 } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
 import { apiGet } from "@/lib/api";
 import type { Conversaciones } from "@/lib/chat";
+import { SosButton } from "@/components/SosButton";
 
 export function AppHeader() {
   const { sesion } = useSession();
@@ -33,13 +34,7 @@ export function AppHeader() {
 
   return (
     <header className="flex items-center justify-between px-4 py-3 border-b border-border bg-page-bg">
-      <button
-        type="button"
-        aria-label="Emergencia / SOS"
-        className="flex h-9 w-9 items-center justify-center rounded-full bg-fill-warning/10 text-fill-warning"
-      >
-        <IconAlertTriangle size={20} />
-      </button>
+      <SosButton />
 
       <div className="flex items-center gap-2">
         <span className="text-lg font-bold tracking-wide text-text-accent">

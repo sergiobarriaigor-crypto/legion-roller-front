@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useSession } from "@/context/SessionContext";
 import { apiGet, apiPatch, apiPut, apiDelete, ApiError } from "@/lib/api";
 import { ETIQUETA_TECNICA, type MiPerfil, type TecnicasPerfil } from "@/lib/perfil";
+import { ETIQUETA_MOTIVO, type MiEmergencia } from "@/lib/emergencias";
 import type { Post } from "@/lib/posts";
 
 interface RecorridoResumen {
@@ -23,6 +24,7 @@ export default function PerfilPage() {
   const [perfil, setPerfil] = useState<MiPerfil | null>(null);
   const [misPosts, setMisPosts] = useState<Post[]>([]);
   const [misRecorridos, setMisRecorridos] = useState<RecorridoResumen[]>([]);
+  const [miEmergencia, setMiEmergencia] = useState<MiEmergencia | null>(null);
   const [nuevoEstado, setNuevoEstado] = useState("");
   const [error, setError] = useState("");
 
@@ -43,6 +45,12 @@ export default function PerfilPage() {
     try {
       const recorridos = await apiGet<RecorridoResumen[]>("/mapa/recorridos", token);
       setMisRecorridos(recorridos);
+    } catch {
+      // ignorar
+    }
+    try {
+      const emergencia = await apiGet<MiEmergencia | null>("/emergencias/mia", token);
+      setMiEmergencia(emergencia);
     } catch {
       // ignorar
     }
@@ -85,6 +93,16 @@ export default function PerfilPage() {
     }
   }
 
+  async function cancelarEmergencia() {
+    if (!token) return;
+    try {
+      await apiDelete("/emergencias/mia", token);
+      cargar();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "No se pudo cancelar la emergencia.");
+    }
+  }
+
   if (!perfil) {
     return <p className="text-sm text-text-secondary">Cargando...</p>;
   }
@@ -99,6 +117,23 @@ export default function PerfilPage() {
       </div>
 
       {error && <p className="text-xs text-fill-warning">{error}</p>}
+
+      {miEmergencia && (
+        <div className="card flex items-center justify-between border-fill-warning bg-red-700/10 p-4">
+          <p className="text-xs text-fill-warning">
+            🚨 Tienes una emergencia activa —{" "}
+            {ETIQUETA_MOTIVO[miEmergencia.motivo as keyof typeof ETIQUETA_MOTIVO] ??
+              miEmergencia.motivo}
+          </p>
+          <button
+            type="button"
+            onClick={cancelarEmergencia}
+            className="text-xs text-fill-warning underline"
+          >
+            Cancelar
+          </button>
+        </div>
+      )}
 
       <div className="card flex flex-col gap-2 p-4">
         <h2 className="text-sm font-semibold text-text-primary">Estado</h2>

@@ -9,6 +9,7 @@ import { apiPost, apiGet, apiDelete, ApiError } from "@/lib/api";
 import { distanciaTotalKm, type PuntoGps } from "@/lib/geo";
 import type { Publicacion } from "@/lib/publicaciones";
 import { combinarFechaHora, rodadaEnVentana, rodadaActivable, minutosHasta } from "@/lib/rodadas";
+import { ETIQUETA_MOTIVO, type EmergenciaActiva } from "@/lib/emergencias";
 
 // Centro por defecto: entre Puerto Montt y Puerto Varas (sección 1 del PDF).
 const CENTRO_DEFECTO: [number, number] = [-41.4, -72.96];
@@ -24,6 +25,7 @@ function crearIcono(color: string) {
 
 const iconoYo = crearIcono("#C99A3D");
 const iconoOtro = crearIcono("#7EB3EE");
+const iconoEmergencia = crearIcono("#D8342F");
 
 interface OtroMiembro {
   miembroId: number;
@@ -105,6 +107,7 @@ export function MapaView() {
   const [puntosGrabados, setPuntosGrabados] = useState<PuntoGps[]>([]);
   const [resumen, setResumen] = useState<{ distanciaKm: number; duracionSeg: number } | null>(null);
   const [misRecorridos, setMisRecorridos] = useState<RecorridoResumen[]>([]);
+  const [emergenciasActivas, setEmergenciasActivas] = useState<EmergenciaActiva[]>([]);
   const [mensaje, setMensaje] = useState("");
   const [rodadaActiva, setRodadaActiva] = useState<Publicacion | null>(null);
 
@@ -157,6 +160,24 @@ export function MapaView() {
     const intervalo = setInterval(cargarOtros, 15000);
     return () => clearInterval(intervalo);
   }, [token, sesion?.id]);
+
+  // Etiqueta SOS roja: emergencias activas de otros miembros con ubicación conocida.
+  useEffect(() => {
+    if (!token) return;
+
+    async function cargarEmergencias() {
+      try {
+        const lista = await apiGet<EmergenciaActiva[]>("/emergencias/activas", token);
+        setEmergenciasActivas(lista);
+      } catch {
+        // silencioso
+      }
+    }
+
+    cargarEmergencias();
+    const intervalo = setInterval(cargarEmergencias, 15000);
+    return () => clearInterval(intervalo);
+  }, [token]);
 
   // Mientras "patinando" está activo, reenvía la ubicación cada 20s para no expirar (HORAS_VIGENCIA_PATINANDO).
   useEffect(() => {
@@ -294,8 +315,33 @@ export function MapaView() {
               pathOptions={{ color: "#C99A3D", weight: 4 }}
             />
           )}
+          {emergenciasActivas
+            .filter((e) => e.lat !== null && e.lon !== null)
+            .map((e) => (
+              <Marker key={e.id} position={[e.lat!, e.lon!]} icon={iconoEmergencia}>
+                <Popup>
+                  <div className="flex flex-col gap-1">
+                    <p className="font-semibold text-red-700">
+                      🚨 {e.nombre === sesion?.nombre ? "Tú" : e.nombre}
+                    </p>
+                    <p className="text-xs">
+                      {ETIQUETA_MOTIVO[e.motivo as keyof typeof ETIQUETA_MOTIVO] ?? e.motivo}
+                    </p>
+                    <a href="tel:131" className="text-xs font-semibold text-red-700 underline">
+                      Llamar 131
+                    </a>
+                  </div>
+                </Popup>
+              </Marker>
+            ))}
         </MapContainer>
       </div>
+
+      {emergenciasActivas.length > 0 && (
+        <div className="card border-fill-warning bg-red-700/10 p-3 text-xs text-fill-warning">
+          🚨 {emergenciasActivas.length === 1 ? "Hay una emergencia activa" : `Hay ${emergenciasActivas.length} emergencias activas`} en el mapa.
+        </div>
+      )}
 
       {errorGeo && <p className="text-xs text-fill-warning">{errorGeo}</p>}
       {mensaje && <p className="text-xs text-fill-warning">{mensaje}</p>}
