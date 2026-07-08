@@ -105,6 +105,12 @@ function FichaRecorrido({ recorrido }: { recorrido: Recorrido }) {
 
   return (
     <div className="flex flex-col gap-3">
+      <div className="flex items-baseline justify-between">
+        <h3 className="text-sm font-semibold text-text-accent">Recorrido</h3>
+        <span className="text-sm font-semibold text-text-primary">
+          {recorrido.distanciaKm.toFixed(2)} km
+        </span>
+      </div>
       <div className="overflow-hidden rounded-app" style={{ height: 200 }}>
         <MapContainer
           bounds={bounds}
@@ -137,11 +143,10 @@ function FichaRecorrido({ recorrido }: { recorrido: Recorrido }) {
         </MapContainer>
       </div>
 
-      <div className="grid grid-cols-2 gap-2">
-        <TarjetaStat etiqueta="Distancia" valor={`${recorrido.distanciaKm.toFixed(2)} km`} />
+      <div className="grid grid-cols-3 gap-2">
         <TarjetaStat etiqueta="Tiempo total" valor={`${Math.round(recorrido.duracionSeg / 60)} min`} />
-        <TarjetaStat etiqueta="Vel. promedio" valor={`${velocidadPromedio.toFixed(1)} km/h`} />
-        <TarjetaStat etiqueta="Vel. máxima" valor={`${velocidadMaxima.toFixed(1)} km/h`} />
+        <TarjetaStat etiqueta="Vel. promedio" valor={`${Math.round(velocidadPromedio)} km/h`} />
+        <TarjetaStat etiqueta="Vel. máxima" valor={`${Math.round(velocidadMaxima)} km/h`} />
       </div>
 
       <div className="card flex flex-col gap-1 p-4 text-xs text-text-secondary">
