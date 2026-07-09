@@ -379,8 +379,12 @@ export function MisRutasPanel({
 
       <div className="fixed inset-x-0 bottom-0 z-50 flex justify-center pointer-events-none">
         <div
-          className="card pointer-events-auto flex w-full max-w-md flex-col gap-3 rounded-b-none p-4 shadow-2xl transition-[height] duration-150"
-          style={{ height: `${alturaVh}vh` }}
+          className="card pointer-events-auto flex w-full max-w-md flex-col gap-3 rounded-b-none bg-cover bg-center bg-no-repeat p-4 shadow-2xl transition-[height] duration-150"
+          style={{
+            height: `${alturaVh}vh`,
+            backgroundImage:
+              "linear-gradient(to bottom, rgba(23,16,8,0.55) 0%, rgba(23,16,8,0.75) 45%, rgba(23,16,8,0.92) 100%), url(/fondo-mis-rutas.jpg)",
+          }}
         >
         <div
           className="-mt-1 flex cursor-grab flex-col items-center gap-2 pt-1 active:cursor-grabbing"

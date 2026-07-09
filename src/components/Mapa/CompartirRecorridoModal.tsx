@@ -20,34 +20,45 @@ export function CompartirRecorridoModal({
   const [comentario, setComentario] = useState("");
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [blob, setBlob] = useState<Blob | null>(null);
-  const [generando, setGenerando] = useState(true);
+  const [cargandoInicial, setCargandoInicial] = useState(true);
   const [estado, setEstado] = useState<Estado>("editando");
   const [error, setError] = useState("");
   const blobUrlRef = useRef<string | null>(null);
+  const generacionIdRef = useRef(0);
+  const primeraVezRef = useRef(true);
 
-  // Genera la tarjeta apenas se abre el modal, y la vuelve a generar si el
-  // usuario cambia el título/comentario (ambos quedan impresos en la imagen).
+  // Genera la tarjeta apenas se abre el modal (sin espera), y la vuelve a
+  // generar cuando el usuario cambia el título/comentario, pero con un
+  // pequeño debounce (600ms sin escribir) — regenerar en cada tecla hacía
+  // parpadear toda la vista previa a cada carácter. Mientras se regenera,
+  // la imagen anterior se mantiene visible; recién se reemplaza cuando la
+  // nueva está lista, así nunca queda en blanco.
   useEffect(() => {
-    let cancelado = false;
-    setGenerando(true);
-    generarTarjetaRecorrido({ ...datos, titulo: titulo || undefined, comentario: comentario || undefined })
-      .then((nuevoBlob) => {
-        if (cancelado) return;
-        if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
-        const url = URL.createObjectURL(nuevoBlob);
-        blobUrlRef.current = url;
-        setBlob(nuevoBlob);
-        setPreviewUrl(url);
-      })
-      .catch(() => {
-        if (!cancelado) setError("No se pudo generar la tarjeta del recorrido.");
-      })
-      .finally(() => {
-        if (!cancelado) setGenerando(false);
-      });
-    return () => {
-      cancelado = true;
-    };
+    const demora = primeraVezRef.current ? 0 : 600;
+    primeraVezRef.current = false;
+
+    const timeoutId = setTimeout(() => {
+      const idGeneracion = ++generacionIdRef.current;
+      generarTarjetaRecorrido({ ...datos, titulo: titulo || undefined, comentario: comentario || undefined })
+        .then((nuevoBlob) => {
+          if (generacionIdRef.current !== idGeneracion) return; // ya hay una más nueva en curso
+          if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
+          const url = URL.createObjectURL(nuevoBlob);
+          blobUrlRef.current = url;
+          setBlob(nuevoBlob);
+          setPreviewUrl(url);
+        })
+        .catch(() => {
+          if (generacionIdRef.current === idGeneracion) {
+            setError("No se pudo generar la tarjeta del recorrido.");
+          }
+        })
+        .finally(() => {
+          if (generacionIdRef.current === idGeneracion) setCargandoInicial(false);
+        });
+    }, demora);
+
+    return () => clearTimeout(timeoutId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [titulo, comentario]);
 
@@ -121,8 +132,8 @@ export function CompartirRecorridoModal({
         <h2 className="text-sm font-semibold text-text-accent">Compartir recorrido</h2>
 
         <div className="flex items-center justify-center overflow-hidden rounded-app bg-surface-2" style={{ height: 220 }}>
-          {generando && <p className="text-xs text-text-secondary">Generando tarjeta...</p>}
-          {!generando && previewUrl && (
+          {!previewUrl && <p className="text-xs text-text-secondary">Generando tarjeta...</p>}
+          {previewUrl && (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={previewUrl} alt="Vista previa del recorrido" className="h-full w-full object-contain" />
           )}
@@ -153,7 +164,7 @@ export function CompartirRecorridoModal({
 
             <button
               type="button"
-              disabled={generando || estado === "publicando" || !blob}
+              disabled={cargandoInicial || estado === "publicando" || !blob}
               onClick={publicarEnPost}
               className="btn-hero flex items-center justify-center gap-1.5 rounded-app px-4 py-2 text-sm disabled:opacity-50"
             >
@@ -162,7 +173,7 @@ export function CompartirRecorridoModal({
             </button>
             <button
               type="button"
-              disabled={generando || !blob}
+              disabled={cargandoInicial || !blob}
               onClick={compartirEnRedes}
               className="flex items-center justify-center gap-1.5 rounded-app border border-border-accent px-4 py-2 text-sm text-text-accent disabled:opacity-50"
             >
