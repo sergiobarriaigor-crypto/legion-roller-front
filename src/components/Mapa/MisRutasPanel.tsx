@@ -202,7 +202,7 @@ function FichaRecorrido({
           <IconTrophy size={16} className="text-text-accent" />
           <h3 className="text-sm font-semibold text-text-accent">Recorrido</h3>
         </div>
-        <div className="overflow-hidden rounded-app" style={{ height: 240 }}>
+        <div className="isolate overflow-hidden rounded-app" style={{ height: 240 }}>
           <MapContainer
             bounds={bounds}
             boundsOptions={{ padding: [20, 20] }}

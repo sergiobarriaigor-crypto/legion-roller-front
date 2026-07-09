@@ -27,7 +27,7 @@ function escapeXml(texto: string): string {
     .replace(/'/g, "&apos;");
 }
 
-function construirSvg(datos: DatosTarjetaRecorrido): string {
+function construirSvg(datos: DatosTarjetaRecorrido, logoDataUrl: string | null): string {
   const { puntos } = datos;
   const mapaAncho = ANCHO - PADDING * 2;
 
@@ -79,11 +79,17 @@ function construirSvg(datos: DatosTarjetaRecorrido): string {
     ? `<text x="${ANCHO / 2}" y="${statsY + (datos.titulo ? 130 : 95)}" text-anchor="middle" font-family="Arial, sans-serif" font-size="22" fill="#b8ada0">${escapeXml(datos.comentario)}</text>`
     : "";
 
+  const TAM_LOGO = 90;
+  const marcaSvg = logoDataUrl
+    ? `<image href="${logoDataUrl}" x="${ANCHO / 2 - TAM_LOGO / 2}" y="18" width="${TAM_LOGO}" height="${TAM_LOGO}" />`
+    : `<text x="${ANCHO / 2}" y="72" text-anchor="middle" font-family="Arial, sans-serif" font-size="42" font-weight="800" fill="#e7c168" letter-spacing="2">LEGIÓN ROLLER</text>`;
+  const fechaY = logoDataUrl ? TAM_LOGO + 45 : 125;
+
   return `
     <svg width="${ANCHO}" height="${ALTO}" viewBox="0 0 ${ANCHO} ${ALTO}" xmlns="http://www.w3.org/2000/svg">
       <rect width="${ANCHO}" height="${ALTO}" fill="#171008" />
-      <text x="${ANCHO / 2}" y="72" text-anchor="middle" font-family="Arial, sans-serif" font-size="42" font-weight="800" fill="#e7c168" letter-spacing="2">LEGIÓN ROLLER</text>
-      <text x="${ANCHO / 2}" y="125" text-anchor="middle" font-family="Arial, sans-serif" font-size="22" fill="#b8ada0">${escapeXml(datos.fecha)} · ${escapeXml(datos.sector)}</text>
+      ${marcaSvg}
+      <text x="${ANCHO / 2}" y="${fechaY}" text-anchor="middle" font-family="Arial, sans-serif" font-size="22" fill="#b8ada0">${escapeXml(datos.fecha)} · ${escapeXml(datos.sector)}</text>
       <rect x="${PADDING}" y="${MAPA_Y}" width="${mapaAncho}" height="${MAPA_ALTO}" rx="20" fill="#241a10" stroke="#3a2c1a" stroke-width="2" />
       <polyline points="${trazo}" fill="none" stroke="#C99A3D" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" />
       <circle cx="${x(inicio.lon)}" cy="${y(inicio.lat)}" r="11" fill="#5fae4e" stroke="#171008" stroke-width="3" />
@@ -91,9 +97,23 @@ function construirSvg(datos: DatosTarjetaRecorrido): string {
       ${statsSvg}
       ${tituloSvg}
       ${comentarioSvg}
-      <text x="${ANCHO / 2}" y="${ALTO - 30}" text-anchor="middle" font-family="Arial, sans-serif" font-size="16" fill="#6b5f4f">legionroller</text>
     </svg>
   `;
+}
+
+function cargarLogoDataUrl(): Promise<string | null> {
+  return fetch("/logo-legion-roller-mini.png")
+    .then((res) => (res.ok ? res.blob() : Promise.reject(new Error("logo no encontrado"))))
+    .then(
+      (blob) =>
+        new Promise<string | null>((resolve) => {
+          const lector = new FileReader();
+          lector.onload = () => resolve(typeof lector.result === "string" ? lector.result : null);
+          lector.onerror = () => resolve(null);
+          lector.readAsDataURL(blob);
+        }),
+    )
+    .catch(() => null);
 }
 
 // Genera la tarjeta visual del recorrido (mapa vectorial + estadísticas + logo)
@@ -101,7 +121,8 @@ function construirSvg(datos: DatosTarjetaRecorrido): string {
 // "canvas tainted by cross-origin data" que ocurriría si intentáramos capturar
 // tiles reales de OpenStreetMap con html2canvas.
 export async function generarTarjetaRecorrido(datos: DatosTarjetaRecorrido): Promise<Blob> {
-  const svg = construirSvg(datos);
+  const logoDataUrl = await cargarLogoDataUrl();
+  const svg = construirSvg(datos, logoDataUrl);
   const svgDataUrl = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`;
 
   return new Promise((resolve, reject) => {
