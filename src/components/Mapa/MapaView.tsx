@@ -135,99 +135,43 @@ interface OtroMiembro {
   iniciadoEn: string;
 }
 
-type VistaPopupOtro = "acciones" | "reconocimiento";
-
-// Tarjeta emergente al tocar la foto de otro patinador en el mapa: arranca con
-// dos botones (mensaje directo / reconocimiento breve); "reconocimiento" abre
-// el formulario chico en el mismo popup, sin navegar a otra pantalla.
+// Tarjeta emergente al tocar la foto de otro patinador en el mapa: solo dos
+// botones (mensaje directo / reconocimiento breve). El formulario de
+// reconocimiento se abre en un modal aparte (no dentro de este Popup de
+// Leaflet) — un Popup se puede cerrar solo por gestos del mapa (clic fuera,
+// reposicionamiento al abrirse el teclado en el celular, etc.), lo que hacía
+// que el formulario desapareciera a mitad de escribir/enviar.
 function PopupOtroMiembro({
   miembro,
-  token,
   onAbrirChat,
+  onAbrirReconocimiento,
 }: {
   miembro: OtroMiembro;
-  token: string | null;
   onAbrirChat: (miembro: OtroMiembro) => void;
+  onAbrirReconocimiento: (miembro: OtroMiembro) => void;
 }) {
-  const [vista, setVista] = useState<VistaPopupOtro>("acciones");
-  const [texto, setTexto] = useState("");
-  const [enviando, setEnviando] = useState(false);
-  const [enviado, setEnviado] = useState(false);
-
-  async function enviarReconocimiento() {
-    if (!token || !texto.trim()) return;
-    setEnviando(true);
-    try {
-      await apiPost(`/perfil/${miembro.miembroId}/reconocimientos`, { texto }, token);
-      setEnviado(true);
-      setTexto("");
-    } catch {
-      // silencioso dentro del popup
-    } finally {
-      setEnviando(false);
-    }
-  }
-
   return (
     <div className="flex flex-col gap-2" style={{ minWidth: 180 }}>
       <p className="font-semibold">{miembro.nombre}</p>
 
-      {vista === "acciones" && (
-        <div className="flex flex-col gap-1.5">
-          <button
-            type="button"
-            onClick={() => onAbrirChat(miembro)}
-            className="flex items-center justify-center gap-1.5 rounded bg-amber-600 px-2 py-1.5 text-xs text-white"
-          >
-            <IconMessage2 size={14} />
-            Enviar mensaje
-          </button>
-          <button
-            type="button"
-            onClick={() => setVista("reconocimiento")}
-            className="flex items-center justify-center gap-1.5 rounded border border-amber-600 px-2 py-1.5 text-xs text-amber-700"
-          >
-            <IconHeartHandshake size={14} />
-            Enviar reconocimiento
-          </button>
-        </div>
-      )}
-
-      {vista === "reconocimiento" &&
-        (enviado ? (
-          <p className="text-xs text-green-700">¡Reconocimiento enviado!</p>
-        ) : (
-          <>
-            <input
-              type="text"
-              placeholder="Ej: Tremendo avance 💪"
-              value={texto}
-              maxLength={MAX_CARACTERES_RECONOCIMIENTO}
-              onChange={(e) => setTexto(e.target.value)}
-              className="rounded border border-gray-300 px-2 py-1 text-xs text-black outline-none"
-            />
-            <p className="text-right text-[10px] text-gray-500">
-              {texto.length}/{MAX_CARACTERES_RECONOCIMIENTO}
-            </p>
-            <div className="flex gap-1.5">
-              <button
-                type="button"
-                onClick={() => setVista("acciones")}
-                className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-700"
-              >
-                Volver
-              </button>
-              <button
-                type="button"
-                disabled={enviando || !texto.trim()}
-                onClick={enviarReconocimiento}
-                className="flex-1 rounded bg-amber-600 px-2 py-1 text-xs text-white disabled:opacity-50"
-              >
-                {enviando ? "Enviando..." : "Reconocer"}
-              </button>
-            </div>
-          </>
-        ))}
+      <div className="flex flex-col gap-1.5">
+        <button
+          type="button"
+          onClick={() => onAbrirChat(miembro)}
+          className="flex items-center justify-center gap-1.5 rounded bg-amber-600 px-2 py-1.5 text-xs text-white"
+        >
+          <IconMessage2 size={14} />
+          Enviar mensaje
+        </button>
+        <button
+          type="button"
+          onClick={() => onAbrirReconocimiento(miembro)}
+          className="flex items-center justify-center gap-1.5 rounded border border-amber-600 px-2 py-1.5 text-xs text-amber-700"
+        >
+          <IconHeartHandshake size={14} />
+          Enviar reconocimiento
+        </button>
+      </div>
     </div>
   );
 }
@@ -265,6 +209,10 @@ export function MapaView() {
     nombre: string;
     fotoUrl: string | null;
   } | null>(null);
+  const [reconocerA, setReconocerA] = useState<OtroMiembro | null>(null);
+  const [textoReconocimiento, setTextoReconocimiento] = useState("");
+  const [enviandoReconocimiento, setEnviandoReconocimiento] = useState(false);
+  const [reconocimientoEnviado, setReconocimientoEnviado] = useState(false);
 
   const posicionRef = useRef<{ lat: number; lon: number } | null>(null);
   const grabandoRef = useRef(false);
@@ -621,6 +569,24 @@ export function MapaView() {
     }
   }
 
+  async function enviarReconocimiento() {
+    if (!token || !reconocerA || !textoReconocimiento.trim()) return;
+    setEnviandoReconocimiento(true);
+    try {
+      await apiPost(
+        `/perfil/${reconocerA.miembroId}/reconocimientos`,
+        { texto: textoReconocimiento.trim() },
+        token,
+      );
+      setReconocimientoEnviado(true);
+      setTextoReconocimiento("");
+    } catch (err) {
+      setMensaje(err instanceof ApiError ? err.message : "No se pudo enviar el reconocimiento.");
+    } finally {
+      setEnviandoReconocimiento(false);
+    }
+  }
+
   return (
     <div className={pantallaCompleta ? "fixed inset-0 z-50 bg-page-bg" : "flex flex-col gap-3"}>
       <div
@@ -675,7 +641,6 @@ export function MapaView() {
               <Popup>
                 <PopupOtroMiembro
                   miembro={o}
-                  token={token}
                   onAbrirChat={(m) => {
                     if (sesion?.id == null) return;
                     setChatFlotante({
@@ -683,6 +648,11 @@ export function MapaView() {
                       nombre: m.nombre,
                       fotoUrl: m.fotoUrl,
                     });
+                  }}
+                  onAbrirReconocimiento={(m) => {
+                    setTextoReconocimiento("");
+                    setReconocimientoEnviado(false);
+                    setReconocerA(m);
                   }}
                 />
               </Popup>
@@ -919,6 +889,55 @@ export function MapaView() {
               className="text-xs text-text-secondary underline"
             >
               Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {reconocerA && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-6"
+          onClick={() => setReconocerA(null)}
+        >
+          <div
+            className="card flex w-full max-w-xs flex-col gap-3 p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-sm font-semibold text-text-accent">
+              Reconocimiento para {reconocerA.nombre}
+            </h2>
+            {reconocimientoEnviado ? (
+              <p className="text-sm text-green-500">¡Reconocimiento enviado!</p>
+            ) : (
+              <>
+                <input
+                  type="text"
+                  autoFocus
+                  placeholder="Ej: Tremendo avance 💪"
+                  value={textoReconocimiento}
+                  maxLength={MAX_CARACTERES_RECONOCIMIENTO}
+                  onChange={(e) => setTextoReconocimiento(e.target.value)}
+                  className="rounded-app border border-border bg-surface-2 px-3 py-2 text-sm text-text-primary outline-none"
+                />
+                <p className="text-right text-[10px] text-text-muted">
+                  {textoReconocimiento.length}/{MAX_CARACTERES_RECONOCIMIENTO}
+                </p>
+                <button
+                  type="button"
+                  disabled={enviandoReconocimiento || !textoReconocimiento.trim()}
+                  onClick={enviarReconocimiento}
+                  className="btn-hero rounded-app px-4 py-2 text-sm disabled:opacity-50"
+                >
+                  {enviandoReconocimiento ? "Enviando..." : "Reconocer"}
+                </button>
+              </>
+            )}
+            <button
+              type="button"
+              onClick={() => setReconocerA(null)}
+              className="text-xs text-text-secondary underline"
+            >
+              {reconocimientoEnviado ? "Cerrar" : "Cancelar"}
             </button>
           </div>
         </div>
