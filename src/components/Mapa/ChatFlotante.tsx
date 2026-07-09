@@ -8,9 +8,9 @@ import { apiGet, apiPost, ApiError } from "@/lib/api";
 import type { MensajeChat } from "@/lib/chat";
 
 // Chat flotante sobre el Mapa: al tocar "Enviar mensaje" en la tarjeta de otro
-// patinador, esto se abre como una hoja inferior (mismo patrón que
-// MisRutasPanel) en vez de navegar a /chat/[sala] — así no se pierde el
-// contexto del mapa ni a los demás patinadores visibles.
+// patinador, esto se abre como un modal centrado (mismo patrón que el modal
+// de "Enviar reconocimiento") en vez de navegar a /chat/[sala] — así no se
+// pierde el contexto del mapa ni a los demás patinadores visibles.
 export function ChatFlotante({
   sala,
   nombreOtro,
@@ -65,16 +65,15 @@ export function ChatFlotante({
   }
 
   return (
-    <>
-      {/* Mismo velo oscuro que MisRutasPanel, para que el mapa se siga viendo
-          de fondo pero sin competir visualmente. Tocarlo cierra. */}
-      <div className="fixed inset-0 z-40 bg-black/45" onClick={onClose} />
-
-      <div className="fixed inset-x-0 bottom-0 z-50 flex justify-center pointer-events-none">
-        <div
-          className="card pointer-events-auto flex w-full max-w-md flex-col gap-3 rounded-b-none p-4 shadow-2xl"
-          style={{ height: "48vh" }}
-        >
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-6"
+      onClick={onClose}
+    >
+      <div
+        className="card flex w-full max-w-xs flex-col gap-3 p-5 shadow-2xl"
+        style={{ height: "60vh" }}
+        onClick={(e) => e.stopPropagation()}
+      >
           <div className="flex items-center justify-between gap-2">
             <button
               type="button"
@@ -149,8 +148,7 @@ export function ChatFlotante({
               Enviar
             </button>
           </form>
-        </div>
       </div>
-    </>
+    </div>
   );
 }

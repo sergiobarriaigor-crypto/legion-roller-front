@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { MapContainer, TileLayer, Marker, Popup, Polyline, ZoomControl } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, Popup, Polyline, ZoomControl, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { IconMaximize, IconX, IconCurrentLocation, IconMap2, IconSatellite, IconMessage2, IconHeartHandshake } from "@tabler/icons-react";
@@ -150,6 +150,18 @@ function PopupOtroMiembro({
   onAbrirChat: (miembro: OtroMiembro) => void;
   onAbrirReconocimiento: (miembro: OtroMiembro) => void;
 }) {
+  const map = useMap();
+
+  function manejarAbrirChat() {
+    map.closePopup();
+    onAbrirChat(miembro);
+  }
+
+  function manejarAbrirReconocimiento() {
+    map.closePopup();
+    onAbrirReconocimiento(miembro);
+  }
+
   return (
     <div className="flex flex-col gap-2" style={{ minWidth: 180 }}>
       <p className="font-semibold">{miembro.nombre}</p>
@@ -157,7 +169,7 @@ function PopupOtroMiembro({
       <div className="flex flex-col gap-1.5">
         <button
           type="button"
-          onClick={() => onAbrirChat(miembro)}
+          onClick={manejarAbrirChat}
           className="flex items-center justify-center gap-1.5 rounded bg-amber-600 px-2 py-1.5 text-xs text-white"
         >
           <IconMessage2 size={14} />
@@ -165,7 +177,7 @@ function PopupOtroMiembro({
         </button>
         <button
           type="button"
-          onClick={() => onAbrirReconocimiento(miembro)}
+          onClick={manejarAbrirReconocimiento}
           className="flex items-center justify-center gap-1.5 rounded border border-amber-600 px-2 py-1.5 text-xs text-amber-700"
         >
           <IconHeartHandshake size={14} />
