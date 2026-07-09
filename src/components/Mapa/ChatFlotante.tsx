@@ -73,7 +73,7 @@ export function ChatFlotante({
       <div className="fixed inset-x-0 bottom-0 z-50 flex justify-center pointer-events-none">
         <div
           className="card pointer-events-auto flex w-full max-w-md flex-col gap-3 rounded-b-none p-4 shadow-2xl"
-          style={{ height: "70vh" }}
+          style={{ height: "48vh" }}
         >
           <div className="flex items-center justify-between gap-2">
             <button
