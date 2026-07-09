@@ -57,7 +57,10 @@ export function PatinadoresActivosPanel({ patinadores }: { patinadores: Patinado
         // tamaño va inline para que sí se aplique.
         backgroundSize: "cover",
         backgroundRepeat: "no-repeat",
-        backgroundPosition: "center",
+        // Anclado arriba (no al centro): así siempre se ve la cabeza de los
+        // patinadores desde el primer momento, y a medida que el panel crece
+        // (más patinadores activos en la lista) se revela más hacia abajo.
+        backgroundPosition: "top",
       }}
     >
       <h2 className="text-sm font-semibold text-text-accent">Patinadores activos</h2>
