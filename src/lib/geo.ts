@@ -27,6 +27,12 @@ export function distanciaTotalKm(puntos: PuntoGps[]): number {
   return total;
 }
 
+// Ningún patinador real supera esto — un tramo que lo implique es un salto de
+// GPS (o, en pruebas, un punto simulado sin tiempo real entre medio), no una
+// velocidad real. Se descarta ese tramo en vez de mostrar un número absurdo
+// que además desborda su casilla en la ficha y en la tarjeta de compartir.
+const VELOCIDAD_PLAUSIBLE_MAX_KMH = 80;
+
 // Velocidad máxima entre dos puntos consecutivos (km/h), usada en la ficha de
 // detalle de "Mis rutas". Como los puntos vienen decimados desde el backend,
 // esto es una aproximación (no ve cada micro-tramo real del recorrido).
@@ -37,7 +43,7 @@ export function velocidadMaximaKmH(puntos: PuntoGps[]): number {
     if (dtSeg <= 0) continue;
     const distKm = distanciaHaversineKm(puntos[i - 1], puntos[i]);
     const kmh = (distKm / dtSeg) * 3600;
-    if (kmh > maxima) maxima = kmh;
+    if (kmh > maxima && kmh <= VELOCIDAD_PLAUSIBLE_MAX_KMH) maxima = kmh;
   }
   return maxima;
 }
