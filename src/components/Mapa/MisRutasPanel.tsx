@@ -75,6 +75,9 @@ function VistaPreviaSvg({ puntos }: { puntos: PuntoGps[] }) {
   );
 }
 
+// Fondo semitransparente + blur (en vez del "card" opaco de siempre): con la
+// foto de fondo del panel, las casillas sólidas la tapaban por completo. Así
+// se sigue viendo un poco de la imagen detrás, sin perder legibilidad.
 function TarjetaStat({
   etiqueta,
   valor,
@@ -88,8 +91,8 @@ function TarjetaStat({
     <div
       className={
         destacada
-          ? "flex flex-col items-center gap-1 rounded-app border border-border-accent bg-bg-accent p-3"
-          : "card flex flex-col items-center gap-1 p-3"
+          ? "flex flex-col items-center gap-1 rounded-app border border-border-accent bg-black/35 p-3 backdrop-blur-sm"
+          : "flex flex-col items-center gap-1 rounded-app border border-white/10 bg-black/40 p-3 backdrop-blur-sm"
       }
     >
       <span className={destacada ? "text-xl font-bold text-text-accent" : "text-base font-semibold text-text-accent"}>
@@ -197,7 +200,7 @@ function FichaRecorrido({
       {/* Elemento principal: el Recorrido en sí, en su propia tarjeta (mismo
           estilo que el resto de la app) — el orgullo viene del gesto de cierre
           ("¡Lo lograste!"), no de un marco recargado sobre el mapa. */}
-      <div className="card flex flex-col gap-2 p-3">
+      <div className="flex flex-col gap-2 rounded-app border border-white/10 bg-black/40 p-3 backdrop-blur-sm">
         <div className="flex items-center gap-1.5">
           <IconTrophy size={16} className="text-text-accent" />
           <h3 className="text-sm font-semibold text-text-accent">Recorrido</h3>
@@ -379,11 +382,21 @@ export function MisRutasPanel({
 
       <div className="fixed inset-x-0 bottom-0 z-50 flex justify-center pointer-events-none">
         <div
-          className="card pointer-events-auto flex w-full max-w-md flex-col gap-3 rounded-b-none bg-cover bg-center bg-no-repeat p-4 shadow-2xl transition-[height] duration-150"
+          className="card pointer-events-auto flex w-full max-w-md flex-col gap-3 rounded-b-none p-4 shadow-2xl transition-[height] duration-150"
           style={{
             height: `${alturaVh}vh`,
             backgroundImage:
-              "linear-gradient(to bottom, rgba(23,16,8,0.55) 0%, rgba(23,16,8,0.75) 45%, rgba(23,16,8,0.92) 100%), url(/fondo-mis-rutas.jpg)",
+              "linear-gradient(to bottom, rgba(23,16,8,0.4) 0%, rgba(23,16,8,0.65) 45%, rgba(23,16,8,0.88) 100%), url(/fondo-mis-rutas.jpg)",
+            // La clase ".card" define "background" con shorthand fuera de un @layer,
+            // así que le gana en cascada a los utilitarios bg-cover/bg-no-repeat de
+            // Tailwind (quedaba en background-size: auto, mostrando la foto sin
+            // escalar). Por eso el tamaño va inline: es la única forma de que gane.
+            backgroundSize: "cover",
+            backgroundRepeat: "no-repeat",
+            // La imagen ya viene recortada (fondo-mis-rutas.jpg) para que el
+            // patinador con la estela dorada sea el protagonista del encuadre;
+            // él está del lado izquierdo, por eso se sesga el "cover" hacia ahí.
+            backgroundPosition: "12% 50%",
           }}
         >
         <div
