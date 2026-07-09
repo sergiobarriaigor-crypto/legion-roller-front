@@ -393,10 +393,13 @@ export function MisRutasPanel({
             // escalar). Por eso el tamaño va inline: es la única forma de que gane.
             backgroundSize: "cover",
             backgroundRepeat: "no-repeat",
-            // La imagen ya viene recortada (fondo-mis-rutas.jpg) para que el
-            // patinador con la estela dorada sea el protagonista del encuadre;
-            // él está del lado izquierdo, por eso se sesga el "cover" hacia ahí.
-            backgroundPosition: "12% 50%",
+            // Se usa la foto completa (ciudad, costanera, cielo, montaña) a
+            // pedido del usuario, en vez del recorte apretado solo al patinador.
+            // Con "cover", el ancho del panel siempre encaja exacto con el ancho
+            // de la foto, así que el único recorte posible es en la parte de
+            // arriba (cielo/nubes) — anclar abajo (100%) evita que se pierda
+            // nada de la ciudad, la costanera ni el patinador con su estela.
+            backgroundPosition: "50% 100%",
           }}
         >
         <div
