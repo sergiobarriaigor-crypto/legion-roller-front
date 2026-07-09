@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { MapContainer, TileLayer, Marker, Popup, Polyline, ZoomControl } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { IconMaximize, IconX, IconCurrentLocation } from "@tabler/icons-react";
+import { IconMaximize, IconX, IconCurrentLocation, IconMap2, IconSatellite } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
 import { apiPost, apiPut, apiGet, apiDelete, ApiError } from "@/lib/api";
 import { distanciaTotalKm, distanciaHaversineKm, type PuntoGps } from "@/lib/geo";
@@ -28,6 +28,22 @@ const ZOOM_CENTRADO_AUTOMATICO = 16;
 
 // Mismo patrón de tap-vs-hold que el botón central del bottom-nav.
 const HOLD_MS_CENTRAR = 1500;
+
+// Capas de mapa disponibles (botón inferior izquierdo): estándar (OpenStreetMap,
+// ya usado en el resto de la app) y satélite (Esri World Imagery, gratis y sin
+// API key, igual que OpenStreetMap).
+const CAPAS_MAPA = {
+  estandar: {
+    url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+  },
+  satelite: {
+    url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    attribution: "Tiles &copy; Esri",
+  },
+} as const;
+
+type CapaMapa = keyof typeof CAPAS_MAPA;
 
 type Modo = "patinando" | "ruta" | null;
 
@@ -169,6 +185,7 @@ export function MapaView() {
   const [rodadaActiva, setRodadaActiva] = useState<Publicacion | null>(null);
 
   const [pantallaCompleta, setPantallaCompleta] = useState(false);
+  const [capaMapa, setCapaMapa] = useState<CapaMapa>("estandar");
 
   const [miFotoUrl, setMiFotoUrl] = useState<string | null>(null);
   const [miEstadoTexto, setMiEstadoTexto] = useState<string | null>(null);
@@ -552,8 +569,9 @@ export function MapaView() {
         >
           <ZoomControl position="topright" />
           <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            key={capaMapa}
+            attribution={CAPAS_MAPA[capaMapa].attribution}
+            url={CAPAS_MAPA[capaMapa].url}
           />
           {posicion && (
             <Marker
@@ -617,6 +635,17 @@ export function MapaView() {
           className="absolute left-2 top-2 z-[1000] flex h-9 w-9 items-center justify-center rounded-full bg-surface-1/90 text-text-primary shadow"
         >
           {pantallaCompleta ? <IconX size={20} /> : <IconMaximize size={20} />}
+        </button>
+
+        <button
+          type="button"
+          aria-label={
+            capaMapa === "estandar" ? "Ver mapa en modo satélite" : "Ver mapa estándar"
+          }
+          onClick={() => setCapaMapa((c) => (c === "estandar" ? "satelite" : "estandar"))}
+          className="absolute bottom-2 left-2 z-[1000] flex h-9 w-9 items-center justify-center rounded-full bg-surface-1/90 text-text-accent shadow"
+        >
+          {capaMapa === "estandar" ? <IconSatellite size={20} /> : <IconMap2 size={20} />}
         </button>
 
         <button

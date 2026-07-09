@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { MapContainer, TileLayer, Polyline, CircleMarker } from "react-leaflet";
-import { IconX, IconChevronLeft } from "@tabler/icons-react";
+import { IconX, IconChevronLeft, IconTrophy } from "@tabler/icons-react";
 import { apiGet } from "@/lib/api";
 import { velocidadMaximaKmH, type PuntoGps } from "@/lib/geo";
 import { sectorMasCercano } from "@/lib/sectores";
@@ -120,19 +120,20 @@ function FichaRecorrido({ recorrido }: { recorrido: Recorrido }) {
         <TarjetaStat etiqueta="Vel. máxima" valor={`${Math.round(velocidadMaxima)} km/h`} />
       </div>
 
-      {/* Elemento principal: el Recorrido en sí, con más protagonismo visual
-          (borde y brillo dorados) ya que es el resultado central de la actividad. */}
-      <div
-        className="overflow-hidden rounded-app border-2 border-border-accent"
-        style={{ boxShadow: "0 0 22px rgba(201, 154, 61, 0.35)" }}
-      >
-        <div className="flex items-center justify-between bg-bg-accent px-3 py-2">
-          <h3 className="text-sm font-semibold text-text-accent">Recorrido</h3>
+      {/* Elemento principal: el Recorrido en sí, en su propia tarjeta (mismo
+          estilo que el resto de la app) — el orgullo viene del gesto de cierre
+          ("¡Lo lograste!"), no de un marco recargado sobre el mapa. */}
+      <div className="card flex flex-col gap-2 p-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5">
+            <IconTrophy size={16} className="text-text-accent" />
+            <h3 className="text-sm font-semibold text-text-accent">Recorrido</h3>
+          </div>
           <span className="text-sm font-semibold text-text-primary">
             {recorrido.distanciaKm.toFixed(2)} km
           </span>
         </div>
-        <div style={{ height: 240 }}>
+        <div className="overflow-hidden rounded-app" style={{ height: 240 }}>
           <MapContainer
             bounds={bounds}
             boundsOptions={{ padding: [20, 20] }}
@@ -163,6 +164,9 @@ function FichaRecorrido({ recorrido }: { recorrido: Recorrido }) {
             />
           </MapContainer>
         </div>
+        <p className="text-center text-xs text-text-secondary">
+          ¡Lo lograste! Así se vio tu recorrido de principio a fin. 🏆
+        </p>
       </div>
     </div>
   );
