@@ -250,6 +250,7 @@ export function MapaView() {
   const [resumen, setResumen] = useState<{ distanciaKm: number; duracionSeg: number } | null>(null);
   const [emergenciasActivas, setEmergenciasActivas] = useState<EmergenciaActiva[]>([]);
   const [mensaje, setMensaje] = useState("");
+  const [limiteRutasAlcanzado, setLimiteRutasAlcanzado] = useState(false);
   const [rodadaActiva, setRodadaActiva] = useState<Publicacion | null>(null);
 
   const [pantallaCompleta, setPantallaCompleta] = useState(false);
@@ -438,6 +439,7 @@ export function MapaView() {
 
   function activarModo(nuevoModo: "patinando" | "ruta") {
     setMensaje("");
+    setLimiteRutasAlcanzado(false);
     necesitaEnvioInicialRef.current = true;
     necesitaCentrarInicialRef.current = true;
     ultimaPosSignificativaRef.current = null;
@@ -511,6 +513,7 @@ export function MapaView() {
           );
         } catch (err) {
           setMensaje(err instanceof ApiError ? err.message : "No se pudo guardar el recorrido.");
+          setLimiteRutasAlcanzado(err instanceof ApiError && err.status === 409);
         }
       }
     }
@@ -744,7 +747,23 @@ export function MapaView() {
       {!pantallaCompleta && (
         <>
           {errorGeo && <p className="text-xs text-fill-warning">{errorGeo}</p>}
-          {mensaje && <p className="text-xs text-fill-warning">{mensaje}</p>}
+          {mensaje && (
+            <p className="text-xs text-fill-warning">
+              {mensaje}
+              {limiteRutasAlcanzado && (
+                <>
+                  {" "}
+                  <button
+                    type="button"
+                    onClick={() => setMostrarMisRutas(true)}
+                    className="underline"
+                  >
+                    Ir a Mis rutas
+                  </button>
+                </>
+              )}
+            </p>
+          )}
 
           {rodadaActiva &&
             !modo &&

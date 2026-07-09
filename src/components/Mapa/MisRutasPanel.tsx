@@ -2,8 +2,15 @@
 
 import { useEffect, useRef, useState } from "react";
 import { MapContainer, TileLayer, Polyline, CircleMarker } from "react-leaflet";
-import { IconX, IconChevronLeft, IconTrophy } from "@tabler/icons-react";
-import { apiGet } from "@/lib/api";
+import {
+  IconX,
+  IconChevronLeft,
+  IconTrophy,
+  IconStar,
+  IconStarFilled,
+  IconTrash,
+} from "@tabler/icons-react";
+import { apiGet, apiPatch, apiDelete, ApiError } from "@/lib/api";
 import { velocidadMaximaKmH, type PuntoGps } from "@/lib/geo";
 import { sectorMasCercano } from "@/lib/sectores";
 
@@ -13,6 +20,7 @@ interface Recorrido {
   distanciaKm: number;
   duracionSeg: number;
   createdAt: string;
+  favorito: boolean;
   puntos: PuntoGps[];
 }
 
@@ -90,7 +98,39 @@ function TarjetaStat({
   );
 }
 
-function FichaRecorrido({ recorrido }: { recorrido: Recorrido }) {
+function BotonFavorito({
+  favorito,
+  onClick,
+  size = 18,
+}: {
+  favorito: boolean;
+  onClick: () => void;
+  size?: number;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={favorito ? "Quitar de favoritos" : "Marcar como favorita"}
+      className="shrink-0 text-text-accent"
+    >
+      {favorito ? <IconStarFilled size={size} /> : <IconStar size={size} />}
+    </button>
+  );
+}
+
+function FichaRecorrido({
+  recorrido,
+  onToggleFavorito,
+  onEliminar,
+}: {
+  recorrido: Recorrido;
+  onToggleFavorito: () => void;
+  onEliminar: () => Promise<void>;
+}) {
+  const [confirmandoEliminar, setConfirmandoEliminar] = useState(false);
+  const [eliminando, setEliminando] = useState(false);
+
   const puntos = recorrido.puntos;
   const bounds: [[number, number], [number, number]] = [
     [Math.min(...puntos.map((p) => p.lat)), Math.min(...puntos.map((p) => p.lon))],
@@ -119,15 +159,27 @@ function FichaRecorrido({ recorrido }: { recorrido: Recorrido }) {
   });
   const sector = sectorMasCercano(inicio.lat, inicio.lon);
 
+  async function confirmarEliminar() {
+    setEliminando(true);
+    try {
+      await onEliminar();
+    } finally {
+      setEliminando(false);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-3">
       {/* Encabezado discreto: solo contexto (fecha/hora/lugar), texto chico a propósito. */}
-      <div className="flex flex-col gap-0.5 text-xs text-text-secondary">
-        <p className="capitalize">{fechaCompleta}</p>
-        <p>
-          {horaInicio} — {horaFin}
-        </p>
-        <p>{sector}</p>
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex flex-col gap-0.5 text-xs text-text-secondary">
+          <p className="capitalize">{fechaCompleta}</p>
+          <p>
+            {horaInicio} — {horaFin}
+          </p>
+          <p>{sector}</p>
+        </div>
+        <BotonFavorito favorito={recorrido.favorito} onClick={onToggleFavorito} size={22} />
       </div>
 
       <div className="grid grid-cols-2 gap-2">
@@ -180,6 +232,40 @@ function FichaRecorrido({ recorrido }: { recorrido: Recorrido }) {
           ¡Lo lograste! Así se vio tu recorrido de principio a fin. 🏆
         </p>
       </div>
+
+      {confirmandoEliminar ? (
+        <div className="card flex flex-col gap-2 p-3">
+          <p className="text-xs text-text-primary">
+            ¿Seguro que quieres eliminar este recorrido? Esta acción no se puede deshacer.
+          </p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setConfirmandoEliminar(false)}
+              className="flex-1 rounded-app border border-border px-3 py-2 text-xs text-text-secondary"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              disabled={eliminando}
+              onClick={confirmarEliminar}
+              className="flex-1 rounded-app bg-red-700 px-3 py-2 text-xs text-white disabled:opacity-50"
+            >
+              {eliminando ? "Eliminando..." : "Sí, eliminar"}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setConfirmandoEliminar(true)}
+          className="flex items-center justify-center gap-1.5 rounded-app border border-border px-3 py-2 text-xs text-text-secondary"
+        >
+          <IconTrash size={14} />
+          Eliminar recorrido
+        </button>
+      )}
     </div>
   );
 }
@@ -204,6 +290,34 @@ export function MisRutasPanel({
       .then(setRecorridos)
       .finally(() => setCargando(false));
   }, [token]);
+
+  async function alternarFavorito(id: number) {
+    if (!token) return;
+    try {
+      const { favorito } = await apiPatch<{ favorito: boolean }>(
+        `/mapa/recorridos/${id}/favorito`,
+        {},
+        token,
+      );
+      setRecorridos((prev) => prev.map((r) => (r.id === id ? { ...r, favorito } : r)));
+      setSeleccionado((prev) => (prev && prev.id === id ? { ...prev, favorito } : prev));
+    } catch {
+      // silencioso: si falla, el ícono simplemente no cambia
+    }
+  }
+
+  async function eliminarRecorrido(id: number) {
+    if (!token) return;
+    try {
+      await apiDelete(`/mapa/recorridos/${id}`, token);
+      setRecorridos((prev) => prev.filter((r) => r.id !== id));
+      setSeleccionado(null);
+      setAlturaVh(ALTURA_PEEK_VH);
+    } catch (err) {
+      // el usuario ve el botón seguir ahí y puede reintentar
+      console.error(err instanceof ApiError ? err.message : err);
+    }
+  }
 
   function onDragStart(e: React.TouchEvent) {
     arrastreRef.current = { startY: e.touches[0].clientY, startAltura: alturaVh };
@@ -247,7 +361,7 @@ export function MisRutasPanel({
           <span className="h-1 w-10 rounded-full bg-border" />
           <div className="flex w-full items-center justify-between">
             <h2 className="text-sm font-semibold text-text-accent">
-              {seleccionado ? "" : "Mis rutas"}
+              {seleccionado ? "" : `Mis rutas (${recorridos.length}/10)`}
             </h2>
             {seleccionado && (
               <button
@@ -268,7 +382,11 @@ export function MisRutasPanel({
 
         <div className="flex-1 overflow-y-auto">
           {seleccionado ? (
-            <FichaRecorrido recorrido={seleccionado} />
+            <FichaRecorrido
+              recorrido={seleccionado}
+              onToggleFavorito={() => alternarFavorito(seleccionado.id)}
+              onEliminar={() => eliminarRecorrido(seleccionado.id)}
+            />
           ) : (
             <>
               {cargando && <p className="text-xs text-text-secondary">Cargando...</p>}
@@ -282,14 +400,17 @@ export function MisRutasPanel({
 
               <ul className="flex flex-col gap-2">
                 {recorridos.map((r) => (
-                  <li key={r.id}>
+                  <li
+                    key={r.id}
+                    className="flex items-center gap-2 rounded-app border border-border px-3 py-2"
+                  >
                     <button
                       type="button"
                       onClick={() => {
                         setSeleccionado(r);
                         setAlturaVh(ALTURA_EXPANDIDA_VH);
                       }}
-                      className="flex w-full items-center gap-3 rounded-app border border-border px-3 py-2 text-left"
+                      className="flex flex-1 items-center gap-3 text-left"
                     >
                       <VistaPreviaSvg puntos={r.puntos} />
                       <div className="flex flex-1 flex-col">
@@ -304,6 +425,7 @@ export function MisRutasPanel({
                         </span>
                       </div>
                     </button>
+                    <BotonFavorito favorito={r.favorito} onClick={() => alternarFavorito(r.id)} />
                   </li>
                 ))}
               </ul>

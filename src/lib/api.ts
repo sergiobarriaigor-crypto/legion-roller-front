@@ -4,7 +4,14 @@ interface ApiErrorBody {
   message?: string | string[];
 }
 
-export class ApiError extends Error {}
+export class ApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
 
 async function manejarRespuesta<T>(res: Response): Promise<T> {
   const data = await res.json().catch(() => ({}) as ApiErrorBody);
@@ -13,7 +20,7 @@ async function manejarRespuesta<T>(res: Response): Promise<T> {
     const mensaje = Array.isArray(data.message)
       ? data.message.join(", ")
       : (data.message ?? "Ocurrió un error inesperado");
-    throw new ApiError(mensaje);
+    throw new ApiError(mensaje, res.status);
   }
 
   return data as T;
