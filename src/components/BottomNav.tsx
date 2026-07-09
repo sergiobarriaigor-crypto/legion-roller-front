@@ -100,7 +100,7 @@ export function BottomNav() {
         ))}
 
         {!esVisitante && (
-          <div className="flex flex-1 flex-col items-center justify-center gap-1 py-2 text-xs">
+          <div className="flex flex-1 items-center justify-center py-2">
             <button
               type="button"
               aria-label="Mapa: toca para ir, mantén presionado para ver tus rutas"
@@ -117,16 +117,13 @@ export function BottomNav() {
               ) : (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
-                  src="/logo-legion-roller.png"
+                  src="/boton-mapa.png"
                   alt="Mapa"
                   className="h-full w-full rounded-full object-cover"
                   onError={() => setLogoError(true)}
                 />
               )}
             </button>
-            <span className={pathname.startsWith("/mapa") ? "text-text-accent" : "text-text-secondary"}>
-              Mapa
-            </span>
           </div>
         )}
 
