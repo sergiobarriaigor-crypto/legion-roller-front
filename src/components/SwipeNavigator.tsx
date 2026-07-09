@@ -35,6 +35,13 @@ export function SwipeNavigator({ children }: { children: ReactNode }) {
   }, [pathname, indiceActual]);
 
   function onTouchStart(e: React.TouchEvent) {
+    // El mapa (Leaflet) ya maneja sus propios gestos de arrastre; si el toque
+    // empieza ahí, no lo tomamos como candidato a swipe de pestaña (si no,
+    // arrastrar el mapa hacia el costado cambiaba de pantalla por error).
+    if ((e.target as HTMLElement).closest(".leaflet-container")) {
+      inicioRef.current = null;
+      return;
+    }
     const t = e.touches[0];
     inicioRef.current = { x: t.clientX, y: t.clientY };
   }
