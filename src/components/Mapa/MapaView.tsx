@@ -45,6 +45,12 @@ const CAPAS_MAPA = {
 
 type CapaMapa = keyof typeof CAPAS_MAPA;
 
+// Capa de referencia (transparente, solo calles/nombres/límites) que se superpone
+// a la vista satélite para no perder la orientación — mismo servicio gratuito de
+// Esri, sin API key, pensado justo para combinarse con World_Imagery.
+const CAPA_ETIQUETAS_SATELITE_URL =
+  "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}";
+
 type Modo = "patinando" | "ruta" | null;
 
 function escapeHtml(texto: string) {
@@ -67,20 +73,29 @@ function crearIcono(color: string) {
 
 const iconoEmergencia = crearIcono("#D8342F");
 
-// Avatar circular (foto o inicial) con burbuja de estado opcional, para verse
-// en el mapa mientras un miembro comparte su ubicación (sección de este ajuste).
+// Colores neón por modo (ajuste de este pedido): verde = en ruta, rojo = solo
+// patinando ahora, para identificar el estado de cada patinador de un vistazo.
+const GLOW_POR_MODO: Record<string, { anillo: string; sombra: string }> = {
+  ruta: { anillo: "#39FF14", sombra: "rgba(57, 255, 20, 0.85)" },
+  patinando: { anillo: "#FF3131", sombra: "rgba(255, 49, 49, 0.85)" },
+};
+
+// Avatar circular (foto o inicial) con burbuja de estado opcional y un borde con
+// brillo (glow) según el modo del miembro, para verse en el mapa mientras
+// comparte su ubicación.
 function crearIconoAvatar({
   fotoUrl,
   nombre,
   estado,
-  colorBorde,
+  modo,
 }: {
   fotoUrl: string | null;
   nombre: string;
   estado?: string | null;
-  colorBorde: string;
+  modo: string;
 }) {
   const TAM = 40;
+  const { anillo, sombra } = GLOW_POR_MODO[modo] ?? GLOW_POR_MODO.patinando;
   const inicial = escapeHtml((nombre.charAt(0) || "?").toUpperCase());
   const contenido = fotoUrl
     ? `<img src="${escapeHtml(fotoUrl)}" style="width:100%;height:100%;object-fit:cover;" />`
@@ -95,7 +110,7 @@ function crearIconoAvatar({
     html: `
       <div style="position:relative;width:${TAM}px;height:${TAM}px;">
         ${burbuja}
-        <div style="width:${TAM}px;height:${TAM}px;border-radius:9999px;background:#e7c168;border:3px solid ${colorBorde};box-shadow:0 1px 4px rgba(0,0,0,0.4);overflow:hidden;">
+        <div style="width:${TAM}px;height:${TAM}px;border-radius:9999px;background:#e7c168;border:2px solid ${anillo};box-shadow:0 0 8px 2px ${sombra},0 0 3px 1px ${sombra};overflow:hidden;">
           ${contenido}
         </div>
       </div>
@@ -573,6 +588,11 @@ export function MapaView() {
             attribution={CAPAS_MAPA[capaMapa].attribution}
             url={CAPAS_MAPA[capaMapa].url}
           />
+          {capaMapa === "satelite" && (
+            // Capa transparente con calles/nombres/límites, para no perder la
+            // orientación sobre la imagen satelital (pedido del usuario).
+            <TileLayer key="etiquetas-satelite" url={CAPA_ETIQUETAS_SATELITE_URL} />
+          )}
           {posicion && (
             <Marker
               position={[posicion.lat, posicion.lon]}
@@ -580,7 +600,7 @@ export function MapaView() {
                 fotoUrl: miFotoUrl,
                 nombre: sesion?.nombre ?? "Yo",
                 estado: miEstadoTexto,
-                colorBorde: "#C99A3D",
+                modo: modo ?? "patinando",
               })}
               eventHandlers={{ click: abrirEditorEstado }}
             />
@@ -593,7 +613,7 @@ export function MapaView() {
                 fotoUrl: o.fotoUrl,
                 nombre: o.nombre,
                 estado: o.estado,
-                colorBorde: "#7EB3EE",
+                modo: o.modo,
               })}
             >
               <Popup>
