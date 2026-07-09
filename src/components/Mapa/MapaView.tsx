@@ -1,18 +1,22 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { MapContainer, TileLayer, Marker, Popup, Polyline, ZoomControl } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { IconMaximize, IconX, IconCurrentLocation, IconMap2, IconSatellite } from "@tabler/icons-react";
+import { IconMaximize, IconX, IconCurrentLocation, IconMap2, IconSatellite, IconMessage2, IconHeartHandshake } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
 import { apiPost, apiPut, apiGet, apiDelete, ApiError } from "@/lib/api";
 import { distanciaTotalKm, distanciaHaversineKm, type PuntoGps } from "@/lib/geo";
 import type { Publicacion } from "@/lib/publicaciones";
 import { combinarFechaHora, rodadaEnVentana, rodadaActivable, minutosHasta } from "@/lib/rodadas";
 import { ETIQUETA_MOTIVO, type EmergenciaActiva } from "@/lib/emergencias";
+import { salaIndividual } from "@/lib/chat";
 import { PatinadoresActivosPanel } from "@/components/Mapa/PatinadoresActivosPanel";
 import { MisRutasPanel } from "@/components/Mapa/MisRutasPanel";
+
+const MAX_CARACTERES_RECONOCIMIENTO = 100;
 
 // Centro por defecto: entre Puerto Montt y Puerto Varas (sección 1 del PDF).
 const CENTRO_DEFECTO: [number, number] = [-41.4, -72.96];
@@ -131,6 +135,11 @@ interface OtroMiembro {
   iniciadoEn: string;
 }
 
+type VistaPopupOtro = "acciones" | "reconocimiento";
+
+// Tarjeta emergente al tocar la foto de otro patinador en el mapa: arranca con
+// dos botones (mensaje directo / reconocimiento breve); "reconocimiento" abre
+// el formulario chico en el mismo popup, sin navegar a otra pantalla.
 function PopupOtroMiembro({
   miembro,
   token,
@@ -138,11 +147,19 @@ function PopupOtroMiembro({
   miembro: OtroMiembro;
   token: string | null;
 }) {
+  const router = useRouter();
+  const { sesion } = useSession();
+  const [vista, setVista] = useState<VistaPopupOtro>("acciones");
   const [texto, setTexto] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [enviado, setEnviado] = useState(false);
 
-  async function enviar() {
+  function irAMensaje() {
+    if (sesion?.id == null) return;
+    router.push(`/chat/${salaIndividual(sesion.id, miembro.miembroId)}`);
+  }
+
+  async function enviarReconocimiento() {
     if (!token || !texto.trim()) return;
     setEnviando(true);
     try {
@@ -157,29 +174,65 @@ function PopupOtroMiembro({
   }
 
   return (
-    <div className="flex flex-col gap-1" style={{ minWidth: 160 }}>
+    <div className="flex flex-col gap-2" style={{ minWidth: 180 }}>
       <p className="font-semibold">{miembro.nombre}</p>
-      {enviado ? (
-        <p className="text-xs text-green-700">¡Reconocimiento enviado!</p>
-      ) : (
-        <>
-          <input
-            type="text"
-            placeholder="Ej: Tremendo avance 💪"
-            value={texto}
-            onChange={(e) => setTexto(e.target.value)}
-            className="rounded border border-gray-300 px-2 py-1 text-xs text-black outline-none"
-          />
+
+      {vista === "acciones" && (
+        <div className="flex flex-col gap-1.5">
           <button
             type="button"
-            disabled={enviando || !texto.trim()}
-            onClick={enviar}
-            className="rounded bg-amber-600 px-2 py-1 text-xs text-white disabled:opacity-50"
+            onClick={irAMensaje}
+            className="flex items-center justify-center gap-1.5 rounded bg-amber-600 px-2 py-1.5 text-xs text-white"
           >
-            {enviando ? "Enviando..." : "Reconocer"}
+            <IconMessage2 size={14} />
+            Enviar mensaje
           </button>
-        </>
+          <button
+            type="button"
+            onClick={() => setVista("reconocimiento")}
+            className="flex items-center justify-center gap-1.5 rounded border border-amber-600 px-2 py-1.5 text-xs text-amber-700"
+          >
+            <IconHeartHandshake size={14} />
+            Enviar reconocimiento
+          </button>
+        </div>
       )}
+
+      {vista === "reconocimiento" &&
+        (enviado ? (
+          <p className="text-xs text-green-700">¡Reconocimiento enviado!</p>
+        ) : (
+          <>
+            <input
+              type="text"
+              placeholder="Ej: Tremendo avance 💪"
+              value={texto}
+              maxLength={MAX_CARACTERES_RECONOCIMIENTO}
+              onChange={(e) => setTexto(e.target.value)}
+              className="rounded border border-gray-300 px-2 py-1 text-xs text-black outline-none"
+            />
+            <p className="text-right text-[10px] text-gray-500">
+              {texto.length}/{MAX_CARACTERES_RECONOCIMIENTO}
+            </p>
+            <div className="flex gap-1.5">
+              <button
+                type="button"
+                onClick={() => setVista("acciones")}
+                className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-700"
+              >
+                Volver
+              </button>
+              <button
+                type="button"
+                disabled={enviando || !texto.trim()}
+                onClick={enviarReconocimiento}
+                className="flex-1 rounded bg-amber-600 px-2 py-1 text-xs text-white disabled:opacity-50"
+              >
+                {enviando ? "Enviando..." : "Reconocer"}
+              </button>
+            </div>
+          </>
+        ))}
     </div>
   );
 }
