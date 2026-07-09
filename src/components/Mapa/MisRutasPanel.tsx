@@ -65,10 +65,26 @@ function VistaPreviaSvg({ puntos }: { puntos: PuntoGps[] }) {
   );
 }
 
-function TarjetaStat({ etiqueta, valor }: { etiqueta: string; valor: string }) {
+function TarjetaStat({
+  etiqueta,
+  valor,
+  destacada,
+}: {
+  etiqueta: string;
+  valor: string;
+  destacada?: boolean;
+}) {
   return (
-    <div className="card flex flex-col items-center gap-1 p-3">
-      <span className="text-base font-semibold text-text-accent">{valor}</span>
+    <div
+      className={
+        destacada
+          ? "flex flex-col items-center gap-1 rounded-app border border-border-accent bg-bg-accent p-3"
+          : "card flex flex-col items-center gap-1 p-3"
+      }
+    >
+      <span className={destacada ? "text-xl font-bold text-text-accent" : "text-base font-semibold text-text-accent"}>
+        {valor}
+      </span>
       <span className="text-[10px] text-text-secondary">{etiqueta}</span>
     </div>
   );
@@ -114,7 +130,8 @@ function FichaRecorrido({ recorrido }: { recorrido: Recorrido }) {
         <p>{sector}</p>
       </div>
 
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-2 gap-2">
+        <TarjetaStat etiqueta="Distancia" valor={`${recorrido.distanciaKm.toFixed(2)} km`} destacada />
         <TarjetaStat etiqueta="Tiempo total" valor={`${Math.round(recorrido.duracionSeg / 60)} min`} />
         <TarjetaStat etiqueta="Vel. promedio" valor={`${Math.round(velocidadPromedio)} km/h`} />
         <TarjetaStat etiqueta="Vel. máxima" valor={`${Math.round(velocidadMaxima)} km/h`} />
@@ -124,14 +141,9 @@ function FichaRecorrido({ recorrido }: { recorrido: Recorrido }) {
           estilo que el resto de la app) — el orgullo viene del gesto de cierre
           ("¡Lo lograste!"), no de un marco recargado sobre el mapa. */}
       <div className="card flex flex-col gap-2 p-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5">
-            <IconTrophy size={16} className="text-text-accent" />
-            <h3 className="text-sm font-semibold text-text-accent">Recorrido</h3>
-          </div>
-          <span className="text-sm font-semibold text-text-primary">
-            {recorrido.distanciaKm.toFixed(2)} km
-          </span>
+        <div className="flex items-center gap-1.5">
+          <IconTrophy size={16} className="text-text-accent" />
+          <h3 className="text-sm font-semibold text-text-accent">Recorrido</h3>
         </div>
         <div className="overflow-hidden rounded-app" style={{ height: 240 }}>
           <MapContainer
@@ -273,13 +285,19 @@ export function MisRutasPanel({
                   <li key={r.id}>
                     <button
                       type="button"
-                      onClick={() => setSeleccionado(r)}
+                      onClick={() => {
+                        setSeleccionado(r);
+                        setAlturaVh(ALTURA_EXPANDIDA_VH);
+                      }}
                       className="flex w-full items-center gap-3 rounded-app border border-border px-3 py-2 text-left"
                     >
                       <VistaPreviaSvg puntos={r.puntos} />
                       <div className="flex flex-1 flex-col">
                         <span className="text-sm text-text-primary">
                           {new Date(r.createdAt).toLocaleDateString("es-CL")}
+                        </span>
+                        <span className="text-xs text-blue-text">
+                          {sectorMasCercano(r.puntos[0].lat, r.puntos[0].lon)}
                         </span>
                         <span className="text-xs text-text-secondary">
                           {r.distanciaKm.toFixed(2)} km — {Math.round(r.duracionSeg / 60)} min
