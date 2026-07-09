@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { MapContainer, TileLayer, Marker, Popup, Polyline, ZoomControl } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -15,6 +14,7 @@ import { ETIQUETA_MOTIVO, type EmergenciaActiva } from "@/lib/emergencias";
 import { salaIndividual } from "@/lib/chat";
 import { PatinadoresActivosPanel } from "@/components/Mapa/PatinadoresActivosPanel";
 import { MisRutasPanel } from "@/components/Mapa/MisRutasPanel";
+import { ChatFlotante } from "@/components/Mapa/ChatFlotante";
 
 const MAX_CARACTERES_RECONOCIMIENTO = 100;
 
@@ -143,21 +143,16 @@ type VistaPopupOtro = "acciones" | "reconocimiento";
 function PopupOtroMiembro({
   miembro,
   token,
+  onAbrirChat,
 }: {
   miembro: OtroMiembro;
   token: string | null;
+  onAbrirChat: (miembro: OtroMiembro) => void;
 }) {
-  const router = useRouter();
-  const { sesion } = useSession();
   const [vista, setVista] = useState<VistaPopupOtro>("acciones");
   const [texto, setTexto] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [enviado, setEnviado] = useState(false);
-
-  function irAMensaje() {
-    if (sesion?.id == null) return;
-    router.push(`/chat/${salaIndividual(sesion.id, miembro.miembroId)}`);
-  }
 
   async function enviarReconocimiento() {
     if (!token || !texto.trim()) return;
@@ -181,7 +176,7 @@ function PopupOtroMiembro({
         <div className="flex flex-col gap-1.5">
           <button
             type="button"
-            onClick={irAMensaje}
+            onClick={() => onAbrirChat(miembro)}
             className="flex items-center justify-center gap-1.5 rounded bg-amber-600 px-2 py-1.5 text-xs text-white"
           >
             <IconMessage2 size={14} />
@@ -265,6 +260,11 @@ export function MapaView() {
   const [avisoInactividad, setAvisoInactividad] = useState(false);
   const [mostrarPreguntaMapeo, setMostrarPreguntaMapeo] = useState(false);
   const [mostrarMisRutas, setMostrarMisRutas] = useState(false);
+  const [chatFlotante, setChatFlotante] = useState<{
+    sala: string;
+    nombre: string;
+    fotoUrl: string | null;
+  } | null>(null);
 
   const posicionRef = useRef<{ lat: number; lon: number } | null>(null);
   const grabandoRef = useRef(false);
@@ -673,7 +673,18 @@ export function MapaView() {
               })}
             >
               <Popup>
-                <PopupOtroMiembro miembro={o} token={token} />
+                <PopupOtroMiembro
+                  miembro={o}
+                  token={token}
+                  onAbrirChat={(m) => {
+                    if (sesion?.id == null) return;
+                    setChatFlotante({
+                      sala: salaIndividual(sesion.id, m.miembroId),
+                      nombre: m.nombre,
+                      fotoUrl: m.fotoUrl,
+                    });
+                  }}
+                />
               </Popup>
             </Marker>
           ))}
@@ -971,6 +982,16 @@ export function MapaView() {
 
       {mostrarMisRutas && (
         <MisRutasPanel token={token} onClose={() => setMostrarMisRutas(false)} />
+      )}
+
+      {chatFlotante && (
+        <ChatFlotante
+          sala={chatFlotante.sala}
+          nombreOtro={chatFlotante.nombre}
+          fotoOtro={chatFlotante.fotoUrl}
+          token={token}
+          onClose={() => setChatFlotante(null)}
+        />
       )}
     </div>
   );
