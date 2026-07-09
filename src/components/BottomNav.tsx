@@ -108,7 +108,7 @@ export function BottomNav() {
               onPointerUp={onPointerUpMapa}
               onPointerLeave={limpiarHoldMapa}
               onPointerCancel={limpiarHoldMapa}
-              className={`relative -mt-9 flex h-20 w-20 select-none items-center justify-center rounded-full border-4 border-surface-1 bg-fill-primary shadow-lg animate-pulse-mapa ${
+              className={`relative -mt-[32px] flex h-[70px] w-[70px] select-none items-center justify-center rounded-full border-4 border-surface-1 bg-fill-primary shadow-lg animate-pulse-mapa ${
                 pathname.startsWith("/mapa") ? "ring-2 ring-text-accent" : ""
               }`}
             >
