@@ -18,7 +18,7 @@ const MAX_VISIBLES = 5;
 
 function TarjetaPatinador({ p }: { p: PatinadorActivo }) {
   return (
-    <div className="flex items-center gap-3 rounded-app border border-border px-3 py-2">
+    <div className="flex items-center gap-3 rounded-app border border-white/10 bg-black/40 px-3 py-2 backdrop-blur-sm">
       {p.fotoUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={p.fotoUrl} alt={p.nombre} className="h-10 w-10 rounded-full object-cover" />
@@ -47,7 +47,19 @@ export function PatinadoresActivosPanel({ patinadores }: { patinadores: Patinado
   const restantes = patinadores.slice(MAX_VISIBLES);
 
   return (
-    <div className="card flex flex-col gap-2 p-4">
+    <div
+      className="flex min-h-[220px] flex-col gap-2 rounded-app border border-border p-4"
+      style={{
+        backgroundImage:
+          "linear-gradient(to bottom, rgba(23,16,8,0.55) 0%, rgba(23,16,8,0.75) 55%, rgba(23,16,8,0.9) 100%), url(/fondo-patinadores-activos.jpg)",
+        // Misma corrección que en Mis Rutas: ".card" define "background" fuera de
+        // un @layer y le gana en cascada a bg-cover/bg-no-repeat, así que el
+        // tamaño va inline para que sí se aplique.
+        backgroundSize: "cover",
+        backgroundRepeat: "no-repeat",
+        backgroundPosition: "center",
+      }}
+    >
       <h2 className="text-sm font-semibold text-text-accent">Patinadores activos</h2>
 
       {patinadores.length === 0 ? (
