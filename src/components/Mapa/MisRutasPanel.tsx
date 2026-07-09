@@ -9,10 +9,12 @@ import {
   IconStar,
   IconStarFilled,
   IconTrash,
+  IconShare,
 } from "@tabler/icons-react";
 import { apiGet, apiPatch, apiDelete, ApiError } from "@/lib/api";
 import { velocidadMaximaKmH, type PuntoGps } from "@/lib/geo";
 import { sectorMasCercano } from "@/lib/sectores";
+import { CompartirRecorridoModal } from "@/components/Mapa/CompartirRecorridoModal";
 
 interface Recorrido {
   id: number;
@@ -121,15 +123,18 @@ function BotonFavorito({
 
 function FichaRecorrido({
   recorrido,
+  token,
   onToggleFavorito,
   onEliminar,
 }: {
   recorrido: Recorrido;
+  token: string | null;
   onToggleFavorito: () => void;
   onEliminar: () => Promise<void>;
 }) {
   const [confirmandoEliminar, setConfirmandoEliminar] = useState(false);
   const [eliminando, setEliminando] = useState(false);
+  const [mostrarCompartir, setMostrarCompartir] = useState(false);
 
   const puntos = recorrido.puntos;
   const bounds: [[number, number], [number, number]] = [
@@ -232,6 +237,31 @@ function FichaRecorrido({
           ¡Lo lograste! Así se vio tu recorrido de principio a fin. 🏆
         </p>
       </div>
+
+      <button
+        type="button"
+        onClick={() => setMostrarCompartir(true)}
+        className="btn-hero flex items-center justify-center gap-1.5 rounded-app px-3 py-2 text-xs"
+      >
+        <IconShare size={14} />
+        Compartir
+      </button>
+
+      {mostrarCompartir && (
+        <CompartirRecorridoModal
+          token={token}
+          datos={{
+            puntos,
+            distanciaKm: recorrido.distanciaKm,
+            duracionSeg: recorrido.duracionSeg,
+            velocidadPromedio,
+            velocidadMaxima,
+            fecha: fechaCompleta,
+            sector,
+          }}
+          onClose={() => setMostrarCompartir(false)}
+        />
+      )}
 
       {confirmandoEliminar ? (
         <div className="card flex flex-col gap-2 p-3">
@@ -384,6 +414,7 @@ export function MisRutasPanel({
           {seleccionado ? (
             <FichaRecorrido
               recorrido={seleccionado}
+              token={token}
               onToggleFavorito={() => alternarFavorito(seleccionado.id)}
               onEliminar={() => eliminarRecorrido(seleccionado.id)}
             />
