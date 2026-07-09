@@ -119,7 +119,7 @@ export function BottomNav() {
                 <img
                   src="/boton-mapa.png"
                   alt="Mapa"
-                  className="h-full w-full rounded-full object-cover"
+                  className="h-[85%] w-[85%] rounded-full object-cover"
                   onError={() => setLogoError(true)}
                 />
               )}
