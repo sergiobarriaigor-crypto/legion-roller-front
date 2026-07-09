@@ -13,10 +13,27 @@ export interface DatosTarjetaRecorrido {
 }
 
 const ANCHO = 800;
-const ALTO = 1000;
-const PADDING = 60;
-const MAPA_ALTO = 420;
-const MAPA_Y = 190;
+const ALTO = 1180;
+const PADDING = 50;
+
+const MAPA_X = 90;
+const MAPA_Y = 295;
+const MAPA_ANCHO = 620;
+const MAPA_ALTO = 480;
+
+const CAJA_RECORRIDO_Y = 210;
+const CAJA_RECORRIDO_ALTO = 640; // hasta y = 850
+
+const CAJA_STATS_Y = 880;
+const CAJA_STATS_ALTO = 180; // hasta y = 1060
+
+const DORADO = "#e7c168";
+const DORADO_BORDE = "#c99a3d";
+const GRIS_TEXTO = "#b8ada0";
+const FONDO_CARD = "#0d0a06";
+const FONDO_CAJA = "#171008";
+
+const TAM_TILE = 256;
 
 function escapeXml(texto: string): string {
   return texto
@@ -27,9 +44,150 @@ function escapeXml(texto: string): string {
     .replace(/'/g, "&apos;");
 }
 
-function construirSvg(datos: DatosTarjetaRecorrido, logoDataUrl: string | null): string {
+// --- Proyección Web Mercator (la misma que usan los tiles estilo OSM/Carto) ---
+function lonAPixelX(lon: number, zoom: number): number {
+  return ((lon + 180) / 360) * TAM_TILE * 2 ** zoom;
+}
+function latAPixelY(lat: number, zoom: number): number {
+  const rad = (lat * Math.PI) / 180;
+  return ((1 - Math.log(Math.tan(rad) + 1 / Math.cos(rad)) / Math.PI) / 2) * TAM_TILE * 2 ** zoom;
+}
+
+// Elige el zoom más alto (más detalle) tal que el recorrido completo entre
+// dentro del recuadro del mapa, dejando aire alrededor (no pegado a los bordes).
+function elegirZoom(minLat: number, maxLat: number, minLon: number, maxLon: number): number {
+  const MARGEN = 0.78;
+  for (let z = 18; z >= 3; z--) {
+    const spanX = lonAPixelX(maxLon, z) - lonAPixelX(minLon, z);
+    const spanY = latAPixelY(minLat, z) - latAPixelY(maxLat, z);
+    if (spanX <= MAPA_ANCHO * MARGEN && spanY <= MAPA_ALTO * MARGEN) return z;
+  }
+  return 3;
+}
+
+interface TileParaDibujar {
+  x: number;
+  y: number;
+  destX: number;
+  destY: number;
+}
+
+function calcularTilesNecesarios(centroPxX: number, centroPxY: number, zoom: number): TileParaDibujar[] {
+  const maxTile = 2 ** zoom;
+  const inicioPxX = centroPxX - MAPA_ANCHO / 2;
+  const inicioPxY = centroPxY - MAPA_ALTO / 2;
+  const finPxX = centroPxX + MAPA_ANCHO / 2;
+  const finPxY = centroPxY + MAPA_ALTO / 2;
+
+  const tileXInicio = Math.floor(inicioPxX / TAM_TILE);
+  const tileXFin = Math.floor((finPxX - 1) / TAM_TILE);
+  const tileYInicio = Math.floor(inicioPxY / TAM_TILE);
+  const tileYFin = Math.floor((finPxY - 1) / TAM_TILE);
+
+  const tiles: TileParaDibujar[] = [];
+  for (let ty = tileYInicio; ty <= tileYFin; ty++) {
+    for (let tx = tileXInicio; tx <= tileXFin; tx++) {
+      const tileXNorm = ((tx % maxTile) + maxTile) % maxTile; // por si el recuadro cruza el antimeridiano
+      tiles.push({
+        x: tileXNorm,
+        y: ty,
+        destX: tx * TAM_TILE - inicioPxX,
+        destY: ty * TAM_TILE - inicioPxY,
+      });
+    }
+  }
+  return tiles;
+}
+
+async function cargarTileComoImagen(zoom: number, x: number, y: number): Promise<HTMLImageElement | null> {
+  const url = `https://basemaps.cartocdn.com/dark_all/${zoom}/${x}/${y}.png`;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const lector = new FileReader();
+      lector.onload = () => resolve(lector.result as string);
+      lector.onerror = () => reject(new Error("no se pudo leer el tile"));
+      lector.readAsDataURL(blob);
+    });
+    return await new Promise<HTMLImageElement>((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error("no se pudo cargar el tile"));
+      img.src = dataUrl;
+    });
+  } catch {
+    return null;
+  }
+}
+
+interface MapaGenerado {
+  dataUrl: string;
+  zoom: number;
+  centroPxX: number;
+  centroPxY: number;
+}
+
+// Compone el mapa real (tiles oscuros estilo Carto Dark Matter, gratis y sin
+// API key) del recuadro del recorrido en un canvas aparte, para insertarlo
+// como <image> dentro del SVG principal. Los tiles se piden con fetch() (no
+// con <img>), así se pueden convertir a data URL sin "manchar" el canvas
+// final con contenido cross-origin. Si no hay conexión o los tiles no
+// cargan, devuelve null y el llamador usa un mapa vectorial de respaldo —
+// la tarjeta nunca se rompe por esto.
+async function generarMapaReal(puntos: PuntoGps[]): Promise<MapaGenerado | null> {
+  try {
+    const lats = puntos.map((p) => p.lat);
+    const lons = puntos.map((p) => p.lon);
+    const minLat = Math.min(...lats);
+    const maxLat = Math.max(...lats);
+    const minLon = Math.min(...lons);
+    const maxLon = Math.max(...lons);
+
+    const zoom = elegirZoom(minLat, maxLat, minLon, maxLon);
+    const centroPxX = lonAPixelX((minLon + maxLon) / 2, zoom);
+    const centroPxY = latAPixelY((minLat + maxLat) / 2, zoom);
+
+    const tiles = calcularTilesNecesarios(centroPxX, centroPxY, zoom);
+    if (tiles.length === 0 || tiles.length > 30) return null;
+
+    const imagenes = await Promise.all(tiles.map((t) => cargarTileComoImagen(zoom, t.x, t.y)));
+    if (imagenes.every((img) => img === null)) return null;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = MAPA_ANCHO;
+    canvas.height = MAPA_ALTO;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.fillStyle = "#1a1108";
+    ctx.fillRect(0, 0, MAPA_ANCHO, MAPA_ALTO);
+    tiles.forEach((t, i) => {
+      const img = imagenes[i];
+      if (img) ctx.drawImage(img, t.destX, t.destY, TAM_TILE, TAM_TILE);
+    });
+
+    return { dataUrl: canvas.toDataURL("image/png"), zoom, centroPxX, centroPxY };
+  } catch {
+    return null;
+  }
+}
+
+function iconoDistancia(cx: number, y: number): string {
+  return `<g transform="translate(${cx - 15}, ${y})"><path d="M15 2c-5 0-9 4-9 9 0 6.5 9 16 9 16s9-9.5 9-16c0-5-4-9-9-9zm0 12.5a3.5 3.5 0 110-7 3.5 3.5 0 010 7z" fill="none" stroke="${DORADO}" stroke-width="1.8"/></g>`;
+}
+function iconoTiempo(cx: number, y: number): string {
+  return `<g transform="translate(${cx - 15}, ${y})"><circle cx="15" cy="15" r="11.5" fill="none" stroke="${DORADO}" stroke-width="1.8"/><path d="M15 8v7l5 3" fill="none" stroke="${DORADO}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></g>`;
+}
+function iconoVelocidad(cx: number, y: number): string {
+  return `<g transform="translate(${cx - 15}, ${y})"><path d="M3 19a12 12 0 0124 0" fill="none" stroke="${DORADO}" stroke-width="1.8" stroke-linecap="round"/><path d="M15 19l5.5-7.5" stroke="${DORADO}" stroke-width="1.8" stroke-linecap="round"/><circle cx="15" cy="19" r="2" fill="${DORADO}"/></g>`;
+}
+function iconoRayo(cx: number, y: number): string {
+  return `<g transform="translate(${cx - 15}, ${y})"><path d="M16.5 1L5 18h7l-1.5 11L23 12h-7l1-11z" fill="${DORADO}"/></g>`;
+}
+
+function construirSvg(datos: DatosTarjetaRecorrido, logoDataUrl: string | null, mapa: MapaGenerado | null): string {
   const { puntos } = datos;
-  const mapaAncho = ANCHO - PADDING * 2;
 
   const lats = puntos.map((p) => p.lat);
   const lons = puntos.map((p) => p.lon);
@@ -40,61 +198,124 @@ function construirSvg(datos: DatosTarjetaRecorrido, logoDataUrl: string | null):
   const rangoLat = maxLat - minLat || 0.0001;
   const rangoLon = maxLon - minLon || 0.0001;
 
-  // Deja un margen dentro del recuadro del mapa para que el trazo no toque los bordes.
-  const margenInterno = 40;
-  const x = (lon: number) =>
-    PADDING + margenInterno + ((lon - minLon) / rangoLon) * (mapaAncho - margenInterno * 2);
-  const y = (lat: number) =>
-    MAPA_Y + margenInterno + ((maxLat - lat) / rangoLat) * (MAPA_ALTO - margenInterno * 2);
+  // Proyección de cada punto a coordenadas de píxel DENTRO del recuadro del
+  // mapa. Si hay mapa real, usa la misma proyección Web Mercator que los
+  // tiles (para que el trazo calce con las calles); si no, un mapeo lineal
+  // simple del recuadro geográfico como respaldo.
+  const margenInterno = 36;
+  let x: (lon: number) => number;
+  let y: (lat: number) => number;
+  if (mapa) {
+    x = (lon: number) => MAPA_X + (lonAPixelX(lon, mapa.zoom) - mapa.centroPxX + MAPA_ANCHO / 2);
+    y = (lat: number) => MAPA_Y + (latAPixelY(lat, mapa.zoom) - mapa.centroPxY + MAPA_ALTO / 2);
+  } else {
+    x = (lon: number) =>
+      MAPA_X + margenInterno + ((lon - minLon) / rangoLon) * (MAPA_ANCHO - margenInterno * 2);
+    y = (lat: number) =>
+      MAPA_Y + margenInterno + ((maxLat - lat) / rangoLat) * (MAPA_ALTO - margenInterno * 2);
+  }
 
   const inicio = puntos[0];
   const fin = puntos[puntos.length - 1];
   const trazo = puntos.map((p) => `${x(p.lon)},${y(p.lat)}`).join(" ");
 
+  const mapaFondoSvg = mapa
+    ? `<image href="${mapa.dataUrl}" x="${MAPA_X}" y="${MAPA_Y}" width="${MAPA_ANCHO}" height="${MAPA_ALTO}" preserveAspectRatio="none"/>`
+    : `<rect x="${MAPA_X}" y="${MAPA_Y}" width="${MAPA_ANCHO}" height="${MAPA_ALTO}" fill="#1a1108"/>`;
+
+  const atribucionSvg = mapa
+    ? `<text x="${MAPA_X + MAPA_ANCHO - 8}" y="${MAPA_Y + MAPA_ALTO - 8}" text-anchor="end" font-family="Arial, sans-serif" font-size="9" fill="#8a8177" opacity="0.85">© OpenStreetMap, © CARTO</text>`
+    : "";
+
   const stats = [
-    { valor: `${datos.distanciaKm.toFixed(2)} km`, etiqueta: "DISTANCIA" },
-    { valor: `${Math.round(datos.duracionSeg / 60)} min`, etiqueta: "TIEMPO TOTAL" },
-    { valor: `${Math.round(datos.velocidadPromedio)} km/h`, etiqueta: "VEL. PROMEDIO" },
-    { valor: `${Math.round(datos.velocidadMaxima)} km/h`, etiqueta: "VEL. MÁXIMA" },
+    { valor: `${datos.distanciaKm.toFixed(2)} km`, etiqueta: "DISTANCIA", icono: iconoDistancia },
+    { valor: `${Math.round(datos.duracionSeg / 60)} min`, etiqueta: "TIEMPO TOTAL", icono: iconoTiempo },
+    { valor: `${Math.round(datos.velocidadPromedio)} km/h`, etiqueta: "VEL. PROMEDIO", icono: iconoVelocidad },
+    { valor: `${Math.round(datos.velocidadMaxima)} km/h`, etiqueta: "VEL. MÁXIMA", icono: iconoRayo },
   ];
 
-  const anchoStat = mapaAncho / stats.length;
-  const statsY = MAPA_Y + MAPA_ALTO + 70;
+  const anchoCol = (ANCHO - PADDING * 2) / stats.length;
+  const iconoY = CAJA_STATS_Y + 28;
+  const valorY = CAJA_STATS_Y + 100;
+  const etiquetaY = CAJA_STATS_Y + 124;
 
   const statsSvg = stats
     .map((s, i) => {
-      const cx = PADDING + anchoStat * i + anchoStat / 2;
+      const cx = PADDING + anchoCol * i + anchoCol / 2;
       return `
-        <text x="${cx}" y="${statsY}" text-anchor="middle" font-family="Arial, sans-serif" font-size="34" font-weight="700" fill="#e7c168">${escapeXml(s.valor)}</text>
-        <text x="${cx}" y="${statsY + 28}" text-anchor="middle" font-family="Arial, sans-serif" font-size="16" letter-spacing="1" fill="#b8ada0">${escapeXml(s.etiqueta)}</text>
+        ${s.icono(cx, iconoY)}
+        <text x="${cx}" y="${valorY}" text-anchor="middle" font-family="Arial, sans-serif" font-size="32" font-weight="700" fill="${DORADO}">${escapeXml(s.valor)}</text>
+        <text x="${cx}" y="${etiquetaY}" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" letter-spacing="1.2" fill="${GRIS_TEXTO}">${escapeXml(s.etiqueta)}</text>
       `;
     })
     .join("");
 
+  const separadoresSvg = [1, 2, 3]
+    .map((i) => {
+      const sx = PADDING + anchoCol * i;
+      return `<line x1="${sx}" y1="${CAJA_STATS_Y + 24}" x2="${sx}" y2="${CAJA_STATS_Y + CAJA_STATS_ALTO - 24}" stroke="#ffffff" stroke-opacity="0.1" stroke-width="1"/>`;
+    })
+    .join("");
+
   const tituloSvg = datos.titulo
-    ? `<text x="${ANCHO / 2}" y="${statsY + 90}" text-anchor="middle" font-family="Arial, sans-serif" font-size="30" font-weight="700" fill="#f2ead8">${escapeXml(datos.titulo)}</text>`
+    ? `<text x="${ANCHO / 2}" y="1112" text-anchor="middle" font-family="Arial, sans-serif" font-size="26" font-weight="700" fill="#f2ead8">${escapeXml(datos.titulo)}</text>`
     : "";
-
   const comentarioSvg = datos.comentario
-    ? `<text x="${ANCHO / 2}" y="${statsY + (datos.titulo ? 130 : 95)}" text-anchor="middle" font-family="Arial, sans-serif" font-size="22" fill="#b8ada0">${escapeXml(datos.comentario)}</text>`
+    ? `<text x="${ANCHO / 2}" y="1145" text-anchor="middle" font-family="Arial, sans-serif" font-size="19" fill="${GRIS_TEXTO}">${escapeXml(datos.comentario)}</text>`
     : "";
 
-  const TAM_LOGO = 90;
+  const TAM_LOGO = 100;
   const marcaSvg = logoDataUrl
-    ? `<image href="${logoDataUrl}" x="${ANCHO / 2 - TAM_LOGO / 2}" y="18" width="${TAM_LOGO}" height="${TAM_LOGO}" />`
-    : `<text x="${ANCHO / 2}" y="72" text-anchor="middle" font-family="Arial, sans-serif" font-size="42" font-weight="800" fill="#e7c168" letter-spacing="2">LEGIÓN ROLLER</text>`;
-  const fechaY = logoDataUrl ? TAM_LOGO + 45 : 125;
+    ? `<image href="${logoDataUrl}" x="${ANCHO / 2 - TAM_LOGO / 2}" y="40" width="${TAM_LOGO}" height="${TAM_LOGO}" />`
+    : `<text x="${ANCHO / 2}" y="95" text-anchor="middle" font-family="Arial, sans-serif" font-size="38" font-weight="800" fill="${DORADO}" letter-spacing="2">LEGIÓN ROLLER</text>`;
 
   return `
     <svg width="${ANCHO}" height="${ALTO}" viewBox="0 0 ${ANCHO} ${ALTO}" xmlns="http://www.w3.org/2000/svg">
-      <rect width="${ANCHO}" height="${ALTO}" fill="#171008" />
+      <defs>
+        <filter id="resplandorDorado" x="-60%" y="-60%" width="220%" height="220%">
+          <feGaussianBlur stdDeviation="5" result="blur"/>
+          <feMerge>
+            <feMergeNode in="blur"/>
+            <feMergeNode in="SourceGraphic"/>
+          </feMerge>
+        </filter>
+      </defs>
+
+      <rect width="${ANCHO}" height="${ALTO}" fill="${FONDO_CARD}" />
+      <rect x="14" y="14" width="${ANCHO - 28}" height="${ALTO - 28}" rx="26" fill="none" stroke="${DORADO_BORDE}" stroke-width="2" opacity="0.55" filter="url(#resplandorDorado)"/>
+      <rect x="14" y="14" width="${ANCHO - 28}" height="${ALTO - 28}" rx="26" fill="none" stroke="${DORADO_BORDE}" stroke-width="1.5"/>
+
       ${marcaSvg}
-      <text x="${ANCHO / 2}" y="${fechaY}" text-anchor="middle" font-family="Arial, sans-serif" font-size="22" fill="#b8ada0">${escapeXml(datos.fecha)} · ${escapeXml(datos.sector)}</text>
-      <rect x="${PADDING}" y="${MAPA_Y}" width="${mapaAncho}" height="${MAPA_ALTO}" rx="20" fill="#241a10" stroke="#3a2c1a" stroke-width="2" />
-      <polyline points="${trazo}" fill="none" stroke="#C99A3D" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" />
-      <circle cx="${x(inicio.lon)}" cy="${y(inicio.lat)}" r="11" fill="#5fae4e" stroke="#171008" stroke-width="3" />
-      <circle cx="${x(fin.lon)}" cy="${y(fin.lat)}" r="11" fill="#d8342f" stroke="#171008" stroke-width="3" />
+      <text x="${ANCHO / 2}" y="178" text-anchor="middle" font-family="Arial, sans-serif" font-size="23" font-weight="600" fill="#f2ead8">${escapeXml(datos.fecha)}<tspan fill="${DORADO}"> · </tspan><tspan fill="${GRIS_TEXTO}" font-weight="400" font-size="19">${escapeXml(datos.sector)}</tspan></text>
+
+      <rect x="${PADDING}" y="${CAJA_RECORRIDO_Y}" width="${ANCHO - PADDING * 2}" height="${CAJA_RECORRIDO_ALTO}" rx="18" fill="${FONDO_CAJA}" stroke="${DORADO_BORDE}" stroke-width="1.5" opacity="0.9" filter="url(#resplandorDorado)"/>
+      <rect x="${PADDING}" y="${CAJA_RECORRIDO_Y}" width="${ANCHO - PADDING * 2}" height="${CAJA_RECORRIDO_ALTO}" rx="18" fill="${FONDO_CAJA}" stroke="${DORADO_BORDE}" stroke-width="1.2"/>
+
+      <text x="${ANCHO / 2}" y="${CAJA_RECORRIDO_Y + 40}" text-anchor="middle" font-family="Arial, sans-serif" font-size="20" font-weight="700" letter-spacing="2" fill="${DORADO}">RECORRIDO</text>
+      <text x="${ANCHO / 2}" y="${CAJA_RECORRIDO_Y + 62}" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" fill="${GRIS_TEXTO}">Tu ruta mapeada</text>
+
+      <clipPath id="recorteMapa">
+        <rect x="${MAPA_X}" y="${MAPA_Y}" width="${MAPA_ANCHO}" height="${MAPA_ALTO}" rx="14"/>
+      </clipPath>
+      <g clip-path="url(#recorteMapa)">
+        ${mapaFondoSvg}
+        <polyline points="${trazo}" fill="none" stroke="${DORADO}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="${x(inicio.lon)}" cy="${y(inicio.lat)}" r="10" fill="#5fae4e" stroke="#0d0a06" stroke-width="3"/>
+        <circle cx="${x(fin.lon)}" cy="${y(fin.lat)}" r="10" fill="#d8342f" stroke="#0d0a06" stroke-width="3"/>
+        ${atribucionSvg}
+      </g>
+      <rect x="${MAPA_X}" y="${MAPA_Y}" width="${MAPA_ANCHO}" height="${MAPA_ALTO}" rx="14" fill="none" stroke="${DORADO_BORDE}" stroke-width="1.2" opacity="0.8"/>
+
+      <circle cx="${ANCHO / 2 - 55}" cy="${MAPA_Y + MAPA_ALTO + 35}" r="6" fill="#5fae4e"/>
+      <text x="${ANCHO / 2 - 42}" y="${MAPA_Y + MAPA_ALTO + 40}" font-family="Arial, sans-serif" font-size="15" font-weight="600" fill="#f2ead8">INICIO</text>
+      <circle cx="${ANCHO / 2 + 20}" cy="${MAPA_Y + MAPA_ALTO + 35}" r="6" fill="#d8342f"/>
+      <text x="${ANCHO / 2 + 33}" y="${MAPA_Y + MAPA_ALTO + 40}" font-family="Arial, sans-serif" font-size="15" font-weight="600" fill="#f2ead8">FIN</text>
+
+      <rect x="${PADDING}" y="${CAJA_STATS_Y}" width="${ANCHO - PADDING * 2}" height="${CAJA_STATS_ALTO}" rx="18" fill="${FONDO_CAJA}" stroke="${DORADO_BORDE}" stroke-width="1.5" opacity="0.9" filter="url(#resplandorDorado)"/>
+      <rect x="${PADDING}" y="${CAJA_STATS_Y}" width="${ANCHO - PADDING * 2}" height="${CAJA_STATS_ALTO}" rx="18" fill="${FONDO_CAJA}" stroke="${DORADO_BORDE}" stroke-width="1.2"/>
+      ${separadoresSvg}
       ${statsSvg}
+
       ${tituloSvg}
       ${comentarioSvg}
     </svg>
@@ -116,13 +337,14 @@ function cargarLogoDataUrl(): Promise<string | null> {
     .catch(() => null);
 }
 
-// Genera la tarjeta visual del recorrido (mapa vectorial + estadísticas + logo)
-// como PNG, dibujando un SVG en un canvas — así se evita el problema clásico de
-// "canvas tainted by cross-origin data" que ocurriría si intentáramos capturar
-// tiles reales de OpenStreetMap con html2canvas.
+// Genera la tarjeta visual del recorrido (mapa real oscuro + trazo dorado +
+// estadísticas + logo) como PNG, dibujando un SVG en un canvas. Los tiles del
+// mapa se piden con fetch() (no con <img>), lo que evita el problema clásico
+// de "canvas tainted by cross-origin data" que aparecería si se intentaran
+// dibujar tiles directamente como imágenes cross-origin sin ese paso.
 export async function generarTarjetaRecorrido(datos: DatosTarjetaRecorrido): Promise<Blob> {
-  const logoDataUrl = await cargarLogoDataUrl();
-  const svg = construirSvg(datos, logoDataUrl);
+  const [logoDataUrl, mapa] = await Promise.all([cargarLogoDataUrl(), generarMapaReal(datos.puntos)]);
+  const svg = construirSvg(datos, logoDataUrl, mapa);
   const svgDataUrl = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`;
 
   return new Promise((resolve, reject) => {

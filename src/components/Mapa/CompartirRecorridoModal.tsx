@@ -131,7 +131,7 @@ export function CompartirRecorridoModal({
       >
         <h2 className="text-sm font-semibold text-text-accent">Compartir recorrido</h2>
 
-        <div className="flex items-center justify-center overflow-hidden rounded-app bg-surface-2" style={{ height: 220 }}>
+        <div className="flex items-center justify-center overflow-hidden rounded-app bg-surface-2" style={{ height: 320 }}>
           {!previewUrl && <p className="text-xs text-text-secondary">Generando tarjeta...</p>}
           {previewUrl && (
             // eslint-disable-next-line @next/next/no-img-element
