@@ -94,7 +94,7 @@ export function PatinadoresActivosPanel({ patinadores }: { patinadores: Patinado
           onClick={() => setMostrarTodos(false)}
         >
           <div
-            className="flex max-h-[70vh] w-full max-w-md flex-col gap-2 overflow-y-auto rounded-app border border-border p-5"
+            className="flex max-h-[70vh] min-h-[280px] w-full max-w-md flex-col gap-2 overflow-y-auto rounded-app border border-border p-5"
             style={{
               backgroundImage:
                 "linear-gradient(to bottom, rgba(23,16,8,0.55) 0%, rgba(23,16,8,0.75) 55%, rgba(23,16,8,0.9) 100%), url(/fondo-patinadores-activos.jpg)",
