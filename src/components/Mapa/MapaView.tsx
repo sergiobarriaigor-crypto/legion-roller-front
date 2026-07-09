@@ -806,19 +806,21 @@ export function MapaView() {
                   desapareces del mapa y el GPS deja de usarse para esto.
                 </p>
                 <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => activarModo("patinando")}
-                    className="btn-hero flex-1 rounded-app px-4 py-2 text-sm"
-                  >
-                    Estoy patinando ahora
+                  <button type="button" onClick={() => activarModo("patinando")} className="flex-1">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src="/boton-patinando.png"
+                      alt="Estoy patinando ahora"
+                      className="h-auto w-full object-contain"
+                    />
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => activarModo("ruta")}
-                    className="btn-hero flex-1 rounded-app px-4 py-2 text-sm"
-                  >
-                    Estoy en ruta
+                  <button type="button" onClick={() => activarModo("ruta")} className="flex-1">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src="/boton-estoy-en-ruta.png"
+                      alt="Estoy en ruta"
+                      className="h-auto w-full object-contain"
+                    />
                   </button>
                 </div>
               </>
