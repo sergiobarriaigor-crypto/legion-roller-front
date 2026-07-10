@@ -68,7 +68,13 @@ export function BottomNav() {
   const holdActivadoRef = useRef(false);
   const [logoError, setLogoError] = useState(false);
 
-  function iniciarHoldMapa() {
+  function iniciarHoldMapa(e: React.PointerEvent<HTMLButtonElement>) {
+    // Sin esto, si el dedo se desliza (aunque sea sin querer) hacia el botón
+    // vecino ("Impulsa") mientras se mantiene presionado, el navegador puede
+    // soltar el click ahí en vez de en este botón — enviando a Impulsa sin
+    // importar la pantalla en la que se estaba. Capturar el puntero mantiene
+    // todo el gesto (mover y soltar) anclado a este botón hasta que se suelte.
+    e.currentTarget.setPointerCapture(e.pointerId);
     holdActivadoRef.current = false;
     holdTimeoutRef.current = setTimeout(() => {
       holdActivadoRef.current = true;
