@@ -36,7 +36,10 @@ const DORADO = "#e7c168";
 const DORADO_BORDE = "#c99a3d";
 const GRIS_TEXTO = "#b8ada0";
 const FONDO_CARD = "#0d0a06";
-const FONDO_CAJA = "#171008";
+// Semi-transparente (en vez de sólido) para que la foto de fondo se asome
+// también dentro de la caja "RECORRIDO" y de las casillas de estadísticas,
+// no solo en los bordes de la tarjeta.
+const FONDO_CAJA = "rgba(23,16,8,0.55)";
 
 const TAM_TILE = 256;
 
@@ -255,9 +258,9 @@ function construirSvg(
   // simples líneas separadoras).
   const ESPACIO_ENTRE_CAJAS = 14;
   const anchoCaja = (ANCHO - PADDING * 2 - ESPACIO_ENTRE_CAJAS * (stats.length - 1)) / stats.length;
-  const iconoY = CAJA_STATS_Y + 28;
-  const valorY = CAJA_STATS_Y + 100;
-  const etiquetaY = CAJA_STATS_Y + 124;
+  const iconoY = CAJA_STATS_Y + 26;
+  const valorY = CAJA_STATS_Y + 102;
+  const etiquetaY = CAJA_STATS_Y + 128;
 
   const statsSvg = stats
     .map((s, i) => {
@@ -267,8 +270,8 @@ function construirSvg(
         <rect x="${cajaX}" y="${CAJA_STATS_Y}" width="${anchoCaja}" height="${CAJA_STATS_ALTO}" rx="16" fill="${FONDO_CAJA}" stroke="${DORADO_BORDE}" stroke-width="1.5" opacity="0.9" filter="url(#resplandorDorado)"/>
         <rect x="${cajaX}" y="${CAJA_STATS_Y}" width="${anchoCaja}" height="${CAJA_STATS_ALTO}" rx="16" fill="${FONDO_CAJA}" stroke="${DORADO_BORDE}" stroke-width="1.2"/>
         ${s.icono(cx, iconoY)}
-        <text x="${cx}" y="${valorY}" text-anchor="middle" font-family="Arial, sans-serif" font-size="27" font-weight="700" fill="${DORADO}">${escapeXml(s.valor)}</text>
-        <text x="${cx}" y="${etiquetaY}" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" letter-spacing="1" fill="${GRIS_TEXTO}">${escapeXml(s.etiqueta)}</text>
+        <text x="${cx}" y="${valorY}" text-anchor="middle" font-family="Arial, sans-serif" font-size="30" font-weight="700" fill="${DORADO}">${escapeXml(s.valor)}</text>
+        <text x="${cx}" y="${etiquetaY}" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" letter-spacing="1" fill="${GRIS_TEXTO}">${escapeXml(s.etiqueta)}</text>
       `;
     })
     .join("");
@@ -316,7 +319,6 @@ function construirSvg(
       <rect x="${PADDING}" y="${CAJA_RECORRIDO_Y}" width="${ANCHO - PADDING * 2}" height="${CAJA_RECORRIDO_ALTO}" rx="18" fill="${FONDO_CAJA}" stroke="${DORADO_BORDE}" stroke-width="1.2"/>
 
       <text x="${ANCHO / 2}" y="${CAJA_RECORRIDO_Y + 40}" text-anchor="middle" font-family="Arial, sans-serif" font-size="20" font-weight="700" letter-spacing="2" fill="${DORADO}">RECORRIDO</text>
-      <text x="${ANCHO / 2}" y="${CAJA_RECORRIDO_Y + 62}" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" fill="${GRIS_TEXTO}">Tu ruta mapeada</text>
 
       <clipPath id="recorteMapa">
         <rect x="${MAPA_X}" y="${MAPA_Y}" width="${MAPA_ANCHO}" height="${MAPA_ALTO}" rx="14"/>
