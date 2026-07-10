@@ -313,7 +313,7 @@ function construirSvg(
       <rect x="14" y="14" width="${ANCHO - 28}" height="${ALTO - 28}" rx="26" fill="none" stroke="${DORADO_BORDE}" stroke-width="1.5"/>
 
       ${marcaSvg}
-      <text x="${ANCHO / 2}" y="218" text-anchor="middle" font-family="Arial, sans-serif" font-size="23" font-weight="600" fill="#f2ead8">${escapeXml(datos.fecha)}<tspan fill="${DORADO}"> · </tspan><tspan fill="${GRIS_TEXTO}" font-weight="400" font-size="19">${escapeXml(datos.sector)}</tspan></text>
+      <text x="${ANCHO / 2}" y="218" text-anchor="middle" font-family="Arial, sans-serif" font-size="23" font-weight="600" fill="#f2ead8">${escapeXml(datos.fecha)}<tspan fill="${DORADO}"> · </tspan><tspan fill="${GRIS_TEXTO}" font-weight="400" font-size="21">${escapeXml(datos.sector)}</tspan></text>
 
       <rect x="${PADDING}" y="${CAJA_RECORRIDO_Y}" width="${ANCHO - PADDING * 2}" height="${CAJA_RECORRIDO_ALTO}" rx="18" fill="${FONDO_CAJA}" stroke="${DORADO_BORDE}" stroke-width="1.5" opacity="0.9" filter="url(#resplandorDorado)"/>
       <rect x="${PADDING}" y="${CAJA_RECORRIDO_Y}" width="${ANCHO - PADDING * 2}" height="${CAJA_RECORRIDO_ALTO}" rx="18" fill="${FONDO_CAJA}" stroke="${DORADO_BORDE}" stroke-width="1.2"/>
