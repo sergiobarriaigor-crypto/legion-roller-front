@@ -13,19 +13,19 @@ export interface DatosTarjetaRecorrido {
 }
 
 const ANCHO = 800;
-const ALTO = 1180;
+const ALTO = 1150;
 const PADDING = 50;
 
 const MAPA_X = 90;
-const MAPA_Y = 295;
+const MAPA_Y = 335;
 const MAPA_ANCHO = 620;
 const MAPA_ALTO = 480;
 
-const CAJA_RECORRIDO_Y = 210;
-const CAJA_RECORRIDO_ALTO = 640; // hasta y = 850
+const CAJA_RECORRIDO_Y = 250;
+const CAJA_RECORRIDO_ALTO = 640; // hasta y = 890
 
-const CAJA_STATS_Y = 880;
-const CAJA_STATS_ALTO = 180; // hasta y = 1060
+const CAJA_STATS_Y = 920;
+const CAJA_STATS_ALTO = 180; // hasta y = 1100
 
 const DORADO = "#e7c168";
 const DORADO_BORDE = "#c99a3d";
@@ -257,17 +257,15 @@ function construirSvg(datos: DatosTarjetaRecorrido, logoDataUrl: string | null, 
     })
     .join("");
 
-  const tituloSvg = datos.titulo
-    ? `<text x="${ANCHO / 2}" y="1112" text-anchor="middle" font-family="Arial, sans-serif" font-size="26" font-weight="700" fill="#f2ead8">${escapeXml(datos.titulo)}</text>`
-    : "";
-  const comentarioSvg = datos.comentario
-    ? `<text x="${ANCHO / 2}" y="1145" text-anchor="middle" font-family="Arial, sans-serif" font-size="19" fill="${GRIS_TEXTO}">${escapeXml(datos.comentario)}</text>`
-    : "";
+  // El título y el comentario del usuario ya viajan aparte (como texto de la
+  // publicación en Post, o como texto del panel nativo al compartir a redes)
+  // — a pedido del usuario, ya no se dibujan encima de la imagen misma.
 
-  const TAM_LOGO = 100;
+  const TAM_LOGO = 150;
+  const LOGO_Y = 32;
   const marcaSvg = logoDataUrl
-    ? `<image href="${logoDataUrl}" x="${ANCHO / 2 - TAM_LOGO / 2}" y="40" width="${TAM_LOGO}" height="${TAM_LOGO}" />`
-    : `<text x="${ANCHO / 2}" y="95" text-anchor="middle" font-family="Arial, sans-serif" font-size="38" font-weight="800" fill="${DORADO}" letter-spacing="2">LEGIÓN ROLLER</text>`;
+    ? `<image href="${logoDataUrl}" x="${ANCHO / 2 - TAM_LOGO / 2}" y="${LOGO_Y}" width="${TAM_LOGO}" height="${TAM_LOGO}" />`
+    : `<text x="${ANCHO / 2}" y="${LOGO_Y + TAM_LOGO / 2 + 13}" text-anchor="middle" font-family="Arial, sans-serif" font-size="42" font-weight="800" fill="${DORADO}" letter-spacing="2">LEGIÓN ROLLER</text>`;
 
   return `
     <svg width="${ANCHO}" height="${ALTO}" viewBox="0 0 ${ANCHO} ${ALTO}" xmlns="http://www.w3.org/2000/svg">
@@ -286,7 +284,7 @@ function construirSvg(datos: DatosTarjetaRecorrido, logoDataUrl: string | null, 
       <rect x="14" y="14" width="${ANCHO - 28}" height="${ALTO - 28}" rx="26" fill="none" stroke="${DORADO_BORDE}" stroke-width="1.5"/>
 
       ${marcaSvg}
-      <text x="${ANCHO / 2}" y="178" text-anchor="middle" font-family="Arial, sans-serif" font-size="23" font-weight="600" fill="#f2ead8">${escapeXml(datos.fecha)}<tspan fill="${DORADO}"> · </tspan><tspan fill="${GRIS_TEXTO}" font-weight="400" font-size="19">${escapeXml(datos.sector)}</tspan></text>
+      <text x="${ANCHO / 2}" y="218" text-anchor="middle" font-family="Arial, sans-serif" font-size="23" font-weight="600" fill="#f2ead8">${escapeXml(datos.fecha)}<tspan fill="${DORADO}"> · </tspan><tspan fill="${GRIS_TEXTO}" font-weight="400" font-size="19">${escapeXml(datos.sector)}</tspan></text>
 
       <rect x="${PADDING}" y="${CAJA_RECORRIDO_Y}" width="${ANCHO - PADDING * 2}" height="${CAJA_RECORRIDO_ALTO}" rx="18" fill="${FONDO_CAJA}" stroke="${DORADO_BORDE}" stroke-width="1.5" opacity="0.9" filter="url(#resplandorDorado)"/>
       <rect x="${PADDING}" y="${CAJA_RECORRIDO_Y}" width="${ANCHO - PADDING * 2}" height="${CAJA_RECORRIDO_ALTO}" rx="18" fill="${FONDO_CAJA}" stroke="${DORADO_BORDE}" stroke-width="1.2"/>
@@ -312,9 +310,6 @@ function construirSvg(datos: DatosTarjetaRecorrido, logoDataUrl: string | null, 
       <text x="${ANCHO / 2 + 33}" y="${MAPA_Y + MAPA_ALTO + 40}" font-family="Arial, sans-serif" font-size="15" font-weight="600" fill="#f2ead8">FIN</text>
 
       ${statsSvg}
-
-      ${tituloSvg}
-      ${comentarioSvg}
     </svg>
   `;
 }
