@@ -5,7 +5,6 @@ import { MapContainer, TileLayer, Polyline, CircleMarker } from "react-leaflet";
 import {
   IconX,
   IconChevronLeft,
-  IconTrophy,
   IconStar,
   IconStarFilled,
   IconTrash,
@@ -204,10 +203,6 @@ function FichaRecorrido({
           estilo que el resto de la app) — el orgullo viene del gesto de cierre
           ("¡Lo lograste!"), no de un marco recargado sobre el mapa. */}
       <div className="flex flex-col gap-2 rounded-app border border-white/10 bg-black/40 p-3 backdrop-blur-sm">
-        <div className="flex items-center gap-1.5">
-          <IconTrophy size={16} className="text-text-accent" />
-          <h3 className="text-sm font-semibold text-text-accent">Recorrido</h3>
-        </div>
         <div className="isolate overflow-hidden rounded-app" style={{ height: 240 }}>
           <MapContainer
             bounds={bounds}
@@ -240,7 +235,7 @@ function FichaRecorrido({
           </MapContainer>
         </div>
         <p className="text-center text-xs text-text-secondary">
-          ¡Lo lograste! Así se vio tu recorrido de principio a fin. 🏆
+          ¡Lo lograste! Así se vio tu recorrido de principio a fin.
         </p>
       </div>
 
