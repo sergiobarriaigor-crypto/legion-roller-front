@@ -696,12 +696,11 @@ export function MapaView() {
             ))}
         </MapContainer>
 
-        {/* Clúster único de controles del mapa: mismo estilo (dorado, brillo
-            sutil, bordes suaves) para todos. En la esquina inferior derecha
-            (alcance natural del pulgar sosteniendo el teléfono con una mano)
-            en vez de centrado en el borde, y con fondo más transparente para
-            no tapar el mapa/recorrido detrás de los botones. */}
-        <div className="absolute bottom-2 right-2 z-[1000] flex flex-col items-center gap-0.5 rounded-2xl border border-border-accent/30 bg-surface-1/45 p-1.5 shadow-[0_0_14px_rgba(201,154,61,0.18)] backdrop-blur-sm">
+        {/* Controles del mapa: sin caja/fondo — íconos dorados flotando
+            directo sobre el mapa, con solo una sombra suave para que se
+            distingan del terreno de abajo (patrón tipo Google/Apple Maps),
+            en vez de un bloque sólido compitiendo visualmente con el mapa. */}
+        <div className="absolute bottom-2 right-2 z-[1000] flex flex-col items-center gap-2.5">
           {/* Zoom +/- ocultos en la vista normal (menos ruido visual, más
               espacio útil); solo aparecen en pantalla completa, donde hay
               espacio de sobra y tiene más sentido controlar el zoom a mano. */}
@@ -711,20 +710,18 @@ export function MapaView() {
                 type="button"
                 aria-label="Acercar"
                 onClick={() => mapRef.current?.zoomIn()}
-                className="flex h-9 w-9 items-center justify-center rounded-xl text-text-accent transition active:scale-90 hover:bg-bg-accent"
+                className="flex h-9 w-9 items-center justify-center text-text-accent drop-shadow-[0_1px_4px_rgba(0,0,0,0.7)] transition active:scale-90 hover:scale-110"
               >
-                <IconPlus size={18} />
+                <IconPlus size={20} />
               </button>
               <button
                 type="button"
                 aria-label="Alejar"
                 onClick={() => mapRef.current?.zoomOut()}
-                className="flex h-9 w-9 items-center justify-center rounded-xl text-text-accent transition active:scale-90 hover:bg-bg-accent"
+                className="flex h-9 w-9 items-center justify-center text-text-accent drop-shadow-[0_1px_4px_rgba(0,0,0,0.7)] transition active:scale-90 hover:scale-110"
               >
-                <IconMinus size={18} />
+                <IconMinus size={20} />
               </button>
-
-              <div className="my-0.5 h-px w-6 bg-border-accent/30" />
             </>
           )}
 
@@ -734,21 +731,18 @@ export function MapaView() {
               capaMapa === "estandar" ? "Ver mapa en modo satélite" : "Ver mapa estándar"
             }
             onClick={() => setCapaMapa((c) => (c === "estandar" ? "satelite" : "estandar"))}
-            className="flex h-9 w-9 items-center justify-center rounded-xl text-text-accent transition active:scale-90 hover:bg-bg-accent"
+            className="flex h-9 w-9 items-center justify-center text-text-accent drop-shadow-[0_1px_4px_rgba(0,0,0,0.7)] transition active:scale-90 hover:scale-110"
           >
-            {capaMapa === "estandar" ? <IconSatellite size={18} /> : <IconMap2 size={18} />}
+            {capaMapa === "estandar" ? <IconSatellite size={20} /> : <IconMap2 size={20} />}
           </button>
           <button
             type="button"
             aria-label={pantallaCompleta ? "Salir de pantalla completa" : "Ver mapa en pantalla completa"}
             onClick={() => setPantallaCompleta((v) => !v)}
-            className="flex h-9 w-9 items-center justify-center rounded-xl text-text-accent transition active:scale-90 hover:bg-bg-accent"
+            className="flex h-9 w-9 items-center justify-center text-text-accent drop-shadow-[0_1px_4px_rgba(0,0,0,0.7)] transition active:scale-90 hover:scale-110"
           >
-            {pantallaCompleta ? <IconX size={18} /> : <IconMaximize size={18} />}
+            {pantallaCompleta ? <IconX size={20} /> : <IconMaximize size={20} />}
           </button>
-
-          <div className="my-0.5 h-px w-6 bg-border-accent/30" />
-
           <button
             type="button"
             aria-label="Centrar en mi ubicación: mantén presionado para ver tus rutas"
@@ -757,9 +751,9 @@ export function MapaView() {
             onPointerUp={onPointerUpCentrar}
             onPointerLeave={limpiarHoldCentrar}
             onPointerCancel={limpiarHoldCentrar}
-            className="flex h-9 w-9 items-center justify-center rounded-xl text-text-accent transition active:scale-90 hover:bg-bg-accent disabled:opacity-30"
+            className="flex h-9 w-9 items-center justify-center text-text-accent drop-shadow-[0_1px_4px_rgba(0,0,0,0.7)] transition active:scale-90 hover:scale-110 disabled:opacity-30"
           >
-            <IconCurrentLocation size={18} />
+            <IconCurrentLocation size={20} />
           </button>
         </div>
       </div>
