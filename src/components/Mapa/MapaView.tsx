@@ -1039,10 +1039,6 @@ export function MapaView() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-6">
           <div className="card flex w-full max-w-xs flex-col gap-3 p-5">
             <h2 className="text-sm font-semibold text-text-accent">¿Quieres mapear tu ruta?</h2>
-            <p className="text-xs text-text-secondary">
-              Además de compartir tu ubicación, podemos dibujar tu recorrido en el mapa y
-              guardarlo con distancia, tiempo y velocidad al terminar.
-            </p>
             <div className="flex flex-col gap-2">
               <button
                 type="button"
