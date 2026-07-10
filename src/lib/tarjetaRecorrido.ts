@@ -270,7 +270,7 @@ function construirSvg(
         <rect x="${cajaX}" y="${CAJA_STATS_Y}" width="${anchoCaja}" height="${CAJA_STATS_ALTO}" rx="16" fill="${FONDO_CAJA}" stroke="${DORADO_BORDE}" stroke-width="1.5" opacity="0.9" filter="url(#resplandorDorado)"/>
         <rect x="${cajaX}" y="${CAJA_STATS_Y}" width="${anchoCaja}" height="${CAJA_STATS_ALTO}" rx="16" fill="${FONDO_CAJA}" stroke="${DORADO_BORDE}" stroke-width="1.2"/>
         ${s.icono(cx, iconoY)}
-        <text x="${cx}" y="${valorY}" text-anchor="middle" font-family="Arial, sans-serif" font-size="30" font-weight="700" fill="${DORADO}">${escapeXml(s.valor)}</text>
+        <text x="${cx}" y="${valorY}" text-anchor="middle" font-family="Arial, sans-serif" font-size="34" font-weight="800" fill="${DORADO}">${escapeXml(s.valor)}</text>
         <text x="${cx}" y="${etiquetaY}" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" letter-spacing="1" fill="${GRIS_TEXTO}">${escapeXml(s.etiqueta)}</text>
       `;
     })
