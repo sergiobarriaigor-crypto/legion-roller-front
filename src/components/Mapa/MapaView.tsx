@@ -710,7 +710,7 @@ export function MapaView() {
                 type="button"
                 aria-label="Acercar"
                 onClick={() => mapRef.current?.zoomIn()}
-                className="flex h-9 w-9 items-center justify-center text-text-accent drop-shadow-[0_1px_4px_rgba(0,0,0,0.7)] transition active:scale-90 hover:scale-110"
+                className="flex h-9 w-9 items-center justify-center text-black drop-shadow-[0_0_3px_rgba(255,255,255,0.9)] transition active:scale-90 hover:scale-110"
               >
                 <IconPlus size={20} />
               </button>
@@ -718,7 +718,7 @@ export function MapaView() {
                 type="button"
                 aria-label="Alejar"
                 onClick={() => mapRef.current?.zoomOut()}
-                className="flex h-9 w-9 items-center justify-center text-text-accent drop-shadow-[0_1px_4px_rgba(0,0,0,0.7)] transition active:scale-90 hover:scale-110"
+                className="flex h-9 w-9 items-center justify-center text-black drop-shadow-[0_0_3px_rgba(255,255,255,0.9)] transition active:scale-90 hover:scale-110"
               >
                 <IconMinus size={20} />
               </button>
@@ -731,7 +731,7 @@ export function MapaView() {
               capaMapa === "estandar" ? "Ver mapa en modo satélite" : "Ver mapa estándar"
             }
             onClick={() => setCapaMapa((c) => (c === "estandar" ? "satelite" : "estandar"))}
-            className="flex h-9 w-9 items-center justify-center text-text-accent drop-shadow-[0_1px_4px_rgba(0,0,0,0.7)] transition active:scale-90 hover:scale-110"
+            className="flex h-9 w-9 items-center justify-center text-black drop-shadow-[0_0_3px_rgba(255,255,255,0.9)] transition active:scale-90 hover:scale-110"
           >
             {capaMapa === "estandar" ? <IconSatellite size={20} /> : <IconMap2 size={20} />}
           </button>
@@ -739,7 +739,7 @@ export function MapaView() {
             type="button"
             aria-label={pantallaCompleta ? "Salir de pantalla completa" : "Ver mapa en pantalla completa"}
             onClick={() => setPantallaCompleta((v) => !v)}
-            className="flex h-9 w-9 items-center justify-center text-text-accent drop-shadow-[0_1px_4px_rgba(0,0,0,0.7)] transition active:scale-90 hover:scale-110"
+            className="flex h-9 w-9 items-center justify-center text-black drop-shadow-[0_0_3px_rgba(255,255,255,0.9)] transition active:scale-90 hover:scale-110"
           >
             {pantallaCompleta ? <IconX size={20} /> : <IconMaximize size={20} />}
           </button>
@@ -751,7 +751,7 @@ export function MapaView() {
             onPointerUp={onPointerUpCentrar}
             onPointerLeave={limpiarHoldCentrar}
             onPointerCancel={limpiarHoldCentrar}
-            className="flex h-9 w-9 items-center justify-center text-text-accent drop-shadow-[0_1px_4px_rgba(0,0,0,0.7)] transition active:scale-90 hover:scale-110 disabled:opacity-30"
+            className="flex h-9 w-9 items-center justify-center text-black drop-shadow-[0_0_3px_rgba(255,255,255,0.9)] transition active:scale-90 hover:scale-110 disabled:opacity-30"
           >
             <IconCurrentLocation size={20} />
           </button>
