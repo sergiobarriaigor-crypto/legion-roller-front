@@ -141,7 +141,7 @@ export function EditorHistoria({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-black">
+    <div className="fixed inset-0 z-50 flex flex-col bg-black" data-no-swipe>
       <div className="flex items-center justify-between p-3">
         <button type="button" onClick={onClose} className="text-text-secondary">
           <IconX size={22} />

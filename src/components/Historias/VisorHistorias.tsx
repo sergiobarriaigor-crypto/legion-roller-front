@@ -108,6 +108,7 @@ export function VisorHistorias({
   return (
     <div
       className="fixed inset-0 z-50 bg-black"
+      data-no-swipe
       onPointerDown={(e) => {
         startYRef.current = e.clientY;
       }}

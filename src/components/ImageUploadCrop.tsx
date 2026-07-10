@@ -150,7 +150,7 @@ export function ImageUploadCrop({ token, onSubido, etiqueta = "Agregar foto" }: 
           {etiqueta}
         </button>
       ) : (
-        <div className="card flex flex-col items-center gap-2 p-3">
+        <div className="card flex flex-col items-center gap-2 p-3" data-no-swipe>
           <canvas
             ref={canvasRef}
             width={TAMANO_LIENZO}
