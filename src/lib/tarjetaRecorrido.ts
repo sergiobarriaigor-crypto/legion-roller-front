@@ -332,10 +332,10 @@ function construirSvg(
       </g>
       <rect x="${MAPA_X}" y="${MAPA_Y}" width="${MAPA_ANCHO}" height="${MAPA_ALTO}" rx="14" fill="none" stroke="${DORADO_BORDE}" stroke-width="1.2" opacity="0.8"/>
 
-      <circle cx="${ANCHO / 2 - 55}" cy="${MAPA_Y + MAPA_ALTO + 35}" r="6" fill="#5fae4e"/>
-      <text x="${ANCHO / 2 - 42}" y="${MAPA_Y + MAPA_ALTO + 40}" font-family="Arial, sans-serif" font-size="15" font-weight="600" fill="#f2ead8">INICIO</text>
-      <circle cx="${ANCHO / 2 + 20}" cy="${MAPA_Y + MAPA_ALTO + 35}" r="6" fill="#d8342f"/>
-      <text x="${ANCHO / 2 + 33}" y="${MAPA_Y + MAPA_ALTO + 40}" font-family="Arial, sans-serif" font-size="15" font-weight="600" fill="#f2ead8">FIN</text>
+      <circle cx="${ANCHO / 2 - 68}" cy="${MAPA_Y + MAPA_ALTO + 36}" r="8" fill="#5fae4e"/>
+      <text x="${ANCHO / 2 - 51}" y="${MAPA_Y + MAPA_ALTO + 42}" font-family="Arial, sans-serif" font-size="19" font-weight="700" fill="#f2ead8">INICIO</text>
+      <circle cx="${ANCHO / 2 + 28}" cy="${MAPA_Y + MAPA_ALTO + 36}" r="8" fill="#d8342f"/>
+      <text x="${ANCHO / 2 + 45}" y="${MAPA_Y + MAPA_ALTO + 42}" font-family="Arial, sans-serif" font-size="19" font-weight="700" fill="#f2ead8">FIN</text>
 
       ${statsSvg}
     </svg>
