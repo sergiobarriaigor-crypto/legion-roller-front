@@ -177,3 +177,30 @@ body {
     animation: none;
   }
 }
+
+/* Historias: check breve al publicar (sin modal de confirmación), calzado con
+   el setTimeout de 700ms que cierra el editor en EditorHistoria.tsx. */
+@keyframes historiaExito {
+  0% {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-historia-exito {
+  animation: historiaExito 350ms ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-historia-exito {
+    animation: none;
+  }
+}

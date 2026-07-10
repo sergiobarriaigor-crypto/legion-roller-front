@@ -5,6 +5,7 @@ import { useSession } from "@/context/SessionContext";
 import { apiGet, apiPost, apiDelete, ApiError } from "@/lib/api";
 import type { Post } from "@/lib/posts";
 import { ImageUploadCrop } from "@/components/ImageUploadCrop";
+import { BarraHistorias } from "@/components/Historias/BarraHistorias";
 
 function tiempoRelativo(fecha: string): string {
   const minutos = Math.round((Date.now() - new Date(fecha).getTime()) / 60000);
@@ -115,6 +116,8 @@ export default function PostPage() {
 
   return (
     <div className="flex flex-col gap-3">
+      <BarraHistorias />
+
       {puedeInteractuar && (
         <div className="card p-4">
           {!mostrarCompose ? (
