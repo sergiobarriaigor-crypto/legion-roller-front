@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { IconPlus } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
 import { apiGet } from "@/lib/api";
@@ -15,10 +15,11 @@ import { VisorHistorias } from "@/components/Historias/VisorHistorias";
 export function BarraHistorias() {
   const { sesion } = useSession();
   const token = sesion?.token ?? null;
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const [grupos, setGrupos] = useState<GrupoHistorias[]>([]);
   const [miFotoUrl, setMiFotoUrl] = useState<string | null>(null);
-  const [mostrarEditor, setMostrarEditor] = useState(false);
+  const [archivoElegido, setArchivoElegido] = useState<File | null>(null);
   const [indiceVisor, setIndiceVisor] = useState<number | null>(null);
 
   async function cargar() {
@@ -50,12 +51,29 @@ export function BarraHistorias() {
     if (misHistorias) {
       setIndiceVisor(grupos.indexOf(misHistorias));
     } else {
-      setMostrarEditor(true);
+      inputRef.current?.click();
     }
+  }
+
+  // El "+" abre directo la cámara/galería nativa del teléfono — el editor a
+  // pantalla completa (con vista previa, texto, ubicación) solo aparece una
+  // vez que ya se eligió un archivo, sin una pantalla intermedia de más.
+  function onArchivoElegido(e: React.ChangeEvent<HTMLInputElement>) {
+    const archivo = e.target.files?.[0];
+    if (archivo) setArchivoElegido(archivo);
   }
 
   return (
     <>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*,video/*"
+        capture="environment"
+        onChange={onArchivoElegido}
+        className="hidden"
+      />
+
       <div className="flex gap-3 overflow-x-auto pb-1">
         <div className="flex flex-col items-center gap-1">
           <div
@@ -79,7 +97,7 @@ export function BarraHistorias() {
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  setMostrarEditor(true);
+                  inputRef.current?.click();
                 }}
                 aria-label="Agregar historia"
                 className="absolute bottom-0 right-0 flex h-5 w-5 items-center justify-center rounded-full border-2 border-page-bg bg-fill-primary text-on-primary"
@@ -112,12 +130,17 @@ export function BarraHistorias() {
         ))}
       </div>
 
-      {mostrarEditor && (
+      {archivoElegido && (
         <EditorHistoria
+          archivoInicial={archivoElegido}
           token={token}
-          onClose={() => setMostrarEditor(false)}
+          onClose={() => {
+            setArchivoElegido(null);
+            if (inputRef.current) inputRef.current.value = "";
+          }}
           onPublicado={() => {
-            setMostrarEditor(false);
+            setArchivoElegido(null);
+            if (inputRef.current) inputRef.current.value = "";
             cargar();
           }}
         />

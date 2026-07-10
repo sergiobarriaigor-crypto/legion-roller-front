@@ -1,25 +1,27 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { IconCheck, IconMapPin, IconPhoto, IconX } from "@tabler/icons-react";
+import { useEffect, useState } from "react";
+import { IconCheck, IconMapPin, IconX } from "@tabler/icons-react";
 import { apiUpload, ApiError } from "@/lib/api";
 import { crearHistoria } from "@/lib/historias";
 import { sectorMasCercano } from "@/lib/sectores";
 
 const DURACION_MAXIMA_VIDEO_SEG = 30;
 
+// El archivo ya llega elegido (BarraHistorias dispara el selector nativo de
+// cámara/galería directamente al tocar "+"); este editor solo se encarga de
+// validar, previsualizar y publicar — sin una pantalla propia para elegirlo.
 export function EditorHistoria({
+  archivoInicial,
   token,
   onClose,
   onPublicado,
 }: {
+  archivoInicial: File;
   token: string | null;
   onClose: () => void;
   onPublicado: () => void;
 }) {
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  const [archivo, setArchivo] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [tipo, setTipo] = useState<"foto" | "video" | null>(null);
   const [texto, setTexto] = useState("");
@@ -42,24 +44,16 @@ export function EditorHistoria({
     );
   }, []);
 
+  // Valida (duración de video) y prepara la vista previa del archivo recibido.
   useEffect(() => {
-    return () => {
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
-    };
-  }, [previewUrl]);
-
-  function elegirArchivo(e: React.ChangeEvent<HTMLInputElement>) {
-    const elegido = e.target.files?.[0];
-    if (!elegido) return;
     setError("");
-    const esVideo = elegido.type.startsWith("video/");
-    const url = URL.createObjectURL(elegido);
+    const url = URL.createObjectURL(archivoInicial);
+    const esVideo = archivoInicial.type.startsWith("video/");
 
     if (!esVideo) {
-      setArchivo(elegido);
       setPreviewUrl(url);
       setTipo("foto");
-      return;
+      return () => URL.revokeObjectURL(url);
     }
 
     // Video: se valida la duración en el cliente ANTES de subir, para no gastar
@@ -69,23 +63,26 @@ export function EditorHistoria({
     video.onloadedmetadata = () => {
       if (video.duration > DURACION_MAXIMA_VIDEO_SEG) {
         setError(`El video no puede durar más de ${DURACION_MAXIMA_VIDEO_SEG} segundos.`);
-        URL.revokeObjectURL(url);
-        if (inputRef.current) inputRef.current.value = "";
         return;
       }
-      setArchivo(elegido);
       setPreviewUrl(url);
       setTipo("video");
     };
     video.src = url;
-  }
+    return () => URL.revokeObjectURL(url);
+  }, [archivoInicial]);
 
   async function publicar() {
-    if (!archivo || !tipo) return;
+    if (!tipo) return;
     setPublicando(true);
     setError("");
     try {
-      const subida = await apiUpload<{ url: string }>("/uploads", archivo, token, archivo.name);
+      const subida = await apiUpload<{ url: string }>(
+        "/uploads",
+        archivoInicial,
+        token,
+        archivoInicial.name,
+      );
       await crearHistoria(
         { tipo, mediaUrl: subida.url, texto: texto.trim() || undefined, ubicacion },
         token,
@@ -101,15 +98,6 @@ export function EditorHistoria({
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-black">
-      <input
-        ref={inputRef}
-        type="file"
-        accept="image/*,video/*"
-        capture="environment"
-        onChange={elegirArchivo}
-        className="hidden"
-      />
-
       <div className="flex items-center justify-between p-3">
         <button type="button" onClick={onClose} className="text-text-secondary">
           <IconX size={22} />
@@ -125,21 +113,24 @@ export function EditorHistoria({
           </div>
           <p className="text-sm text-text-secondary">Historia publicada</p>
         </div>
-      ) : !previewUrl ? (
+      ) : error && !previewUrl ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6">
+          <p className="text-center text-sm text-fill-warning">{error}</p>
           <button
             type="button"
-            onClick={() => inputRef.current?.click()}
-            className="btn-hero flex items-center gap-2 rounded-app px-5 py-3 text-sm"
+            onClick={onClose}
+            className="rounded-app border border-border px-4 py-2 text-sm text-text-secondary"
           >
-            <IconPhoto size={18} />
-            Tomar foto, grabar video o elegir de la galería
+            Cerrar
           </button>
-          {error && <p className="text-center text-xs text-fill-warning">{error}</p>}
+        </div>
+      ) : !previewUrl ? (
+        <div className="flex flex-1 items-center justify-center">
+          <p className="text-sm text-text-secondary">Cargando...</p>
         </div>
       ) : (
-        <div className="relative flex flex-1 flex-col">
-          <div className="relative flex-1 overflow-hidden">
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          <div className="relative min-h-0 flex-1 overflow-hidden">
             {tipo === "video" ? (
               <video
                 src={previewUrl}

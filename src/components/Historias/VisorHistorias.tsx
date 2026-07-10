@@ -114,30 +114,33 @@ export function VisorHistorias({
         if (e.clientY - startYRef.current > UMBRAL_SWIPE_CIERRE_PX) onClose();
       }}
     >
-      <div className="absolute left-0 right-0 top-0 z-10 flex gap-1 p-2">
-        {grupo.historias.map((h, i) => (
-          <div key={h.id} className="h-0.5 flex-1 overflow-hidden rounded-full bg-white/30">
-            {i < indiceHistoria ? (
-              <div className="h-full w-full bg-white" />
-            ) : i === indiceHistoria && duracionMs > 0 ? (
-              <SegmentoProgreso id={historia.id} duracionMs={duracionMs} onComplete={avanzar} />
-            ) : null}
-          </div>
-        ))}
-      </div>
+      {/* Degradado oscuro detrás del encabezado: sin esto, la barra de progreso
+          y el nombre quedaban difíciles de leer sobre fotos claras — no basta
+          con el z-index, hace falta un fondo propio para que sea legible
+          sobre cualquier imagen. */}
+      <div className="absolute left-0 right-0 top-0 z-10 bg-gradient-to-b from-black/70 via-black/25 to-transparent px-2 pb-8 pt-2">
+        <div className="flex gap-1">
+          {grupo.historias.map((h, i) => (
+            <div key={h.id} className="h-0.5 flex-1 overflow-hidden rounded-full bg-white/30">
+              {i < indiceHistoria ? (
+                <div className="h-full w-full bg-white" />
+              ) : i === indiceHistoria && duracionMs > 0 ? (
+                <SegmentoProgreso id={historia.id} duracionMs={duracionMs} onComplete={avanzar} />
+              ) : null}
+            </div>
+          ))}
+        </div>
 
-      <div className="absolute left-2 top-6 z-10 flex items-center gap-2">
-        <Avatar fotoUrl={grupo.autorFotoUrl} nombre={grupo.autorNombre} tamano={28} />
-        <span className="text-sm font-semibold text-white">{grupo.autorNombre}</span>
+        <div className="mt-3 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Avatar fotoUrl={grupo.autorFotoUrl} nombre={grupo.autorNombre} tamano={28} />
+            <span className="text-sm font-semibold text-white">{grupo.autorNombre}</span>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Cerrar" className="text-white">
+            <IconX size={24} />
+          </button>
+        </div>
       </div>
-      <button
-        type="button"
-        onClick={onClose}
-        aria-label="Cerrar"
-        className="absolute right-2 top-6 z-10 text-white"
-      >
-        <IconX size={24} />
-      </button>
 
       <div className="relative z-0 flex h-full w-full items-center justify-center">
         {historia.tipo === "video" ? (
