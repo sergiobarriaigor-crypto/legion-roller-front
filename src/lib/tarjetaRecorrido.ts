@@ -197,7 +197,12 @@ function iconoRayo(cx: number, y: number): string {
   return `<g transform="translate(${cx - 15}, ${y})"><path d="M16.5 1L5 18h7l-1.5 11L23 12h-7l1-11z" fill="${DORADO}"/></g>`;
 }
 
-function construirSvg(datos: DatosTarjetaRecorrido, logoDataUrl: string | null, mapa: MapaGenerado | null): string {
+function construirSvg(
+  datos: DatosTarjetaRecorrido,
+  logoDataUrl: string | null,
+  fondoDataUrl: string | null,
+  mapa: MapaGenerado | null,
+): string {
   const { puntos } = datos;
 
   const lats = puntos.map((p) => p.lat);
@@ -290,7 +295,17 @@ function construirSvg(datos: DatosTarjetaRecorrido, logoDataUrl: string | null, 
         </filter>
       </defs>
 
-      <rect width="${ANCHO}" height="${ALTO}" fill="${FONDO_CARD}" />
+      <clipPath id="marcoTarjeta">
+        <rect width="${ANCHO}" height="${ALTO}" rx="26"/>
+      </clipPath>
+      <g clip-path="url(#marcoTarjeta)">
+        ${
+          fondoDataUrl
+            ? `<image href="${fondoDataUrl}" x="0" y="0" width="${ANCHO}" height="${ALTO}" preserveAspectRatio="xMidYMax slice"/>
+               <rect width="${ANCHO}" height="${ALTO}" fill="${FONDO_CARD}" opacity="0.55"/>`
+            : `<rect width="${ANCHO}" height="${ALTO}" fill="${FONDO_CARD}"/>`
+        }
+      </g>
       <rect x="14" y="14" width="${ANCHO - 28}" height="${ALTO - 28}" rx="26" fill="none" stroke="${DORADO_BORDE}" stroke-width="2" opacity="0.55" filter="url(#resplandorDorado)"/>
       <rect x="14" y="14" width="${ANCHO - 28}" height="${ALTO - 28}" rx="26" fill="none" stroke="${DORADO_BORDE}" stroke-width="1.5"/>
 
@@ -325,9 +340,13 @@ function construirSvg(datos: DatosTarjetaRecorrido, logoDataUrl: string | null, 
   `;
 }
 
-function cargarLogoDataUrl(): Promise<string | null> {
-  return fetch("/logo-legion-roller-mini.png")
-    .then((res) => (res.ok ? res.blob() : Promise.reject(new Error("logo no encontrado"))))
+// Convierte una imagen propia (misma app, sin problema de CORS) a data URL,
+// para poder incrustarla dentro del SVG con <image href="...">. Si falla por
+// lo que sea, devuelve null y quien la use cae a su respaldo — nunca rompe
+// la generación de la tarjeta.
+function cargarImagenComoDataUrl(ruta: string): Promise<string | null> {
+  return fetch(ruta)
+    .then((res) => (res.ok ? res.blob() : Promise.reject(new Error("no encontrada: " + ruta))))
     .then(
       (blob) =>
         new Promise<string | null>((resolve) => {
@@ -346,8 +365,12 @@ function cargarLogoDataUrl(): Promise<string | null> {
 // de "canvas tainted by cross-origin data" que aparecería si se intentaran
 // dibujar tiles directamente como imágenes cross-origin sin ese paso.
 export async function generarTarjetaRecorrido(datos: DatosTarjetaRecorrido): Promise<Blob> {
-  const [logoDataUrl, mapa] = await Promise.all([cargarLogoDataUrl(), generarMapaReal(datos.puntos)]);
-  const svg = construirSvg(datos, logoDataUrl, mapa);
+  const [logoDataUrl, fondoDataUrl, mapa] = await Promise.all([
+    cargarImagenComoDataUrl("/logo-legion-roller-mini.png"),
+    cargarImagenComoDataUrl("/fondo-mis-rutas.jpg"),
+    generarMapaReal(datos.puntos),
+  ]);
+  const svg = construirSvg(datos, logoDataUrl, fondoDataUrl, mapa);
   const svgDataUrl = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`;
 
   return new Promise((resolve, reject) => {
