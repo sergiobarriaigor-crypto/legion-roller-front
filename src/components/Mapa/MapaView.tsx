@@ -599,6 +599,16 @@ export function MapaView() {
     }
   }
 
+  // Sobre el mapa estándar (calles claras) el negro se distingue mejor;
+  // sobre la vista satelital (imágenes más oscuras/saturadas), el dorado
+  // característico de la app es el que más resalta — se adapta solo.
+  // Color vía estilo inline (no clase de Tailwind) para que gane sin
+  // ambigüedad frente a cualquier otra regla de color en cascada.
+  const estiloControlesMapa =
+    capaMapa === "satelite"
+      ? { color: "#e7c168", filter: "drop-shadow(0 1px 4px rgba(0,0,0,0.8))" }
+      : { color: "#000000", filter: "drop-shadow(0 0 3px rgba(255,255,255,0.9))" };
+
   return (
     <div className={pantallaCompleta ? "fixed inset-0 z-50 bg-page-bg" : "flex flex-col gap-3"}>
       <div
@@ -710,7 +720,8 @@ export function MapaView() {
                 type="button"
                 aria-label="Acercar"
                 onClick={() => mapRef.current?.zoomIn()}
-                className="flex h-9 w-9 items-center justify-center text-black drop-shadow-[0_0_3px_rgba(255,255,255,0.9)] transition active:scale-90 hover:scale-110"
+                className="flex h-9 w-9 items-center justify-center transition active:scale-90 hover:scale-110"
+                style={estiloControlesMapa}
               >
                 <IconPlus size={20} />
               </button>
@@ -718,7 +729,8 @@ export function MapaView() {
                 type="button"
                 aria-label="Alejar"
                 onClick={() => mapRef.current?.zoomOut()}
-                className="flex h-9 w-9 items-center justify-center text-black drop-shadow-[0_0_3px_rgba(255,255,255,0.9)] transition active:scale-90 hover:scale-110"
+                className="flex h-9 w-9 items-center justify-center transition active:scale-90 hover:scale-110"
+                style={estiloControlesMapa}
               >
                 <IconMinus size={20} />
               </button>
@@ -731,7 +743,8 @@ export function MapaView() {
               capaMapa === "estandar" ? "Ver mapa en modo satélite" : "Ver mapa estándar"
             }
             onClick={() => setCapaMapa((c) => (c === "estandar" ? "satelite" : "estandar"))}
-            className="flex h-9 w-9 items-center justify-center text-black drop-shadow-[0_0_3px_rgba(255,255,255,0.9)] transition active:scale-90 hover:scale-110"
+            className="flex h-9 w-9 items-center justify-center transition active:scale-90 hover:scale-110"
+            style={estiloControlesMapa}
           >
             {capaMapa === "estandar" ? <IconSatellite size={20} /> : <IconMap2 size={20} />}
           </button>
@@ -739,7 +752,8 @@ export function MapaView() {
             type="button"
             aria-label={pantallaCompleta ? "Salir de pantalla completa" : "Ver mapa en pantalla completa"}
             onClick={() => setPantallaCompleta((v) => !v)}
-            className="flex h-9 w-9 items-center justify-center text-black drop-shadow-[0_0_3px_rgba(255,255,255,0.9)] transition active:scale-90 hover:scale-110"
+            className="flex h-9 w-9 items-center justify-center transition active:scale-90 hover:scale-110"
+            style={estiloControlesMapa}
           >
             {pantallaCompleta ? <IconX size={20} /> : <IconMaximize size={20} />}
           </button>
@@ -751,7 +765,8 @@ export function MapaView() {
             onPointerUp={onPointerUpCentrar}
             onPointerLeave={limpiarHoldCentrar}
             onPointerCancel={limpiarHoldCentrar}
-            className="flex h-9 w-9 items-center justify-center text-black drop-shadow-[0_0_3px_rgba(255,255,255,0.9)] transition active:scale-90 hover:scale-110 disabled:opacity-30"
+            className="flex h-9 w-9 items-center justify-center transition active:scale-90 hover:scale-110 disabled:opacity-30"
+            style={estiloControlesMapa}
           >
             <IconCurrentLocation size={20} />
           </button>
