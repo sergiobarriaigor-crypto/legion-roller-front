@@ -16,6 +16,11 @@ const ANCHO = 800;
 const ALTO = 1150;
 const PADDING = 50;
 
+// La tarjeta se dibuja con estas medidas "lógicas" (800x1150), pero se
+// exporta al doble de resolución física — a 1x se veía pixelada en
+// pantallas retina/alta densidad, que son la mayoría de los celulares hoy.
+const ESCALA = 2;
+
 const MAPA_X = 90;
 const MAPA_Y = 335;
 const MAPA_ANCHO = 620;
@@ -99,8 +104,11 @@ function calcularTilesNecesarios(centroPxX: number, centroPxY: number, zoom: num
   return tiles;
 }
 
+// "@2x" pide la variante de doble resolución del mismo tile (512x512 en vez
+// de 256x256 cubriendo la misma zona) — sin esto, el mapa se veía pixelado
+// al exportar la tarjeta a resolución retina (ver ESCALA más abajo).
 async function cargarTileComoImagen(zoom: number, x: number, y: number): Promise<HTMLImageElement | null> {
-  const url = `https://basemaps.cartocdn.com/dark_all/${zoom}/${x}/${y}.png`;
+  const url = `https://basemaps.cartocdn.com/dark_all/${zoom}/${x}/${y}@2x.png`;
   try {
     const res = await fetch(url);
     if (!res.ok) return null;
@@ -155,16 +163,19 @@ async function generarMapaReal(puntos: PuntoGps[]): Promise<MapaGenerado | null>
     const imagenes = await Promise.all(tiles.map((t) => cargarTileComoImagen(zoom, t.x, t.y)));
     if (imagenes.every((img) => img === null)) return null;
 
+    // El canvas de composición va al doble de tamaño (los tiles @2x ya vienen
+    // a esa resolución), para que el mapa se vea nítido en la tarjeta final
+    // exportada a resolución retina.
     const canvas = document.createElement("canvas");
-    canvas.width = MAPA_ANCHO;
-    canvas.height = MAPA_ALTO;
+    canvas.width = MAPA_ANCHO * ESCALA;
+    canvas.height = MAPA_ALTO * ESCALA;
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
     ctx.fillStyle = "#1a1108";
-    ctx.fillRect(0, 0, MAPA_ANCHO, MAPA_ALTO);
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
     tiles.forEach((t, i) => {
       const img = imagenes[i];
-      if (img) ctx.drawImage(img, t.destX, t.destY, TAM_TILE, TAM_TILE);
+      if (img) ctx.drawImage(img, t.destX * ESCALA, t.destY * ESCALA, TAM_TILE * ESCALA, TAM_TILE * ESCALA);
     });
 
     return { dataUrl: canvas.toDataURL("image/png"), zoom, centroPxX, centroPxY };
@@ -268,7 +279,7 @@ function construirSvg(datos: DatosTarjetaRecorrido, logoDataUrl: string | null, 
     : `<text x="${ANCHO / 2}" y="${LOGO_Y + TAM_LOGO / 2 + 13}" text-anchor="middle" font-family="Arial, sans-serif" font-size="42" font-weight="800" fill="${DORADO}" letter-spacing="2">LEGIÓN ROLLER</text>`;
 
   return `
-    <svg width="${ANCHO}" height="${ALTO}" viewBox="0 0 ${ANCHO} ${ALTO}" xmlns="http://www.w3.org/2000/svg">
+    <svg width="${ANCHO * ESCALA}" height="${ALTO * ESCALA}" viewBox="0 0 ${ANCHO} ${ALTO}" xmlns="http://www.w3.org/2000/svg">
       <defs>
         <filter id="resplandorDorado" x="-60%" y="-60%" width="220%" height="220%">
           <feGaussianBlur stdDeviation="5" result="blur"/>
@@ -343,13 +354,17 @@ export async function generarTarjetaRecorrido(datos: DatosTarjetaRecorrido): Pro
     const img = new Image();
     img.onload = () => {
       const canvas = document.createElement("canvas");
-      canvas.width = ANCHO;
-      canvas.height = ALTO;
+      canvas.width = ANCHO * ESCALA;
+      canvas.height = ALTO * ESCALA;
       const ctx = canvas.getContext("2d");
       if (!ctx) {
         reject(new Error("No se pudo generar la imagen"));
         return;
       }
+      // El propio SVG ya declara width/height al doble de tamaño (con el
+      // viewBox lógico sin cambiar), así que el navegador lo rasteriza nítido
+      // directamente a esa resolución — no es un simple estirado de una
+      // imagen ya rasterizada en baja resolución.
       ctx.drawImage(img, 0, 0);
       canvas.toBlob((blob) => {
         if (blob) resolve(blob);
