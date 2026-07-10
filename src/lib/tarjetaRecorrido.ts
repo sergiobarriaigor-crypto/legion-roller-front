@@ -234,26 +234,26 @@ function construirSvg(datos: DatosTarjetaRecorrido, logoDataUrl: string | null, 
     { valor: `${Math.round(datos.velocidadMaxima)} km/h`, etiqueta: "VEL. MÁXIMA", icono: iconoRayo },
   ];
 
-  const anchoCol = (ANCHO - PADDING * 2) / stats.length;
+  // Cada estadística en su propia caja con resplandor dorado (al usuario le
+  // encantó ese efecto y pidió repetirlo aquí en vez de un solo bloque con
+  // simples líneas separadoras).
+  const ESPACIO_ENTRE_CAJAS = 14;
+  const anchoCaja = (ANCHO - PADDING * 2 - ESPACIO_ENTRE_CAJAS * (stats.length - 1)) / stats.length;
   const iconoY = CAJA_STATS_Y + 28;
   const valorY = CAJA_STATS_Y + 100;
   const etiquetaY = CAJA_STATS_Y + 124;
 
   const statsSvg = stats
     .map((s, i) => {
-      const cx = PADDING + anchoCol * i + anchoCol / 2;
+      const cajaX = PADDING + i * (anchoCaja + ESPACIO_ENTRE_CAJAS);
+      const cx = cajaX + anchoCaja / 2;
       return `
+        <rect x="${cajaX}" y="${CAJA_STATS_Y}" width="${anchoCaja}" height="${CAJA_STATS_ALTO}" rx="16" fill="${FONDO_CAJA}" stroke="${DORADO_BORDE}" stroke-width="1.5" opacity="0.9" filter="url(#resplandorDorado)"/>
+        <rect x="${cajaX}" y="${CAJA_STATS_Y}" width="${anchoCaja}" height="${CAJA_STATS_ALTO}" rx="16" fill="${FONDO_CAJA}" stroke="${DORADO_BORDE}" stroke-width="1.2"/>
         ${s.icono(cx, iconoY)}
-        <text x="${cx}" y="${valorY}" text-anchor="middle" font-family="Arial, sans-serif" font-size="32" font-weight="700" fill="${DORADO}">${escapeXml(s.valor)}</text>
-        <text x="${cx}" y="${etiquetaY}" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" letter-spacing="1.2" fill="${GRIS_TEXTO}">${escapeXml(s.etiqueta)}</text>
+        <text x="${cx}" y="${valorY}" text-anchor="middle" font-family="Arial, sans-serif" font-size="27" font-weight="700" fill="${DORADO}">${escapeXml(s.valor)}</text>
+        <text x="${cx}" y="${etiquetaY}" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" letter-spacing="1" fill="${GRIS_TEXTO}">${escapeXml(s.etiqueta)}</text>
       `;
-    })
-    .join("");
-
-  const separadoresSvg = [1, 2, 3]
-    .map((i) => {
-      const sx = PADDING + anchoCol * i;
-      return `<line x1="${sx}" y1="${CAJA_STATS_Y + 24}" x2="${sx}" y2="${CAJA_STATS_Y + CAJA_STATS_ALTO - 24}" stroke="#ffffff" stroke-opacity="0.1" stroke-width="1"/>`;
     })
     .join("");
 
@@ -311,9 +311,6 @@ function construirSvg(datos: DatosTarjetaRecorrido, logoDataUrl: string | null, 
       <circle cx="${ANCHO / 2 + 20}" cy="${MAPA_Y + MAPA_ALTO + 35}" r="6" fill="#d8342f"/>
       <text x="${ANCHO / 2 + 33}" y="${MAPA_Y + MAPA_ALTO + 40}" font-family="Arial, sans-serif" font-size="15" font-weight="600" fill="#f2ead8">FIN</text>
 
-      <rect x="${PADDING}" y="${CAJA_STATS_Y}" width="${ANCHO - PADDING * 2}" height="${CAJA_STATS_ALTO}" rx="18" fill="${FONDO_CAJA}" stroke="${DORADO_BORDE}" stroke-width="1.5" opacity="0.9" filter="url(#resplandorDorado)"/>
-      <rect x="${PADDING}" y="${CAJA_STATS_Y}" width="${ANCHO - PADDING * 2}" height="${CAJA_STATS_ALTO}" rx="18" fill="${FONDO_CAJA}" stroke="${DORADO_BORDE}" stroke-width="1.2"/>
-      ${separadoresSvg}
       ${statsSvg}
 
       ${tituloSvg}
