@@ -697,9 +697,11 @@ export function MapaView() {
         </MapContainer>
 
         {/* Clúster único de controles del mapa: mismo estilo (dorado, brillo
-            sutil, bordes suaves) para todos, centrado verticalmente en el
-            costado derecho en vez de un botón suelto por esquina. */}
-        <div className="absolute right-2 top-1/2 z-[1000] flex -translate-y-1/2 flex-col items-center gap-0.5 rounded-2xl border border-border-accent/30 bg-surface-1/85 p-1.5 shadow-[0_0_14px_rgba(201,154,61,0.22)] backdrop-blur-sm">
+            sutil, bordes suaves) para todos. En la esquina inferior derecha
+            (alcance natural del pulgar sosteniendo el teléfono con una mano)
+            en vez de centrado en el borde, y con fondo más transparente para
+            no tapar el mapa/recorrido detrás de los botones. */}
+        <div className="absolute bottom-2 right-2 z-[1000] flex flex-col items-center gap-0.5 rounded-2xl border border-border-accent/30 bg-surface-1/55 p-1.5 shadow-[0_0_14px_rgba(201,154,61,0.18)] backdrop-blur-sm">
           <button
             type="button"
             aria-label="Acercar"
