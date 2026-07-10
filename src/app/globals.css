@@ -149,3 +149,31 @@ body {
     animation: none;
   }
 }
+
+/* Toast: aparece, se mantiene un instante y se desvanece solo — timing
+   calzado con el setTimeout de 1000ms que lo desmonta en Toast.tsx. */
+@keyframes toastPop {
+  0% {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  15%,
+  80% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+.animate-toast-pop {
+  animation: toastPop 1000ms ease-in-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-toast-pop {
+    animation: none;
+  }
+}

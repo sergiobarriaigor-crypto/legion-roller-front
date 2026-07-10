@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { MapContainer, TileLayer, Marker, Popup, Polyline, ZoomControl, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { IconMaximize, IconX, IconCurrentLocation, IconMap2, IconSatellite, IconMessage2, IconHeartHandshake } from "@tabler/icons-react";
+import { IconMaximize, IconX, IconCurrentLocation, IconMap2, IconSatellite, IconMessage2, IconHeartHandshake, IconPlus, IconMinus } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
 import { apiPost, apiPut, apiGet, apiDelete, ApiError } from "@/lib/api";
 import { distanciaTotalKm, distanciaHaversineKm, type PuntoGps } from "@/lib/geo";
@@ -616,7 +616,6 @@ export function MapaView() {
           zoomControl={false}
           style={{ height: "100%", width: "100%" }}
         >
-          <ZoomControl position="topright" />
           <TileLayer
             key={capaMapa}
             attribution={CAPAS_MAPA[capaMapa].attribution}
@@ -697,38 +696,63 @@ export function MapaView() {
             ))}
         </MapContainer>
 
-        <button
-          type="button"
-          aria-label={pantallaCompleta ? "Salir de pantalla completa" : "Ver mapa en pantalla completa"}
-          onClick={() => setPantallaCompleta((v) => !v)}
-          className="absolute left-2 top-2 z-[1000] flex h-9 w-9 items-center justify-center rounded-full bg-surface-1/90 text-text-primary shadow"
-        >
-          {pantallaCompleta ? <IconX size={20} /> : <IconMaximize size={20} />}
-        </button>
+        {/* Clúster único de controles del mapa: mismo estilo (dorado, brillo
+            sutil, bordes suaves) para todos, centrado verticalmente en el
+            costado derecho en vez de un botón suelto por esquina. */}
+        <div className="absolute right-2 top-1/2 z-[1000] flex -translate-y-1/2 flex-col items-center gap-0.5 rounded-2xl border border-border-accent/30 bg-surface-1/85 p-1.5 shadow-[0_0_14px_rgba(201,154,61,0.22)] backdrop-blur-sm">
+          <button
+            type="button"
+            aria-label="Acercar"
+            onClick={() => mapRef.current?.zoomIn()}
+            className="flex h-9 w-9 items-center justify-center rounded-xl text-text-accent transition active:scale-90 hover:bg-bg-accent"
+          >
+            <IconPlus size={18} />
+          </button>
+          <button
+            type="button"
+            aria-label="Alejar"
+            onClick={() => mapRef.current?.zoomOut()}
+            className="flex h-9 w-9 items-center justify-center rounded-xl text-text-accent transition active:scale-90 hover:bg-bg-accent"
+          >
+            <IconMinus size={18} />
+          </button>
 
-        <button
-          type="button"
-          aria-label={
-            capaMapa === "estandar" ? "Ver mapa en modo satélite" : "Ver mapa estándar"
-          }
-          onClick={() => setCapaMapa((c) => (c === "estandar" ? "satelite" : "estandar"))}
-          className="absolute bottom-2 left-2 z-[1000] flex h-9 w-9 items-center justify-center rounded-full bg-surface-1/90 text-text-accent shadow"
-        >
-          {capaMapa === "estandar" ? <IconSatellite size={20} /> : <IconMap2 size={20} />}
-        </button>
+          <div className="my-0.5 h-px w-6 bg-border-accent/30" />
 
-        <button
-          type="button"
-          aria-label="Centrar en mi ubicación: mantén presionado para ver tus rutas"
-          disabled={!posicion}
-          onPointerDown={iniciarHoldCentrar}
-          onPointerUp={onPointerUpCentrar}
-          onPointerLeave={limpiarHoldCentrar}
-          onPointerCancel={limpiarHoldCentrar}
-          className="absolute bottom-2 right-2 z-[1000] flex h-9 w-9 items-center justify-center rounded-full bg-surface-1/90 text-text-accent shadow disabled:opacity-40"
-        >
-          <IconCurrentLocation size={20} />
-        </button>
+          <button
+            type="button"
+            aria-label={
+              capaMapa === "estandar" ? "Ver mapa en modo satélite" : "Ver mapa estándar"
+            }
+            onClick={() => setCapaMapa((c) => (c === "estandar" ? "satelite" : "estandar"))}
+            className="flex h-9 w-9 items-center justify-center rounded-xl text-text-accent transition active:scale-90 hover:bg-bg-accent"
+          >
+            {capaMapa === "estandar" ? <IconSatellite size={18} /> : <IconMap2 size={18} />}
+          </button>
+          <button
+            type="button"
+            aria-label={pantallaCompleta ? "Salir de pantalla completa" : "Ver mapa en pantalla completa"}
+            onClick={() => setPantallaCompleta((v) => !v)}
+            className="flex h-9 w-9 items-center justify-center rounded-xl text-text-accent transition active:scale-90 hover:bg-bg-accent"
+          >
+            {pantallaCompleta ? <IconX size={18} /> : <IconMaximize size={18} />}
+          </button>
+
+          <div className="my-0.5 h-px w-6 bg-border-accent/30" />
+
+          <button
+            type="button"
+            aria-label="Centrar en mi ubicación: mantén presionado para ver tus rutas"
+            disabled={!posicion}
+            onPointerDown={iniciarHoldCentrar}
+            onPointerUp={onPointerUpCentrar}
+            onPointerLeave={limpiarHoldCentrar}
+            onPointerCancel={limpiarHoldCentrar}
+            className="flex h-9 w-9 items-center justify-center rounded-xl text-text-accent transition active:scale-90 hover:bg-bg-accent disabled:opacity-30"
+          >
+            <IconCurrentLocation size={18} />
+          </button>
+        </div>
       </div>
 
       {!pantallaCompleta && emergenciasActivas.length > 0 && (

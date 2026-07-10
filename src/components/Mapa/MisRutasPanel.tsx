@@ -15,6 +15,7 @@ import { apiGet, apiPatch, apiDelete, ApiError } from "@/lib/api";
 import { velocidadMaximaKmH, type PuntoGps } from "@/lib/geo";
 import { sectorMasCercano } from "@/lib/sectores";
 import { CompartirRecorridoModal } from "@/components/Mapa/CompartirRecorridoModal";
+import { Toast } from "@/components/Toast";
 
 interface Recorrido {
   id: number;
@@ -129,11 +130,13 @@ function FichaRecorrido({
   token,
   onToggleFavorito,
   onEliminar,
+  onPublicado,
 }: {
   recorrido: Recorrido;
   token: string | null;
   onToggleFavorito: () => void;
   onEliminar: () => Promise<void>;
+  onPublicado: () => void;
 }) {
   const [confirmandoEliminar, setConfirmandoEliminar] = useState(false);
   const [eliminando, setEliminando] = useState(false);
@@ -263,6 +266,7 @@ function FichaRecorrido({
             sector,
           }}
           onClose={() => setMostrarCompartir(false)}
+          onPublicado={onPublicado}
         />
       )}
 
@@ -314,6 +318,7 @@ export function MisRutasPanel({
   const [cargando, setCargando] = useState(true);
   const [seleccionado, setSeleccionado] = useState<Recorrido | null>(null);
   const [alturaVh, setAlturaVh] = useState(ALTURA_PEEK_VH);
+  const [toastMensaje, setToastMensaje] = useState<string | null>(null);
 
   const arrastreRef = useRef<{ startY: number; startAltura: number } | null>(null);
 
@@ -376,6 +381,8 @@ export function MisRutasPanel({
 
   return (
     <>
+      {toastMensaje && <Toast mensaje={toastMensaje} onDismiss={() => setToastMensaje(null)} />}
+
       {/* Velo oscuro sobre el mapa: se sigue viendo de fondo (a pedido del usuario),
           pero atenuado para no competir visualmente con el panel. Tocarlo cierra. */}
       <div className="fixed inset-0 z-40 bg-black/45" onClick={onClose} />
@@ -437,6 +444,7 @@ export function MisRutasPanel({
               token={token}
               onToggleFavorito={() => alternarFavorito(seleccionado.id)}
               onEliminar={() => eliminarRecorrido(seleccionado.id)}
+              onPublicado={() => setToastMensaje("Recorrido publicado")}
             />
           ) : (
             <>

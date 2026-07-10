@@ -5,16 +5,18 @@ import { IconShare, IconUpload } from "@tabler/icons-react";
 import { apiUpload, apiPost, ApiError } from "@/lib/api";
 import { generarTarjetaRecorrido, type DatosTarjetaRecorrido } from "@/lib/tarjetaRecorrido";
 
-type Estado = "editando" | "publicando" | "publicado";
+type Estado = "editando" | "publicando";
 
 export function CompartirRecorridoModal({
   datos,
   token,
   onClose,
+  onPublicado,
 }: {
   datos: DatosTarjetaRecorrido;
   token: string | null;
   onClose: () => void;
+  onPublicado?: () => void;
 }) {
   const [titulo, setTitulo] = useState("");
   const [comentario, setComentario] = useState("");
@@ -84,7 +86,8 @@ export function CompartirRecorridoModal({
         },
         token,
       );
-      setEstado("publicado");
+      onPublicado?.();
+      onClose();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "No se pudo publicar el recorrido.");
       setEstado("editando");
@@ -139,52 +142,46 @@ export function CompartirRecorridoModal({
           )}
         </div>
 
-        {estado === "publicado" ? (
-          <p className="text-sm text-green-500">¡Recorrido publicado en Post! 🎉</p>
-        ) : (
-          <>
-            <input
-              type="text"
-              placeholder="Título (opcional)"
-              value={titulo}
-              maxLength={60}
-              onChange={(e) => setTitulo(e.target.value)}
-              className="rounded-app border border-border bg-surface-2 px-3 py-2 text-sm text-text-primary outline-none"
-            />
-            <textarea
-              placeholder="Un breve comentario (opcional)"
-              value={comentario}
-              maxLength={140}
-              rows={2}
-              onChange={(e) => setComentario(e.target.value)}
-              className="rounded-app border border-border bg-surface-2 px-3 py-2 text-sm text-text-primary outline-none"
-            />
+        <input
+          type="text"
+          placeholder="Título (opcional)"
+          value={titulo}
+          maxLength={60}
+          onChange={(e) => setTitulo(e.target.value)}
+          className="rounded-app border border-border bg-surface-2 px-3 py-2 text-sm text-text-primary outline-none"
+        />
+        <textarea
+          placeholder="Un breve comentario (opcional)"
+          value={comentario}
+          maxLength={140}
+          rows={2}
+          onChange={(e) => setComentario(e.target.value)}
+          className="rounded-app border border-border bg-surface-2 px-3 py-2 text-sm text-text-primary outline-none"
+        />
 
-            {error && <p className="text-xs text-fill-warning">{error}</p>}
+        {error && <p className="text-xs text-fill-warning">{error}</p>}
 
-            <button
-              type="button"
-              disabled={cargandoInicial || estado === "publicando" || !blob}
-              onClick={publicarEnPost}
-              className="btn-hero flex items-center justify-center gap-1.5 rounded-app px-4 py-2 text-sm disabled:opacity-50"
-            >
-              <IconUpload size={16} />
-              {estado === "publicando" ? "Publicando..." : "Publicar en Post"}
-            </button>
-            <button
-              type="button"
-              disabled={cargandoInicial || !blob}
-              onClick={compartirEnRedes}
-              className="flex items-center justify-center gap-1.5 rounded-app border border-border-accent px-4 py-2 text-sm text-text-accent disabled:opacity-50"
-            >
-              <IconShare size={16} />
-              Compartir en redes sociales
-            </button>
-          </>
-        )}
+        <button
+          type="button"
+          disabled={cargandoInicial || estado === "publicando" || !blob}
+          onClick={publicarEnPost}
+          className="btn-hero flex items-center justify-center gap-1.5 rounded-app px-4 py-2 text-sm disabled:opacity-50"
+        >
+          <IconUpload size={16} />
+          {estado === "publicando" ? "Publicando..." : "Publicar en Post"}
+        </button>
+        <button
+          type="button"
+          disabled={cargandoInicial || !blob}
+          onClick={compartirEnRedes}
+          className="flex items-center justify-center gap-1.5 rounded-app border border-border-accent px-4 py-2 text-sm text-text-accent disabled:opacity-50"
+        >
+          <IconShare size={16} />
+          Compartir en redes sociales
+        </button>
 
         <button type="button" onClick={onClose} className="text-xs text-text-secondary underline">
-          {estado === "publicado" ? "Cerrar" : "Cancelar"}
+          Cancelar
         </button>
       </div>
     </div>
