@@ -265,38 +265,41 @@ function FichaRecorrido({
         />
       )}
 
-      {confirmandoEliminar ? (
-        <div className="card flex flex-col gap-2 p-3">
-          <p className="text-xs text-text-primary">
-            ¿Seguro que quieres eliminar este recorrido? Esta acción no se puede deshacer.
-          </p>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => setConfirmandoEliminar(false)}
-              className="flex-1 rounded-app border border-border px-3 py-2 text-xs text-text-secondary"
-            >
-              Cancelar
-            </button>
-            <button
-              type="button"
-              disabled={eliminando}
-              onClick={confirmarEliminar}
-              className="flex-1 rounded-app bg-red-700 px-3 py-2 text-xs text-white disabled:opacity-50"
-            >
-              {eliminando ? "Eliminando..." : "Sí, eliminar"}
-            </button>
+      <button
+        type="button"
+        onClick={() => setConfirmandoEliminar(true)}
+        className="flex items-center justify-center gap-1.5 rounded-app border border-border px-3 py-2 text-xs text-text-secondary"
+      >
+        <IconTrash size={14} />
+        Eliminar recorrido
+      </button>
+
+      {confirmandoEliminar && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-6">
+          <div className="card flex w-full max-w-xs flex-col gap-3 p-5">
+            <h2 className="text-sm font-semibold text-text-accent">Eliminar recorrido</h2>
+            <p className="text-xs text-text-secondary">
+              ¿Seguro que quieres eliminar este recorrido? Esta acción no se puede deshacer.
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                disabled={eliminando}
+                onClick={confirmarEliminar}
+                className="rounded-app bg-red-700 px-4 py-2 text-sm text-white disabled:opacity-50"
+              >
+                {eliminando ? "Eliminando..." : "Sí, eliminar"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmandoEliminar(false)}
+                className="text-xs text-text-secondary underline"
+              >
+                Cancelar
+              </button>
+            </div>
           </div>
         </div>
-      ) : (
-        <button
-          type="button"
-          onClick={() => setConfirmandoEliminar(true)}
-          className="flex items-center justify-center gap-1.5 rounded-app border border-border px-3 py-2 text-xs text-text-secondary"
-        >
-          <IconTrash size={14} />
-          Eliminar recorrido
-        </button>
       )}
     </div>
   );
