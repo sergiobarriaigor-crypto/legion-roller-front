@@ -3,8 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import { IconX } from "@tabler/icons-react";
 import type { GrupoHistorias } from "@/lib/historias";
-import { marcarVistaHistoria } from "@/lib/historias";
+import { marcarVistaHistoria, parsearEstiloTexto } from "@/lib/historias";
 import { Avatar } from "@/components/Avatar";
+import { estiloVisualTexto } from "@/components/Historias/TextoSobreImagen";
 
 const DURACION_FOTO_MS = 5000;
 const UMBRAL_SWIPE_CIERRE_PX = 80;
@@ -163,11 +164,23 @@ export function VisorHistorias({
             {historia.ubicacion}
           </div>
         )}
-        {historia.texto && (
-          <p className="absolute bottom-10 left-0 right-0 px-6 text-center text-lg font-semibold text-white drop-shadow-[0_1px_4px_rgba(0,0,0,0.8)]">
-            {historia.texto}
-          </p>
-        )}
+        {(() => {
+          const estilo = parsearEstiloTexto(historia.textoEstilo);
+          if (estilo) {
+            return <div style={estiloVisualTexto(estilo)}>{estilo.contenido}</div>;
+          }
+          // Compatibilidad: historias creadas antes de este editor de texto
+          // solo tienen el campo plano, sin posición/estilo — se muestran
+          // centradas abajo, como antes.
+          if (historia.texto) {
+            return (
+              <p className="absolute bottom-10 left-0 right-0 px-6 text-center text-lg font-semibold text-white drop-shadow-[0_1px_4px_rgba(0,0,0,0.8)]">
+                {historia.texto}
+              </p>
+            );
+          }
+          return null;
+        })()}
       </div>
 
       {/* Zonas de tap sobre el media: mitad izquierda retrocede, derecha avanza. */}

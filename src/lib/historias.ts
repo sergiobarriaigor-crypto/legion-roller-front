@@ -5,6 +5,7 @@ export interface Historia {
   tipo: "foto" | "video";
   mediaUrl: string;
   texto: string | null;
+  textoEstilo: string | null;
   ubicacion: string | null;
   createdAt: string;
 }
@@ -21,7 +22,38 @@ export interface CrearHistoriaInput {
   tipo: "foto" | "video";
   mediaUrl: string;
   texto?: string;
+  textoEstilo?: string;
   ubicacion?: string;
+}
+
+// Posición/tamaño/rotación/tipografía/color/alineación/fondo del texto sobre
+// la imagen — se guarda como JSON opaco en `textoEstilo` (el backend no lo
+// interpreta). x/y son fracciones (0..1) del ancho/alto de la imagen, no
+// píxeles absolutos, para que se vea igual sin importar el tamaño real de
+// pantalla entre el editor y el visor.
+export interface EstiloTextoHistoria {
+  contenido: string;
+  x: number;
+  y: number;
+  escala: number;
+  rotacion: number;
+  fuente: string;
+  color: string;
+  alineacion: "left" | "center" | "right";
+  fondo: "ninguno" | "oscuro" | "claro";
+}
+
+export function serializarEstiloTexto(estilo: EstiloTextoHistoria): string {
+  return JSON.stringify(estilo);
+}
+
+export function parsearEstiloTexto(json: string | null | undefined): EstiloTextoHistoria | null {
+  if (!json) return null;
+  try {
+    return JSON.parse(json) as EstiloTextoHistoria;
+  } catch {
+    return null;
+  }
 }
 
 export function listarHistorias(token: string | null) {

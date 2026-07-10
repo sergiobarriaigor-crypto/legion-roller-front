@@ -1,16 +1,33 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { IconCheck, IconMapPin, IconX } from "@tabler/icons-react";
 import { apiUpload, ApiError } from "@/lib/api";
-import { crearHistoria } from "@/lib/historias";
+import {
+  crearHistoria,
+  serializarEstiloTexto,
+  type EstiloTextoHistoria,
+} from "@/lib/historias";
 import { sectorMasCercano } from "@/lib/sectores";
+import { TextoSobreImagen } from "@/components/Historias/TextoSobreImagen";
+import { BarraTextoHistoria } from "@/components/Historias/BarraTextoHistoria";
 
 const DURACION_MAXIMA_VIDEO_SEG = 30;
 
+const ESTILO_TEXTO_DEFECTO: Omit<EstiloTextoHistoria, "contenido"> = {
+  x: 0.5,
+  y: 0.5,
+  escala: 1,
+  rotacion: 0,
+  fuente: "Arial, sans-serif",
+  color: "#ffffff",
+  alineacion: "center",
+  fondo: "ninguno",
+};
+
 // El archivo ya llega elegido (BarraHistorias dispara el selector nativo de
 // cámara/galería directamente al tocar "+"); este editor solo se encarga de
-// validar, previsualizar y publicar — sin una pantalla propia para elegirlo.
+// validar, previsualizar, agregar texto sobre la imagen y publicar.
 export function EditorHistoria({
   archivoInicial,
   token,
@@ -22,9 +39,13 @@ export function EditorHistoria({
   onClose: () => void;
   onPublicado: () => void;
 }) {
+  const contenedorMediaRef = useRef<HTMLDivElement>(null);
+
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [tipo, setTipo] = useState<"foto" | "video" | null>(null);
-  const [texto, setTexto] = useState("");
+  const [estiloTexto, setEstiloTexto] = useState<EstiloTextoHistoria | null>(null);
+  const [mostrarInputTexto, setMostrarInputTexto] = useState(false);
+  const [borradorTexto, setBorradorTexto] = useState("");
   const [ubicacion, setUbicacion] = useState<string | undefined>(undefined);
   const [error, setError] = useState("");
   const [publicando, setPublicando] = useState(false);
@@ -72,6 +93,23 @@ export function EditorHistoria({
     return () => URL.revokeObjectURL(url);
   }, [archivoInicial]);
 
+  function abrirEdicionTexto() {
+    setBorradorTexto(estiloTexto?.contenido ?? "");
+    setMostrarInputTexto(true);
+  }
+
+  function confirmarTexto() {
+    const contenido = borradorTexto.trim();
+    if (!contenido) {
+      setEstiloTexto(null);
+    } else if (estiloTexto) {
+      setEstiloTexto({ ...estiloTexto, contenido });
+    } else {
+      setEstiloTexto({ contenido, ...ESTILO_TEXTO_DEFECTO });
+    }
+    setMostrarInputTexto(false);
+  }
+
   async function publicar() {
     if (!tipo) return;
     setPublicando(true);
@@ -84,7 +122,13 @@ export function EditorHistoria({
         archivoInicial.name,
       );
       await crearHistoria(
-        { tipo, mediaUrl: subida.url, texto: texto.trim() || undefined, ubicacion },
+        {
+          tipo,
+          mediaUrl: subida.url,
+          texto: estiloTexto?.contenido || undefined,
+          textoEstilo: estiloTexto ? serializarEstiloTexto(estiloTexto) : undefined,
+          ubicacion,
+        },
         token,
       );
       // Sin modal de confirmación: solo una animación breve antes de cerrar.
@@ -130,7 +174,7 @@ export function EditorHistoria({
         </div>
       ) : (
         <div className="relative flex min-h-0 flex-1 flex-col">
-          <div className="relative min-h-0 flex-1 overflow-hidden">
+          <div ref={contenedorMediaRef} className="relative min-h-0 flex-1 overflow-hidden">
             {tipo === "video" ? (
               <video
                 src={previewUrl}
@@ -159,22 +203,56 @@ export function EditorHistoria({
               </div>
             )}
 
-            {texto && (
-              <p className="absolute bottom-6 left-0 right-0 px-6 text-center text-lg font-semibold text-white drop-shadow-[0_1px_4px_rgba(0,0,0,0.8)]">
-                {texto}
-              </p>
+            {/* Botón "Aa": único punto de entrada para escribir o reescribir el
+                texto, siempre visible sobre la imagen (esquina opuesta a la
+                ubicación) — igual que el editor de historias de Instagram. */}
+            <button
+              type="button"
+              onClick={abrirEdicionTexto}
+              aria-label="Agregar texto"
+              className="absolute right-3 top-3 z-10 flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-base font-bold text-white"
+            >
+              Aa
+            </button>
+
+            {estiloTexto && (
+              <TextoSobreImagen
+                estilo={estiloTexto}
+                onChange={setEstiloTexto}
+                contenedorRef={contenedorMediaRef}
+              />
+            )}
+
+            {mostrarInputTexto && (
+              <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-black/70 px-6">
+                <textarea
+                  autoFocus
+                  value={borradorTexto}
+                  onChange={(e) => setBorradorTexto(e.target.value.slice(0, 200))}
+                  placeholder="Escribe algo..."
+                  rows={3}
+                  className="w-full max-w-xs resize-none rounded-app border border-white/30 bg-transparent px-3 py-2 text-center text-lg text-white outline-none placeholder:text-white/50"
+                />
+                <button
+                  type="button"
+                  onClick={confirmarTexto}
+                  className="btn-hero rounded-app px-5 py-2 text-sm"
+                >
+                  Listo
+                </button>
+              </div>
             )}
           </div>
 
           <div className="flex flex-col gap-2 p-3">
-            <input
-              type="text"
-              placeholder="Agregar texto (opcional)"
-              value={texto}
-              maxLength={200}
-              onChange={(e) => setTexto(e.target.value)}
-              className="rounded-app border border-border bg-surface-2 px-3 py-2 text-sm text-text-primary outline-none"
-            />
+            {estiloTexto && (
+              <BarraTextoHistoria
+                estilo={estiloTexto}
+                onChange={setEstiloTexto}
+                onEditarContenido={abrirEdicionTexto}
+                onQuitar={() => setEstiloTexto(null)}
+              />
+            )}
             {error && <p className="text-xs text-fill-warning">{error}</p>}
             <button
               type="button"
