@@ -3,7 +3,12 @@
 import { useEffect, useRef, useState } from "react";
 import { IconX } from "@tabler/icons-react";
 import type { GrupoHistorias } from "@/lib/historias";
-import { marcarVistaHistoria, parsearEstiloTexto, toggleReaccionHistoria } from "@/lib/historias";
+import {
+  marcarVistaHistoria,
+  parsearEstiloTexto,
+  responderMencionHistoria,
+  toggleReaccionHistoria,
+} from "@/lib/historias";
 import { useSession } from "@/context/SessionContext";
 import { Avatar } from "@/components/Avatar";
 import { estiloVisualTexto } from "@/components/Historias/TextoSobreImagen";
@@ -71,6 +76,7 @@ export function VisorHistorias({
   const [duracionVideoMs, setDuracionVideoMs] = useState<number | null>(null);
   const [reaccionLocal, setReaccionLocal] = useState<{ count: number; mia: boolean } | null>(null);
   const [mostrarReacciones, setMostrarReacciones] = useState(false);
+  const [mencionRespuesta, setMencionRespuesta] = useState<boolean | null>(null);
   const startYRef = useRef(0);
 
   const grupo = grupos[indiceGrupo];
@@ -102,6 +108,7 @@ export function VisorHistorias({
     setDuracionVideoMs(null);
     setReaccionLocal(null);
     setMostrarReacciones(false);
+    setMencionRespuesta(null);
   }, [historia?.id]);
 
   // Se marca como vista apenas se muestra, no solo al abrir el visor completo.
@@ -114,9 +121,14 @@ export function VisorHistorias({
   if (!grupo || !historia) return null;
 
   const duracionMs = historia.tipo === "foto" ? DURACION_FOTO_MS : (duracionVideoMs ?? 0);
-  const esAutor = sesion?.id === grupo.autorId;
+  // Ojo: el dueño del GRUPO puede no ser el autor real de esta historia en
+  // particular (si el grupo es de alguien que aceptó una mención) — por eso
+  // se compara contra `historia.autorId`, no `grupo.autorId`.
+  const esAutor = sesion?.id === historia.autorId;
   const reaccionesCount = reaccionLocal?.count ?? historia.reaccionesCount;
   const miReaccion = reaccionLocal?.mia ?? historia.miReaccion;
+  const esMencionado = sesion?.id === historia.mencionadoId;
+  const mencionAceptada = mencionRespuesta ?? historia.mencionAceptada;
 
   // El "patín dorado" de Legión Roller: actualización optimista (se ve al
   // toque, sin esperar la respuesta) con reversión si falla la llamada.
@@ -130,6 +142,18 @@ export function VisorHistorias({
       setReaccionLocal({ count: resultado.reaccionesCount, mia: resultado.miReaccion });
     } catch {
       setReaccionLocal(anterior);
+    }
+  }
+
+  // El mencionado decide si esta historia también aparece bajo su propio
+  // avatar en la barra — sigue viéndose igual bajo el autor original.
+  async function responderMencion(aceptar: boolean) {
+    if (!token) return;
+    setMencionRespuesta(aceptar);
+    try {
+      await responderMencionHistoria(historia.id, aceptar, token);
+    } catch {
+      setMencionRespuesta(null);
     }
   }
 
@@ -164,7 +188,14 @@ export function VisorHistorias({
         <div className="mt-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Avatar fotoUrl={grupo.autorFotoUrl} nombre={grupo.autorNombre} tamano={28} />
-            <span className="text-sm font-semibold text-white">{grupo.autorNombre}</span>
+            <div className="flex flex-col">
+              <span className="text-sm font-semibold text-white">{grupo.autorNombre}</span>
+              {/* Transparencia: si esta historia llegó aquí por una mención
+                  aceptada, se aclara quién la creó originalmente. */}
+              {historia.compartida && (
+                <span className="text-[11px] text-white/70">Originalmente de {historia.autorNombre}</span>
+              )}
+            </div>
           </div>
           <button type="button" onClick={onClose} aria-label="Cerrar" className="text-white">
             <IconX size={24} />
@@ -231,6 +262,35 @@ export function VisorHistorias({
         onClick={avanzar}
         className="absolute right-0 top-0 z-[5] h-full w-1/2"
       />
+
+      {/* Al mencionado se le pregunta una sola vez si quiere que esta
+          historia también aparezca bajo su propio avatar en la barra. */}
+      {esMencionado && mencionAceptada === null && (
+        <div
+          className="absolute left-3 right-3 top-24 z-20 flex items-center justify-between gap-2 rounded-app bg-black/70 px-3 py-2"
+          data-no-swipe
+        >
+          <span className="text-xs text-white">
+            {historia.autorNombre} te mencionó. ¿Aparece también en tu historia?
+          </span>
+          <div className="flex shrink-0 gap-2">
+            <button
+              type="button"
+              onClick={() => responderMencion(true)}
+              className="rounded-app bg-fill-primary px-2.5 py-1 text-xs font-semibold text-on-primary"
+            >
+              Sí
+            </button>
+            <button
+              type="button"
+              onClick={() => responderMencion(false)}
+              className="rounded-app border border-white/30 px-2.5 py-1 text-xs text-white"
+            >
+              No
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* El autor ve quién reaccionó (como Instagram); cualquier otro puede
           reaccionar con el patín dorado. */}

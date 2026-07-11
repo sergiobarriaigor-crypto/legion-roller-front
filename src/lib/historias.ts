@@ -2,6 +2,13 @@ import { apiDelete, apiGet, apiPost } from "@/lib/api";
 
 export interface Historia {
   id: number;
+  // Autor real (distinto del dueño del grupo cuando `compartida` es true).
+  autorId: number;
+  autorNombre: string;
+  // true cuando esta historia aparece bajo el avatar de alguien que la
+  // acepto por ser mencionado — no la creó, solo aceptó que se re-agrupe
+  // también bajo su nombre.
+  compartida: boolean;
   tipo: "foto" | "video";
   mediaUrl: string;
   texto: string | null;
@@ -11,6 +18,7 @@ export interface Historia {
   mencionadoNombre: string | null;
   mencionX: number | null;
   mencionY: number | null;
+  mencionAceptada: boolean | null;
   mencionSinVer: boolean;
   reaccionesCount: number;
   miReaccion: boolean;
@@ -102,4 +110,9 @@ export function toggleReaccionHistoria(id: number, token: string | null) {
 // Solo el autor puede consultarla (el backend responde 403 si no lo es).
 export function listarReaccionesHistoria(id: number, token: string | null) {
   return apiGet<ReaccionHistoriaDetalle[]>(`/historias/${id}/reacciones`, token);
+}
+
+// El mencionado decide si la historia también aparece bajo su propio avatar.
+export function responderMencionHistoria(id: number, aceptar: boolean, token: string | null) {
+  return apiPost<{ mencionAceptada: boolean }>(`/historias/${id}/mencion`, { aceptar }, token);
 }
