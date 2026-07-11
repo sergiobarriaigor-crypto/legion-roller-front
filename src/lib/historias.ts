@@ -64,6 +64,15 @@ export interface ComentarioHistoriaDetalle {
   createdAt: string;
 }
 
+// Notificación para la campana: alguien respondió uno de mis comentarios.
+export interface RespuestaSinLeer {
+  id: number;
+  historiaId: number;
+  autorNombre: string;
+  texto: string;
+  createdAt: string;
+}
+
 export interface MencionInput {
   miembroId: number;
   x: number;
@@ -161,4 +170,16 @@ export function eliminarComentarioHistoria(
 // El mencionado decide si la historia también aparece bajo su propio avatar.
 export function responderMencionHistoria(id: number, aceptar: boolean, token: string | null) {
   return apiPost<{ mencionAceptada: boolean }>(`/historias/${id}/mencion`, { aceptar }, token);
+}
+
+export function listarRespuestasSinLeer(token: string | null) {
+  return apiGet<RespuestaSinLeer[]>("/historias/notificaciones/respuestas", token);
+}
+
+export function marcarRespuestaLeida(comentarioId: number, token: string | null) {
+  return apiPost<{ leida: boolean }>(
+    `/historias/notificaciones/respuestas/${comentarioId}/leida`,
+    {},
+    token,
+  );
 }

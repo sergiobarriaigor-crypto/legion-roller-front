@@ -2,19 +2,29 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { IconBell, IconMessageCircle2 } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
 import { apiGet } from "@/lib/api";
 import type { Conversaciones } from "@/lib/chat";
-import { listarHistorias, responderMencionHistoria, type Historia } from "@/lib/historias";
+import {
+  listarHistorias,
+  responderMencionHistoria,
+  listarRespuestasSinLeer,
+  marcarRespuestaLeida,
+  type Historia,
+  type RespuestaSinLeer,
+} from "@/lib/historias";
 import { SosButton } from "@/components/SosButton";
 import { PopupMencion } from "@/components/Historias/PopupMencion";
 
 export function AppHeader() {
   const { sesion } = useSession();
+  const router = useRouter();
   const token = sesion?.token ?? null;
   const [noLeidos, setNoLeidos] = useState(0);
   const [mencionesPendientes, setMencionesPendientes] = useState<Historia[]>([]);
+  const [respuestasSinLeer, setRespuestasSinLeer] = useState<RespuestaSinLeer[]>([]);
   const [mostrarLista, setMostrarLista] = useState(false);
   const [mencionAbierta, setMencionAbierta] = useState<Historia | null>(null);
   const [enviando, setEnviando] = useState(false);
@@ -59,6 +69,32 @@ export function AppHeader() {
     const intervalo = setInterval(revisarMenciones, 20000);
     return () => clearInterval(intervalo);
   }, [token, sesion?.rol, sesion?.id]);
+
+  // Respuestas a mis comentarios en Historias que todavía no vi.
+  useEffect(() => {
+    if (!token || sesion?.rol === "visitante") return;
+
+    async function revisarRespuestas() {
+      try {
+        setRespuestasSinLeer(await listarRespuestasSinLeer(token));
+      } catch {
+        // silencioso
+      }
+    }
+
+    revisarRespuestas();
+    const intervalo = setInterval(revisarRespuestas, 20000);
+    return () => clearInterval(intervalo);
+  }, [token, sesion?.rol]);
+
+  // Al tocar la notificación: se marca leída y se lleva a Post, donde vive la
+  // barra de Historias — no se reabre la historia/panel exactos todavía.
+  function irARespuesta(r: RespuestaSinLeer) {
+    setMostrarLista(false);
+    setRespuestasSinLeer((prev) => prev.filter((x) => x.id !== r.id));
+    if (token) marcarRespuestaLeida(r.id, token).catch(() => {});
+    router.push("/post");
+  }
 
   async function responderMencion(aceptar: boolean) {
     if (!mencionAbierta || !token) return;
@@ -107,9 +143,9 @@ export function AppHeader() {
           className="relative flex h-9 w-9 items-center justify-center rounded-full text-text-secondary hover:text-text-primary"
         >
           <IconBell size={20} />
-          {mencionesPendientes.length > 0 && (
+          {mencionesPendientes.length + respuestasSinLeer.length > 0 && (
             <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-fill-primary px-1 text-[10px] text-on-primary">
-              {mencionesPendientes.length}
+              {mencionesPendientes.length + respuestasSinLeer.length}
             </span>
           )}
         </button>
@@ -118,24 +154,37 @@ export function AppHeader() {
           <>
             <div className="fixed inset-0 z-20" onClick={() => setMostrarLista(false)} />
             <div className="card absolute right-0 top-11 z-30 w-72 p-2">
-              {mencionesPendientes.length === 0 ? (
+              {mencionesPendientes.length === 0 && respuestasSinLeer.length === 0 ? (
                 <p className="px-2 py-3 text-center text-sm text-text-secondary">
                   Sin notificaciones nuevas.
                 </p>
               ) : (
-                mencionesPendientes.map((h) => (
-                  <button
-                    key={h.id}
-                    type="button"
-                    onClick={() => {
-                      setMencionAbierta(h);
-                      setMostrarLista(false);
-                    }}
-                    className="block w-full rounded-app px-2 py-2 text-left text-sm text-text-primary hover:bg-bg-accent"
-                  >
-                    <strong>{h.autorNombre}</strong> te ha mencionado en una historia
-                  </button>
-                ))
+                <>
+                  {mencionesPendientes.map((h) => (
+                    <button
+                      key={`mencion-${h.id}`}
+                      type="button"
+                      onClick={() => {
+                        setMencionAbierta(h);
+                        setMostrarLista(false);
+                      }}
+                      className="block w-full rounded-app px-2 py-2 text-left text-sm text-text-primary hover:bg-bg-accent"
+                    >
+                      <strong>{h.autorNombre}</strong> te ha mencionado en una historia
+                    </button>
+                  ))}
+                  {respuestasSinLeer.map((r) => (
+                    <button
+                      key={`respuesta-${r.id}`}
+                      type="button"
+                      onClick={() => irARespuesta(r)}
+                      className="block w-full rounded-app px-2 py-2 text-left text-sm text-text-primary hover:bg-bg-accent"
+                    >
+                      <strong>{r.autorNombre}</strong> respondió tu comentario: &ldquo;
+                      {r.texto.length > 40 ? `${r.texto.slice(0, 40)}…` : r.texto}&rdquo;
+                    </button>
+                  ))}
+                </>
               )}
             </div>
           </>
