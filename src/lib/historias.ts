@@ -5,6 +5,7 @@ export interface Historia {
   // Autor real (distinto del dueño del grupo cuando `compartida` es true).
   autorId: number;
   autorNombre: string;
+  autorFotoUrl: string | null;
   // true cuando esta historia aparece bajo el avatar de alguien que la
   // acepto por ser mencionado — no la creó, solo aceptó que se re-agrupe
   // también bajo su nombre.
