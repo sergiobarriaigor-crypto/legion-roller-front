@@ -60,6 +60,7 @@ export interface ComentarioHistoriaDetalle {
   nombre: string;
   fotoUrl: string | null;
   texto: string;
+  respuestaAId: number | null;
   createdAt: string;
 }
 
@@ -134,15 +135,27 @@ export function toggleReaccionHistoria(id: number, token: string | null) {
   );
 }
 
-// Solo el autor puede consultarla (el backend responde 403 si no lo es).
+// Visible para cualquiera, como "a quién le gustó" en Posts.
 export function listarReaccionesHistoria(id: number, token: string | null) {
   return apiGet<ReaccionHistoriaDetalle[]>(`/historias/${id}/reacciones`, token);
 }
 
-// Los mensajes flotantes se guardan además de retransmitirse en vivo — solo
-// el autor puede revisarlos después (el backend responde 403 si no lo es).
+// Los mensajes flotantes se guardan además de retransmitirse en vivo — visibles
+// para cualquiera, como los comentarios de un Post.
 export function listarComentariosHistoria(id: number, token: string | null) {
   return apiGet<ComentarioHistoriaDetalle[]>(`/historias/${id}/comentarios`, token);
+}
+
+// Puede eliminarlo el autor del comentario, el dueño de la historia, o un admin.
+export function eliminarComentarioHistoria(
+  historiaId: number,
+  comentarioId: number,
+  token: string | null,
+) {
+  return apiDelete<{ mensaje: string }>(
+    `/historias/${historiaId}/comentarios/${comentarioId}`,
+    token,
+  );
 }
 
 // El mencionado decide si la historia también aparece bajo su propio avatar.

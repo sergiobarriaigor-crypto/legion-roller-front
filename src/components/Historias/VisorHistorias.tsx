@@ -9,8 +9,7 @@ import { useSession } from "@/context/SessionContext";
 import { Avatar } from "@/components/Avatar";
 import { estiloVisualTexto } from "@/components/Historias/TextoSobreImagen";
 import { estiloVisualMencion } from "@/components/Historias/MencionSobreImagen";
-import { ListaReaccionesHistoria } from "@/components/Historias/ListaReaccionesHistoria";
-import { ListaComentariosHistoria } from "@/components/Historias/ListaComentariosHistoria";
+import { PanelSocialHistoria } from "@/components/Historias/PanelSocialHistoria";
 
 const DURACION_FOTO_MS = 5000;
 const UMBRAL_SWIPE_CIERRE_PX = 80;
@@ -103,8 +102,7 @@ export function VisorHistorias({
   const [indiceHistoria, setIndiceHistoria] = useState(indiceHistoriaInicial);
   const [duracionVideoMs, setDuracionVideoMs] = useState<number | null>(null);
   const [reaccionLocal, setReaccionLocal] = useState<{ count: number; mia: boolean } | null>(null);
-  const [mostrarReacciones, setMostrarReacciones] = useState(false);
-  const [mostrarComentarios, setMostrarComentarios] = useState(false);
+  const [panelSocial, setPanelSocial] = useState<"reacciones" | "comentarios" | null>(null);
   const [pausado, setPausado] = useState(false);
   // Aparte de `pausado` (gesto de mantener presionado): si no fueran estados
   // separados, soltar el dedo sobre el campo de texto para enfocarlo dispara
@@ -159,8 +157,7 @@ export function VisorHistorias({
   useEffect(() => {
     setDuracionVideoMs(null);
     setReaccionLocal(null);
-    setMostrarReacciones(false);
-    setMostrarComentarios(false);
+    setPanelSocial(null);
     setPausado(false);
     setEscribiendoMensaje(false);
     setMensaje("");
@@ -547,7 +544,7 @@ export function VisorHistorias({
             <div className="flex items-center gap-3 rounded-full bg-black/55 px-4 py-2.5">
               <button
                 type="button"
-                onClick={() => setMostrarReacciones(true)}
+                onClick={() => setPanelSocial("reacciones")}
                 className="flex items-center gap-1.5 text-sm font-semibold text-white"
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -557,7 +554,7 @@ export function VisorHistorias({
               <span className="h-4 w-px bg-white/25" aria-hidden />
               <button
                 type="button"
-                onClick={() => setMostrarComentarios(true)}
+                onClick={() => setPanelSocial("comentarios")}
                 className="flex items-center gap-1.5 text-sm font-semibold text-white"
               >
                 <IconMessageCircle size={16} />
@@ -615,19 +612,13 @@ export function VisorHistorias({
         )}
       </div>
 
-      {mostrarReacciones && (
-        <ListaReaccionesHistoria
+      {panelSocial && (
+        <PanelSocialHistoria
           historiaId={historia.id}
+          historiaAutorId={historia.autorId}
+          vistaInicial={panelSocial}
           token={token}
-          onCerrar={() => setMostrarReacciones(false)}
-        />
-      )}
-
-      {mostrarComentarios && (
-        <ListaComentariosHistoria
-          historiaId={historia.id}
-          token={token}
-          onCerrar={() => setMostrarComentarios(false)}
+          onCerrar={() => setPanelSocial(null)}
         />
       )}
     </div>
