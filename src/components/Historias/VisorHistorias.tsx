@@ -208,8 +208,10 @@ export function VisorHistorias({
   }, [historia?.id]);
 
   // Mantener presionado pausa el video real, además de la barra de progreso
-  // — igual que escribir un mensaje (ver `pausadoEfectivo` más abajo).
-  const pausadoEfectivo = pausado || escribiendoMensaje;
+  // — igual que escribir un mensaje o tener abierto el panel de reacciones/
+  // comentarios (para poder revisarlos y responder con calma, sin que la
+  // historia siga avanzando sola de fondo).
+  const pausadoEfectivo = pausado || escribiendoMensaje || panelSocial !== null;
 
   useEffect(() => {
     const video = videoRef.current;
