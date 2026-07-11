@@ -1,5 +1,20 @@
 import { apiDelete, apiGet, apiPost } from "@/lib/api";
 
+// Mención de un integrante sobre la imagen — hasta MAX_MENCIONES_POR_HISTORIA
+// (5) por historia, cada una con su propia posición y escala (arrastrable y
+// pellizcable, igual dinámica que el texto pero sin rotación).
+export interface MencionEnHistoria {
+  miembroId: number;
+  nombre: string;
+  fotoUrl: string | null;
+  x: number;
+  y: number;
+  escala: number;
+  aceptada: boolean | null;
+}
+
+export const MAX_MENCIONES_POR_HISTORIA = 5;
+
 export interface Historia {
   id: number;
   // Autor real (distinto del dueño del grupo cuando `compartida` es true).
@@ -15,11 +30,7 @@ export interface Historia {
   texto: string | null;
   textoEstilo: string | null;
   ubicacion: string | null;
-  mencionadoId: number | null;
-  mencionadoNombre: string | null;
-  mencionX: number | null;
-  mencionY: number | null;
-  mencionAceptada: boolean | null;
+  menciones: MencionEnHistoria[];
   mencionSinVer: boolean;
   reaccionesCount: number;
   miReaccion: boolean;
@@ -42,15 +53,20 @@ export interface ReaccionHistoriaDetalle {
   createdAt: string;
 }
 
+export interface MencionInput {
+  miembroId: number;
+  x: number;
+  y: number;
+  escala?: number;
+}
+
 export interface CrearHistoriaInput {
   tipo: "foto" | "video";
   mediaUrl: string;
   texto?: string;
   textoEstilo?: string;
   ubicacion?: string;
-  mencionadoId?: number;
-  mencionX?: number;
-  mencionY?: number;
+  menciones?: MencionInput[];
 }
 
 // Posición/tamaño/rotación/tipografía/color/alineación/fondo del texto sobre

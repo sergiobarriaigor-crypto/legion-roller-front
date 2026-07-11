@@ -6,6 +6,7 @@ import { apiUpload, ApiError } from "@/lib/api";
 import {
   crearHistoria,
   serializarEstiloTexto,
+  MAX_MENCIONES_POR_HISTORIA,
   type EstiloTextoHistoria,
 } from "@/lib/historias";
 import { sectorMasCercano } from "@/lib/sectores";
@@ -50,9 +51,9 @@ export function EditorHistoria({
   const [tipo, setTipo] = useState<"foto" | "video" | null>(null);
   const [estiloTexto, setEstiloTexto] = useState<EstiloTextoHistoria | null>(null);
   const [filtro, setFiltro] = useState<FiltroFoto>(FILTROS_FOTO[0]);
-  const [mencion, setMencion] = useState<{ miembroId: number; nombre: string; x: number; y: number } | null>(
-    null,
-  );
+  const [menciones, setMenciones] = useState<
+    { miembroId: number; nombre: string; x: number; y: number; escala: number }[]
+  >([]);
   const [mostrarSelectorMencion, setMostrarSelectorMencion] = useState(false);
   const [mostrarInputTexto, setMostrarInputTexto] = useState(false);
   const [borradorTexto, setBorradorTexto] = useState("");
@@ -79,7 +80,7 @@ export function EditorHistoria({
   useEffect(() => {
     setError("");
     setFiltro(FILTROS_FOTO[0]);
-    setMencion(null);
+    setMenciones([]);
     const url = URL.createObjectURL(archivoInicial);
     const esVideo = archivoInicial.type.startsWith("video/");
 
@@ -144,9 +145,9 @@ export function EditorHistoria({
           texto: estiloTexto?.contenido || undefined,
           textoEstilo: estiloTexto ? serializarEstiloTexto(estiloTexto) : undefined,
           ubicacion,
-          mencionadoId: mencion?.miembroId,
-          mencionX: mencion?.x,
-          mencionY: mencion?.y,
+          menciones: menciones.length
+            ? menciones.map((m) => ({ miembroId: m.miembroId, x: m.x, y: m.y, escala: m.escala }))
+            : undefined,
         },
         token,
       );
@@ -240,11 +241,18 @@ export function EditorHistoria({
             </button>
 
             {/* Botón "@": misma dinámica que "Aa" (un toque abre el selector,
-                el resultado queda arrastrable sobre la imagen), ubicado justo
-                debajo para que se lea como parte del mismo grupo de controles. */}
+                el resultado queda arrastrable/pellizcable sobre la imagen),
+                ubicado justo debajo para que se lea como parte del mismo
+                grupo de controles. Hasta MAX_MENCIONES_POR_HISTORIA personas. */}
             <button
               type="button"
-              onClick={() => setMostrarSelectorMencion(true)}
+              onClick={() => {
+                if (menciones.length >= MAX_MENCIONES_POR_HISTORIA) {
+                  setError(`Puedes mencionar hasta ${MAX_MENCIONES_POR_HISTORIA} personas por historia.`);
+                  return;
+                }
+                setMostrarSelectorMencion(true);
+              }}
               aria-label="Mencionar a alguien"
               className="absolute right-3 top-14 z-10 flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white"
             >
@@ -259,23 +267,37 @@ export function EditorHistoria({
               />
             )}
 
-            {mencion && (
+            {menciones.map((m) => (
               <MencionSobreImagen
-                nombre={mencion.nombre}
-                x={mencion.x}
-                y={mencion.y}
-                onMover={(x, y) => setMencion((prev) => (prev ? { ...prev, x, y } : prev))}
+                key={m.miembroId}
+                nombre={m.nombre}
+                x={m.x}
+                y={m.y}
+                escala={m.escala}
+                onCambiar={(valores) =>
+                  setMenciones((prev) =>
+                    prev.map((p) => (p.miembroId === m.miembroId ? { ...p, ...valores } : p)),
+                  )
+                }
+                onQuitar={() =>
+                  setMenciones((prev) => prev.filter((p) => p.miembroId !== m.miembroId))
+                }
                 contenedorRef={contenedorMediaRef}
               />
-            )}
+            ))}
 
             {mostrarSelectorMencion && (
               <SelectorMencion
                 token={token}
-                excluirId={sesion?.id ?? undefined}
+                excluirIds={[sesion?.id, ...menciones.map((m) => m.miembroId)].filter(
+                  (id): id is number => id != null,
+                )}
                 onCerrar={() => setMostrarSelectorMencion(false)}
                 onSeleccionar={(m) => {
-                  setMencion({ miembroId: m.id, nombre: m.nombre, x: 0.5, y: 0.65 });
+                  // Pequeño escalón vertical por cada mención nueva, para que
+                  // no queden todas apiladas exactamente en el mismo punto.
+                  const y = Math.min(0.85, 0.5 + menciones.length * 0.1);
+                  setMenciones((prev) => [...prev, { miembroId: m.id, nombre: m.nombre, x: 0.5, y, escala: 1 }]);
                   setMostrarSelectorMencion(false);
                 }}
               />
@@ -306,18 +328,25 @@ export function EditorHistoria({
             {tipo === "foto" && (
               <FiltrosFoto previewUrl={previewUrl} filtroActual={filtro} onCambiar={setFiltro} />
             )}
-            {mencion && (
-              <div className="flex items-center justify-between rounded-app bg-black/60 px-3 py-2 text-sm text-white">
-                <span>
-                  Mencionaste a <strong>@{mencion.nombre}</strong>
+            {menciones.length > 0 && (
+              <div className="flex flex-col gap-1 rounded-app bg-black/60 px-3 py-2 text-sm text-white">
+                <span className="text-xs text-text-secondary">
+                  Mencionaste a {menciones.length}/{MAX_MENCIONES_POR_HISTORIA}:
                 </span>
-                <button
-                  type="button"
-                  onClick={() => setMencion(null)}
-                  className="text-fill-warning"
-                >
-                  Quitar
-                </button>
+                {menciones.map((m) => (
+                  <div key={m.miembroId} className="flex items-center justify-between">
+                    <span>@{m.nombre}</span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setMenciones((prev) => prev.filter((p) => p.miembroId !== m.miembroId))
+                      }
+                      className="text-fill-warning"
+                    >
+                      Quitar
+                    </button>
+                  </div>
+                ))}
               </div>
             )}
             {estiloTexto && (

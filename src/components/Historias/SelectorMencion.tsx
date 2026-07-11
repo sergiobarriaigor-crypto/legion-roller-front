@@ -13,12 +13,12 @@ interface MiembroSimple {
 // mismo endpoint que ya usa Chat para elegir con quién iniciar una conversación.
 export function SelectorMencion({
   token,
-  excluirId,
+  excluirIds = [],
   onSeleccionar,
   onCerrar,
 }: {
   token: string | null;
-  excluirId?: number;
+  excluirIds?: number[];
   onSeleccionar: (miembro: MiembroSimple) => void;
   onCerrar: () => void;
 }) {
@@ -32,7 +32,7 @@ export function SelectorMencion({
   }, [token]);
 
   const filtrados = miembros.filter(
-    (m) => m.id !== excluirId && m.nombre.toLowerCase().includes(busqueda.toLowerCase()),
+    (m) => !excluirIds.includes(m.id) && m.nombre.toLowerCase().includes(busqueda.toLowerCase()),
   );
 
   return (

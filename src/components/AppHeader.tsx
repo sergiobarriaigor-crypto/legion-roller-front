@@ -48,7 +48,7 @@ export function AppHeader() {
         const grupos = await listarHistorias(token);
         const pendientes = grupos
           .flatMap((g) => g.historias)
-          .filter((h) => h.mencionadoId === sesion?.id && h.mencionAceptada === null);
+          .filter((h) => h.menciones.some((m) => m.miembroId === sesion?.id && m.aceptada === null));
         setMencionesPendientes([...new Map(pendientes.map((h) => [h.id, h])).values()]);
       } catch {
         // silencioso

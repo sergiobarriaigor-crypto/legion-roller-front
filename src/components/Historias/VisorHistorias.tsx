@@ -343,12 +343,16 @@ export function VisorHistorias({
               }
               return null;
             })()}
-            {historia.mencionadoId && historia.mencionadoNombre && historia.mencionX != null && historia.mencionY != null && (
-              <div style={estiloVisualMencion(historia.mencionX, historia.mencionY)} className="flex items-center gap-1 whitespace-nowrap rounded-full bg-black/60 px-3 py-1.5 text-sm font-semibold text-white shadow">
+            {historia.menciones.map((m) => (
+              <div
+                key={m.miembroId}
+                style={estiloVisualMencion(m.x, m.y, m.escala)}
+                className="flex items-center gap-1 whitespace-nowrap rounded-full bg-black/60 px-3 py-1.5 text-sm font-semibold text-white shadow"
+              >
                 <span className="text-text-accent">@</span>
-                {historia.mencionadoNombre}
+                {m.nombre}
               </div>
-            )}
+            ))}
           </div>
         </div>
       </div>
