@@ -236,50 +236,121 @@ export function VisorHistorias({
       </div>
 
       <div className="relative z-0 flex h-full w-full items-center justify-center">
-        {historia.tipo === "video" ? (
-          <video
-            ref={videoRef}
-            key={historia.id}
-            src={historia.mediaUrl}
-            className="h-full w-full object-contain"
-            autoPlay
-            playsInline
-            onLoadedMetadata={(e) => setDuracionVideoMs(e.currentTarget.duration * 1000)}
-            onEnded={avanzar}
-          />
-        ) : (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={historia.mediaUrl} alt="" className="h-full w-full object-contain" />
+        {/* Historias republicadas ("Compartido por..."): en vez del clásico
+            fondo difuminado, se arma un estilo propio — difuminado + marca de
+            agua del logo al 7% + resplandor dorado detrás, tarjeta flotante
+            con marco dorado que brilla un segundo al abrir. Distinto de
+            Instagram, mismo lenguaje visual dorado/oscuro de la app. */}
+        {historia.compartida && (
+          <div className="absolute inset-0 overflow-hidden" aria-hidden>
+            {historia.tipo === "video" ? (
+              <video
+                src={historia.mediaUrl}
+                className="absolute inset-0 h-full w-full scale-110 object-cover blur-2xl"
+                autoPlay
+                muted
+                loop
+                playsInline
+              />
+            ) : (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={historia.mediaUrl}
+                alt=""
+                className="absolute inset-0 h-full w-full scale-110 object-cover blur-2xl"
+              />
+            )}
+            <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-black/75 to-black" />
+            <div
+              className="absolute inset-0 opacity-[0.07]"
+              style={{ backgroundImage: "url(/logo-legion-roller-mini.png)", backgroundRepeat: "repeat", backgroundSize: "140px 140px" }}
+            />
+            <div
+              className="absolute inset-0"
+              style={{ background: "radial-gradient(ellipse at center, rgba(231,193,104,0.16), transparent 65%)" }}
+            />
+          </div>
         )}
 
-        {historia.ubicacion && (
-          <div className="absolute left-3 top-14 rounded-full bg-black/50 px-3 py-1 text-xs text-white">
-            {historia.ubicacion}
-          </div>
-        )}
-        {(() => {
-          const estilo = parsearEstiloTexto(historia.textoEstilo);
-          if (estilo) {
-            return <div style={estiloVisualTexto(estilo)}>{estilo.contenido}</div>;
+        <div
+          className={
+            historia.compartida
+              ? "relative h-[80%] w-[80%] rounded-[18px]"
+              : "relative h-full w-full"
           }
-          // Compatibilidad: historias creadas antes de este editor de texto
-          // solo tienen el campo plano, sin posición/estilo — se muestran
-          // centradas abajo, como antes.
-          if (historia.texto) {
-            return (
-              <p className="absolute bottom-10 left-0 right-0 px-6 text-center text-lg font-semibold text-white drop-shadow-[0_1px_4px_rgba(0,0,0,0.8)]">
-                {historia.texto}
-              </p>
-            );
+          style={
+            historia.compartida
+              ? {
+                  padding: 2,
+                  background: "linear-gradient(100deg, #b9852c, #fff3d6, #e7c168, #fff3d6, #b9852c)",
+                  backgroundSize: "250% 100%",
+                }
+              : undefined
           }
-          return null;
-        })()}
-        {historia.mencionadoId && historia.mencionadoNombre && historia.mencionX != null && historia.mencionY != null && (
-          <div style={estiloVisualMencion(historia.mencionX, historia.mencionY)} className="flex items-center gap-1 whitespace-nowrap rounded-full bg-black/60 px-3 py-1.5 text-sm font-semibold text-white shadow">
-            <span className="text-text-accent">@</span>
-            {historia.mencionadoNombre}
+        >
+          {historia.compartida && (
+            <div
+              key={`brillo-${historia.id}`}
+              className="animate-brillo-marco absolute inset-0 rounded-[18px]"
+              style={{
+                background: "linear-gradient(100deg, #b9852c, #fff3d6, #e7c168, #fff3d6, #b9852c)",
+                backgroundSize: "250% 100%",
+              }}
+            />
+          )}
+          <div
+            className={
+              historia.compartida
+                ? "relative h-full w-full overflow-hidden rounded-[16px] bg-black shadow-[0_10px_40px_rgba(0,0,0,0.6),0_0_25px_rgba(231,193,104,0.35)]"
+                : "relative h-full w-full"
+            }
+          >
+            {historia.tipo === "video" ? (
+              <video
+                ref={videoRef}
+                key={historia.id}
+                src={historia.mediaUrl}
+                className="h-full w-full object-contain"
+                autoPlay
+                playsInline
+                onLoadedMetadata={(e) => setDuracionVideoMs(e.currentTarget.duration * 1000)}
+                onEnded={avanzar}
+              />
+            ) : (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={historia.mediaUrl} alt="" className="h-full w-full object-contain" />
+            )}
+
+            {historia.ubicacion && (
+              <div className="absolute left-3 top-14 rounded-full bg-black/50 px-3 py-1 text-xs text-white">
+                {historia.ubicacion}
+              </div>
+            )}
+            {(() => {
+              const estilo = parsearEstiloTexto(historia.textoEstilo);
+              if (estilo) {
+                return <div style={estiloVisualTexto(estilo)}>{estilo.contenido}</div>;
+              }
+              // Compatibilidad: historias creadas antes de este editor de texto
+              // solo tienen el campo plano, sin posición/estilo — se muestran
+              // centradas abajo, como antes.
+              if (historia.texto) {
+                return (
+                  <p className="absolute bottom-10 left-0 right-0 px-6 text-center text-lg font-semibold text-white drop-shadow-[0_1px_4px_rgba(0,0,0,0.8)]">
+                    {historia.texto}
+                  </p>
+                );
+              }
+              return null;
+            })()}
+            {historia.mencionadoId && historia.mencionadoNombre && historia.mencionX != null && historia.mencionY != null && (
+              <div style={estiloVisualMencion(historia.mencionX, historia.mencionY)} className="flex items-center gap-1 whitespace-nowrap rounded-full bg-black/60 px-3 py-1.5 text-sm font-semibold text-white shadow">
+                <span className="text-text-accent">@</span>
+                {historia.mencionadoNombre}
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </div>
 
       {/* Zonas de tap sobre el media: mitad izquierda retrocede, derecha avanza.

@@ -204,3 +204,26 @@ body {
     animation: none;
   }
 }
+
+/* Historias republicadas ("Compartido por..."): brillo metálico que recorre
+   el marco dorado una sola vez al abrir — el color se anima vía
+   background-position (gradiente más ancho que el marco), no opacidad, para
+   que se vea como un reflejo de luz recorriendo el borde, no un parpadeo. */
+@keyframes brilloMarcoHistoria {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -50% 0;
+  }
+}
+
+.animate-brillo-marco {
+  animation: brilloMarcoHistoria 1.1s ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-brillo-marco {
+    animation: none;
+  }
+}
