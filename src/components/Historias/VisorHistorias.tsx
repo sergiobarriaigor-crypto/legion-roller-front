@@ -12,44 +12,60 @@ import { ListaReaccionesHistoria } from "@/components/Historias/ListaReaccionesH
 
 const DURACION_FOTO_MS = 5000;
 const UMBRAL_SWIPE_CIERRE_PX = 80;
+const UMBRAL_HOLD_MS = 200;
 
-// Barra de progreso de un segmento: arranca en 0% y transiciona a 100% vía CSS
-// (más simple y preciso que un setTimeout/rAF a mano). El truco de los dos
-// requestAnimationFrame es necesario para que el navegador pinte el 0% antes
-// de aplicar la transición a 100% — si se hiciera en el mismo tick, no habría
-// "antes" desde el cual animar.
+// Barra de progreso de un segmento, manejada con requestAnimationFrame (en vez
+// de una transición CSS) para poder pausarla de verdad al mantener presionado
+// — una transición CSS no se puede "congelar" a mitad de camino sin recalcular
+// el tiempo restante a mano, así que es más simple llevar el avance en JS.
 function SegmentoProgreso({
-  id,
   duracionMs,
+  pausado,
   onComplete,
 }: {
-  id: number;
   duracionMs: number;
+  pausado: boolean;
   onComplete: () => void;
 }) {
-  const [completo, setCompleto] = useState(false);
+  const [progreso, setProgreso] = useState(0);
+  const acumuladoRef = useRef(0);
+  const inicioRef = useRef<number | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const onCompleteRef = useRef(onComplete);
 
   useEffect(() => {
-    setCompleto(false);
-    let raf2 = 0;
-    const raf1 = requestAnimationFrame(() => {
-      raf2 = requestAnimationFrame(() => setCompleto(true));
-    });
-    return () => {
-      cancelAnimationFrame(raf1);
-      cancelAnimationFrame(raf2);
-    };
-  }, [id, duracionMs]);
+    onCompleteRef.current = onComplete;
+  }, [onComplete]);
 
-  return (
-    <div
-      className="h-full bg-white"
-      style={{ width: completo ? "100%" : "0%", transition: `width ${duracionMs}ms linear` }}
-      onTransitionEnd={() => {
-        if (completo) onComplete();
-      }}
-    />
-  );
+  useEffect(() => {
+    if (pausado) {
+      if (inicioRef.current !== null) {
+        acumuladoRef.current += performance.now() - inicioRef.current;
+        inicioRef.current = null;
+      }
+      return;
+    }
+
+    inicioRef.current = performance.now();
+    function tick() {
+      if (inicioRef.current === null) return;
+      const transcurrido = acumuladoRef.current + (performance.now() - inicioRef.current);
+      const fraccion = Math.min(1, transcurrido / duracionMs);
+      setProgreso(fraccion);
+      if (fraccion >= 1) {
+        onCompleteRef.current();
+        return;
+      }
+      rafRef.current = requestAnimationFrame(tick);
+    }
+    rafRef.current = requestAnimationFrame(tick);
+
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
+  }, [pausado, duracionMs]);
+
+  return <div className="h-full bg-white" style={{ width: `${progreso * 100}%` }} />;
 }
 
 export function VisorHistorias({
@@ -71,7 +87,11 @@ export function VisorHistorias({
   const [duracionVideoMs, setDuracionVideoMs] = useState<number | null>(null);
   const [reaccionLocal, setReaccionLocal] = useState<{ count: number; mia: boolean } | null>(null);
   const [mostrarReacciones, setMostrarReacciones] = useState(false);
+  const [pausado, setPausado] = useState(false);
   const startYRef = useRef(0);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const holdTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const holdActivadoRef = useRef(false);
 
   const grupo = grupos[indiceGrupo];
   const historia = grupo?.historias[indiceHistoria];
@@ -102,6 +122,7 @@ export function VisorHistorias({
     setDuracionVideoMs(null);
     setReaccionLocal(null);
     setMostrarReacciones(false);
+    setPausado(false);
   }, [historia?.id]);
 
   // Se marca como vista apenas se muestra, no solo al abrir el visor completo.
@@ -110,6 +131,14 @@ export function VisorHistorias({
     marcarVistaHistoria(historia.id, token).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [historia?.id]);
+
+  // Mantener presionado pausa el video real, además de la barra de progreso.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (pausado) video.pause();
+    else video.play().catch(() => {});
+  }, [pausado]);
 
   if (!grupo || !historia) return null;
 
@@ -136,16 +165,33 @@ export function VisorHistorias({
     }
   }
 
+  // Mantener presionado pausa la historia (barra de progreso + video real);
+  // un toque rápido sigue avanzando/retrocediendo como siempre. Se distingue
+  // con un pequeño umbral: si se soltó antes de que se activara la pausa, fue
+  // un toque normal; si se activó, soltar NO debe además navegar.
+  function iniciarPausa(e: React.PointerEvent) {
+    startYRef.current = e.clientY;
+    holdActivadoRef.current = false;
+    holdTimeoutRef.current = setTimeout(() => {
+      holdActivadoRef.current = true;
+      setPausado(true);
+    }, UMBRAL_HOLD_MS);
+  }
+
+  function detenerPausa(e: React.PointerEvent) {
+    if (holdTimeoutRef.current) clearTimeout(holdTimeoutRef.current);
+    holdTimeoutRef.current = null;
+    setPausado(false);
+    if (e.clientY - startYRef.current > UMBRAL_SWIPE_CIERRE_PX) onClose();
+  }
+
   return (
     <div
       className="fixed inset-0 z-50 bg-black"
       data-no-swipe
-      onPointerDown={(e) => {
-        startYRef.current = e.clientY;
-      }}
-      onPointerUp={(e) => {
-        if (e.clientY - startYRef.current > UMBRAL_SWIPE_CIERRE_PX) onClose();
-      }}
+      onPointerDown={iniciarPausa}
+      onPointerUp={detenerPausa}
+      onPointerCancel={detenerPausa}
     >
       {/* Degradado oscuro detrás del encabezado: sin esto, la barra de progreso
           y el nombre quedaban difíciles de leer sobre fotos claras — no basta
@@ -158,7 +204,7 @@ export function VisorHistorias({
               {i < indiceHistoria ? (
                 <div className="h-full w-full bg-white" />
               ) : i === indiceHistoria && duracionMs > 0 ? (
-                <SegmentoProgreso id={historia.id} duracionMs={duracionMs} onComplete={avanzar} />
+                <SegmentoProgreso duracionMs={duracionMs} pausado={pausado} onComplete={avanzar} />
               ) : null}
             </div>
           ))}
@@ -192,6 +238,7 @@ export function VisorHistorias({
       <div className="relative z-0 flex h-full w-full items-center justify-center">
         {historia.tipo === "video" ? (
           <video
+            ref={videoRef}
             key={historia.id}
             src={historia.mediaUrl}
             className="h-full w-full object-contain"
@@ -235,17 +282,31 @@ export function VisorHistorias({
         )}
       </div>
 
-      {/* Zonas de tap sobre el media: mitad izquierda retrocede, derecha avanza. */}
+      {/* Zonas de tap sobre el media: mitad izquierda retrocede, derecha avanza.
+          Si el toque activó la pausa (mantener presionado), soltar solo
+          reanuda — no debe además navegar a la historia anterior/siguiente. */}
       <button
         type="button"
         aria-label="Historia anterior"
-        onClick={retroceder}
+        onClick={() => {
+          if (holdActivadoRef.current) {
+            holdActivadoRef.current = false;
+            return;
+          }
+          retroceder();
+        }}
         className="absolute left-0 top-0 z-[5] h-full w-1/2"
       />
       <button
         type="button"
         aria-label="Historia siguiente"
-        onClick={avanzar}
+        onClick={() => {
+          if (holdActivadoRef.current) {
+            holdActivadoRef.current = false;
+            return;
+          }
+          avanzar();
+        }}
         className="absolute right-0 top-0 z-[5] h-full w-1/2"
       />
 
