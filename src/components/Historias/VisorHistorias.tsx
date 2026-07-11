@@ -6,6 +6,7 @@ import type { GrupoHistorias } from "@/lib/historias";
 import { marcarVistaHistoria, parsearEstiloTexto } from "@/lib/historias";
 import { Avatar } from "@/components/Avatar";
 import { estiloVisualTexto } from "@/components/Historias/TextoSobreImagen";
+import { estiloVisualMencion } from "@/components/Historias/MencionSobreImagen";
 
 const DURACION_FOTO_MS = 5000;
 const UMBRAL_SWIPE_CIERRE_PX = 80;
@@ -182,6 +183,12 @@ export function VisorHistorias({
           }
           return null;
         })()}
+        {historia.mencionadoId && historia.mencionadoNombre && historia.mencionX != null && historia.mencionY != null && (
+          <div style={estiloVisualMencion(historia.mencionX, historia.mencionY)} className="flex items-center gap-1 whitespace-nowrap rounded-full bg-black/60 px-3 py-1.5 text-sm font-semibold text-white shadow">
+            <span className="text-text-accent">@</span>
+            {historia.mencionadoNombre}
+          </div>
+        )}
       </div>
 
       {/* Zonas de tap sobre el media: mitad izquierda retrocede, derecha avanza. */}

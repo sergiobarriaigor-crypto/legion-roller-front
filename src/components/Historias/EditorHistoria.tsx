@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { IconCheck, IconMapPin, IconX } from "@tabler/icons-react";
+import { IconAt, IconCheck, IconMapPin, IconX } from "@tabler/icons-react";
 import { apiUpload, ApiError } from "@/lib/api";
 import {
   crearHistoria,
@@ -9,9 +9,12 @@ import {
   type EstiloTextoHistoria,
 } from "@/lib/historias";
 import { sectorMasCercano } from "@/lib/sectores";
+import { useSession } from "@/context/SessionContext";
 import { TextoSobreImagen } from "@/components/Historias/TextoSobreImagen";
 import { BarraTextoHistoria } from "@/components/Historias/BarraTextoHistoria";
 import { FILTROS_FOTO, FiltrosFoto, aplicarFiltroABlob, type FiltroFoto } from "@/components/Historias/FiltrosFoto";
+import { MencionSobreImagen } from "@/components/Historias/MencionSobreImagen";
+import { SelectorMencion } from "@/components/Historias/SelectorMencion";
 
 const DURACION_MAXIMA_VIDEO_SEG = 30;
 
@@ -40,12 +43,17 @@ export function EditorHistoria({
   onClose: () => void;
   onPublicado: () => void;
 }) {
+  const { sesion } = useSession();
   const contenedorMediaRef = useRef<HTMLDivElement>(null);
 
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [tipo, setTipo] = useState<"foto" | "video" | null>(null);
   const [estiloTexto, setEstiloTexto] = useState<EstiloTextoHistoria | null>(null);
   const [filtro, setFiltro] = useState<FiltroFoto>(FILTROS_FOTO[0]);
+  const [mencion, setMencion] = useState<{ miembroId: number; nombre: string; x: number; y: number } | null>(
+    null,
+  );
+  const [mostrarSelectorMencion, setMostrarSelectorMencion] = useState(false);
   const [mostrarInputTexto, setMostrarInputTexto] = useState(false);
   const [borradorTexto, setBorradorTexto] = useState("");
   const [ubicacion, setUbicacion] = useState<string | undefined>(undefined);
@@ -71,6 +79,7 @@ export function EditorHistoria({
   useEffect(() => {
     setError("");
     setFiltro(FILTROS_FOTO[0]);
+    setMencion(null);
     const url = URL.createObjectURL(archivoInicial);
     const esVideo = archivoInicial.type.startsWith("video/");
 
@@ -135,6 +144,9 @@ export function EditorHistoria({
           texto: estiloTexto?.contenido || undefined,
           textoEstilo: estiloTexto ? serializarEstiloTexto(estiloTexto) : undefined,
           ubicacion,
+          mencionadoId: mencion?.miembroId,
+          mencionX: mencion?.x,
+          mencionY: mencion?.y,
         },
         token,
       );
@@ -227,11 +239,45 @@ export function EditorHistoria({
               Aa
             </button>
 
+            {/* Botón "@": misma dinámica que "Aa" (un toque abre el selector,
+                el resultado queda arrastrable sobre la imagen), ubicado justo
+                debajo para que se lea como parte del mismo grupo de controles. */}
+            <button
+              type="button"
+              onClick={() => setMostrarSelectorMencion(true)}
+              aria-label="Mencionar a alguien"
+              className="absolute right-3 top-14 z-10 flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white"
+            >
+              <IconAt size={18} />
+            </button>
+
             {estiloTexto && (
               <TextoSobreImagen
                 estilo={estiloTexto}
                 onChange={setEstiloTexto}
                 contenedorRef={contenedorMediaRef}
+              />
+            )}
+
+            {mencion && (
+              <MencionSobreImagen
+                nombre={mencion.nombre}
+                x={mencion.x}
+                y={mencion.y}
+                onMover={(x, y) => setMencion((prev) => (prev ? { ...prev, x, y } : prev))}
+                contenedorRef={contenedorMediaRef}
+              />
+            )}
+
+            {mostrarSelectorMencion && (
+              <SelectorMencion
+                token={token}
+                excluirId={sesion?.id ?? undefined}
+                onCerrar={() => setMostrarSelectorMencion(false)}
+                onSeleccionar={(m) => {
+                  setMencion({ miembroId: m.id, nombre: m.nombre, x: 0.5, y: 0.65 });
+                  setMostrarSelectorMencion(false);
+                }}
               />
             )}
 
@@ -259,6 +305,20 @@ export function EditorHistoria({
           <div className="flex flex-col gap-2 p-3">
             {tipo === "foto" && (
               <FiltrosFoto previewUrl={previewUrl} filtroActual={filtro} onCambiar={setFiltro} />
+            )}
+            {mencion && (
+              <div className="flex items-center justify-between rounded-app bg-black/60 px-3 py-2 text-sm text-white">
+                <span>
+                  Mencionaste a <strong>@{mencion.nombre}</strong>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setMencion(null)}
+                  className="text-fill-warning"
+                >
+                  Quitar
+                </button>
+              </div>
             )}
             {estiloTexto && (
               <BarraTextoHistoria

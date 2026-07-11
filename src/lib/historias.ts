@@ -7,6 +7,10 @@ export interface Historia {
   texto: string | null;
   textoEstilo: string | null;
   ubicacion: string | null;
+  mencionadoId: number | null;
+  mencionadoNombre: string | null;
+  mencionX: number | null;
+  mencionY: number | null;
   createdAt: string;
 }
 
@@ -24,6 +28,9 @@ export interface CrearHistoriaInput {
   texto?: string;
   textoEstilo?: string;
   ubicacion?: string;
+  mencionadoId?: number;
+  mencionX?: number;
+  mencionY?: number;
 }
 
 // Posición/tamaño/rotación/tipografía/color/alineación/fondo del texto sobre
