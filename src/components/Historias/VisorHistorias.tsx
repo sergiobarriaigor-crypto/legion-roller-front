@@ -90,6 +90,11 @@ export function VisorHistorias({
   const [reaccionLocal, setReaccionLocal] = useState<{ count: number; mia: boolean } | null>(null);
   const [mostrarReacciones, setMostrarReacciones] = useState(false);
   const [pausado, setPausado] = useState(false);
+  // Aparte de `pausado` (gesto de mantener presionado): si no fueran estados
+  // separados, soltar el dedo sobre el campo de texto para enfocarlo dispara
+  // el mismo onPointerUp del contenedor que reanuda la cuenta regresiva,
+  // cancelando justo la pausa que el foco acababa de activar.
+  const [escribiendoMensaje, setEscribiendoMensaje] = useState(false);
   const [mensaje, setMensaje] = useState("");
   const [enviandoMensaje, setEnviandoMensaje] = useState(false);
   const [mensajeEnviado, setMensajeEnviado] = useState(false);
@@ -129,6 +134,7 @@ export function VisorHistorias({
     setReaccionLocal(null);
     setMostrarReacciones(false);
     setPausado(false);
+    setEscribiendoMensaje(false);
     setMensaje("");
     setMensajeEnviado(false);
     setMensajeError("");
@@ -141,13 +147,16 @@ export function VisorHistorias({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [historia?.id]);
 
-  // Mantener presionado pausa el video real, además de la barra de progreso.
+  // Mantener presionado pausa el video real, además de la barra de progreso
+  // — igual que escribir un mensaje (ver `pausadoEfectivo` más abajo).
+  const pausadoEfectivo = pausado || escribiendoMensaje;
+
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-    if (pausado) video.pause();
+    if (pausadoEfectivo) video.pause();
     else video.play().catch(() => {});
-  }, [pausado]);
+  }, [pausadoEfectivo]);
 
   if (!grupo || !historia) return null;
 
@@ -237,7 +246,7 @@ export function VisorHistorias({
               {i < indiceHistoria ? (
                 <div className="h-full w-full bg-white" />
               ) : i === indiceHistoria && duracionMs > 0 ? (
-                <SegmentoProgreso duracionMs={duracionMs} pausado={pausado} onComplete={avanzar} />
+                <SegmentoProgreso duracionMs={duracionMs} pausado={pausadoEfectivo} onComplete={avanzar} />
               ) : null}
             </div>
           ))}
@@ -444,8 +453,8 @@ export function VisorHistorias({
                 <input
                   value={mensaje}
                   onChange={(e) => setMensaje(e.target.value)}
-                  onFocus={() => setPausado(true)}
-                  onBlur={() => setPausado(false)}
+                  onFocus={() => setEscribiendoMensaje(true)}
+                  onBlur={() => setEscribiendoMensaje(false)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") enviarMensajeHistoria();
                   }}
