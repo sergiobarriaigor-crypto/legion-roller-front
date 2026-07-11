@@ -311,13 +311,19 @@ export function VisorHistorias({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 bg-black"
-      data-no-swipe
-      onPointerDown={iniciarPausa}
-      onPointerUp={detenerPausa}
-      onPointerCancel={detenerPausa}
-    >
+    // El contenedor exterior sigue siendo "fixed inset-0" (cubre TODA la
+    // ventana), pero adentro se centra una columna del mismo ancho tipo-
+    // teléfono que usa el resto de la app (mismo truco que ya usa
+    // MisRutasPanel) — así en pantallas grandes la historia no se estira de
+    // punta a punta, se ve como el resto de la app con los costados oscuros.
+    <div className="fixed inset-0 z-50 flex justify-center bg-black">
+      <div
+        className="relative h-full w-full max-w-md bg-black"
+        data-no-swipe
+        onPointerDown={iniciarPausa}
+        onPointerUp={detenerPausa}
+        onPointerCancel={detenerPausa}
+      >
       {/* Degradado oscuro detrás del encabezado: sin esto, la barra de progreso
           y el nombre quedaban difíciles de leer sobre fotos claras — no basta
           con el z-index, hace falta un fondo propio para que sea legible
@@ -621,6 +627,7 @@ export function VisorHistorias({
           onCerrar={() => setPanelSocial(null)}
         />
       )}
+      </div>
     </div>
   );
 }

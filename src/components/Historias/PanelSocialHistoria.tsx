@@ -134,34 +134,43 @@ export function PanelSocialHistoria({
   }
 
   return (
-    <div className="absolute inset-0 z-30 flex flex-col bg-black/90" data-no-swipe>
-      <div className="flex items-center justify-between border-b border-white/10 p-3">
-        <div className="flex gap-4">
-          <button
-            type="button"
-            onClick={() => setVista("reacciones")}
-            className={`flex items-center gap-1.5 text-sm font-semibold ${
-              vista === "reacciones" ? "text-white" : "text-white/40"
-            }`}
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/corazon2.png" alt="" className="h-4 w-4" />
-            {reacciones?.length ?? 0}
-          </button>
-          <button
-            type="button"
-            onClick={() => setVista("comentarios")}
-            className={`text-sm font-semibold ${vista === "comentarios" ? "text-white" : "text-white/40"}`}
-          >
-            {comentarios?.length ?? 0} comentarios
+    // Hoja flotante que sube desde abajo (no pantalla completa): la foto/video
+    // de la historia sigue visible y atenuada por detrás. Mismo patrón que ya
+    // usa MisRutasPanel — velo oscuro + hoja anclada abajo con esquinas
+    // redondeadas y una altura máxima, no todo el alto disponible.
+    <div className="absolute inset-0 z-30" data-no-swipe>
+      <div className="absolute inset-0 bg-black/60" onClick={onCerrar} aria-hidden />
+      <div className="absolute inset-x-0 bottom-0 flex max-h-[70%] flex-col rounded-t-2xl bg-[#161616] shadow-[0_-8px_30px_rgba(0,0,0,0.5)]">
+        <div className="flex justify-center pb-1 pt-2">
+          <span className="h-1 w-10 rounded-full bg-white/20" />
+        </div>
+        <div className="flex items-center justify-between border-b border-white/10 px-3 pb-3">
+          <div className="flex gap-4">
+            <button
+              type="button"
+              onClick={() => setVista("reacciones")}
+              className={`flex items-center gap-1.5 text-sm font-semibold ${
+                vista === "reacciones" ? "text-white" : "text-white/40"
+              }`}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/corazon2.png" alt="" className="h-4 w-4" />
+              {reacciones?.length ?? 0}
+            </button>
+            <button
+              type="button"
+              onClick={() => setVista("comentarios")}
+              className={`text-sm font-semibold ${vista === "comentarios" ? "text-white" : "text-white/40"}`}
+            >
+              {comentarios?.length ?? 0} comentarios
+            </button>
+          </div>
+          <button type="button" onClick={onCerrar} aria-label="Cerrar" className="text-white">
+            <IconX size={20} />
           </button>
         </div>
-        <button type="button" onClick={onCerrar} aria-label="Cerrar" className="text-white">
-          <IconX size={20} />
-        </button>
-      </div>
 
-      <div className="flex-1 overflow-y-auto px-3 pb-3">
+        <div className="flex-1 overflow-y-auto px-3 pb-3">
         {vista === "reacciones" ? (
           reacciones === null ? (
             <p className="px-3 py-2 text-sm text-white/50">Cargando...</p>
@@ -227,6 +236,7 @@ export function PanelSocialHistoria({
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }
