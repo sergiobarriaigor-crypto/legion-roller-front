@@ -11,6 +11,7 @@ import {
 import { sectorMasCercano } from "@/lib/sectores";
 import { TextoSobreImagen } from "@/components/Historias/TextoSobreImagen";
 import { BarraTextoHistoria } from "@/components/Historias/BarraTextoHistoria";
+import { FILTROS_FOTO, FiltrosFoto, aplicarFiltroABlob, type FiltroFoto } from "@/components/Historias/FiltrosFoto";
 
 const DURACION_MAXIMA_VIDEO_SEG = 30;
 
@@ -44,6 +45,7 @@ export function EditorHistoria({
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [tipo, setTipo] = useState<"foto" | "video" | null>(null);
   const [estiloTexto, setEstiloTexto] = useState<EstiloTextoHistoria | null>(null);
+  const [filtro, setFiltro] = useState<FiltroFoto>(FILTROS_FOTO[0]);
   const [mostrarInputTexto, setMostrarInputTexto] = useState(false);
   const [borradorTexto, setBorradorTexto] = useState("");
   const [ubicacion, setUbicacion] = useState<string | undefined>(undefined);
@@ -68,6 +70,7 @@ export function EditorHistoria({
   // Valida (duración de video) y prepara la vista previa del archivo recibido.
   useEffect(() => {
     setError("");
+    setFiltro(FILTROS_FOTO[0]);
     const url = URL.createObjectURL(archivoInicial);
     const esVideo = archivoInicial.type.startsWith("video/");
 
@@ -115,9 +118,13 @@ export function EditorHistoria({
     setPublicando(true);
     setError("");
     try {
+      const archivoASubir: Blob =
+        tipo === "foto" && filtro.css !== "none" && previewUrl
+          ? await aplicarFiltroABlob(previewUrl, filtro.css)
+          : archivoInicial;
       const subida = await apiUpload<{ url: string }>(
         "/uploads",
-        archivoInicial,
+        archivoASubir,
         token,
         archivoInicial.name,
       );
@@ -186,7 +193,12 @@ export function EditorHistoria({
               />
             ) : (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={previewUrl} alt="Vista previa de la historia" className="h-full w-full object-contain" />
+              <img
+                src={previewUrl}
+                alt="Vista previa de la historia"
+                className="h-full w-full object-contain"
+                style={{ filter: filtro.css }}
+              />
             )}
 
             {ubicacion && (
@@ -245,6 +257,9 @@ export function EditorHistoria({
           </div>
 
           <div className="flex flex-col gap-2 p-3">
+            {tipo === "foto" && (
+              <FiltrosFoto previewUrl={previewUrl} filtroActual={filtro} onCambiar={setFiltro} />
+            )}
             {estiloTexto && (
               <BarraTextoHistoria
                 estilo={estiloTexto}
