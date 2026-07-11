@@ -4,8 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { IconX } from "@tabler/icons-react";
 import type { GrupoHistorias } from "@/lib/historias";
 import { marcarVistaHistoria, parsearEstiloTexto, toggleReaccionHistoria } from "@/lib/historias";
-import { apiPost, ApiError } from "@/lib/api";
-import { salaIndividual } from "@/lib/chat";
+import { obtenerSocket } from "@/lib/socket";
 import { useSession } from "@/context/SessionContext";
 import { Avatar } from "@/components/Avatar";
 import { estiloVisualTexto } from "@/components/Historias/TextoSobreImagen";
@@ -15,6 +14,17 @@ import { ListaReaccionesHistoria } from "@/components/Historias/ListaReaccionesH
 const DURACION_FOTO_MS = 5000;
 const UMBRAL_SWIPE_CIERRE_PX = 80;
 const UMBRAL_HOLD_MS = 200;
+const DURACION_BURBUJA_MS = 3000;
+const DURACION_SALIDA_BURBUJA_MS = 300;
+const MAX_BURBUJAS_VISIBLES = 4;
+
+interface BurbujaFlotante {
+  id: string;
+  nombre: string;
+  texto: string;
+  esReaccion: boolean;
+  saliendo: boolean;
+}
 
 // Barra de progreso de un segmento, manejada con requestAnimationFrame (en vez
 // de una transición CSS) para poder pausarla de verdad al mantener presionado
@@ -96,13 +106,24 @@ export function VisorHistorias({
   // cancelando justo la pausa que el foco acababa de activar.
   const [escribiendoMensaje, setEscribiendoMensaje] = useState(false);
   const [mensaje, setMensaje] = useState("");
-  const [enviandoMensaje, setEnviandoMensaje] = useState(false);
   const [mensajeEnviado, setMensajeEnviado] = useState(false);
-  const [mensajeError, setMensajeError] = useState("");
+  const [burbujas, setBurbujas] = useState<BurbujaFlotante[]>([]);
   const startYRef = useRef(0);
   const videoRef = useRef<HTMLVideoElement>(null);
   const holdTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const holdActivadoRef = useRef(false);
+  const socketRef = useRef<ReturnType<typeof obtenerSocket> | null>(null);
+
+  function agregarBurbuja(nombre: string, texto: string, esReaccion: boolean) {
+    const id = `${Date.now()}-${Math.random()}`;
+    setBurbujas((prev) => [...prev, { id, nombre, texto, esReaccion, saliendo: false }].slice(-MAX_BURBUJAS_VISIBLES));
+    setTimeout(() => {
+      setBurbujas((prev) => prev.map((b) => (b.id === id ? { ...b, saliendo: true } : b)));
+      setTimeout(() => {
+        setBurbujas((prev) => prev.filter((b) => b.id !== id));
+      }, DURACION_SALIDA_BURBUJA_MS);
+    }, DURACION_BURBUJA_MS);
+  }
 
   const grupo = grupos[indiceGrupo];
   const historia = grupo?.historias[indiceHistoria];
@@ -137,13 +158,48 @@ export function VisorHistorias({
     setEscribiendoMensaje(false);
     setMensaje("");
     setMensajeEnviado(false);
-    setMensajeError("");
+    setBurbujas([]);
   }, [historia?.id]);
 
   // Se marca como vista apenas se muestra, no solo al abrir el visor completo.
   useEffect(() => {
     if (!historia || !token) return;
     marcarVistaHistoria(historia.id, token).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historia?.id]);
+
+  // Conexión en vivo para las burbujas flotantes: dura mientras el visor esté
+  // abierto (se desconecta al cerrarlo), no es una conexión global de la app.
+  useEffect(() => {
+    if (!token) return;
+    const socket = obtenerSocket(token);
+    socketRef.current = socket;
+
+    function alRecibirMensaje(data: { nombre: string; texto: string }) {
+      agregarBurbuja(data.nombre, data.texto, false);
+    }
+    function alRecibirReaccion(data: { nombre: string }) {
+      agregarBurbuja(data.nombre, "", true);
+    }
+    socket.on("historia:mensaje", alRecibirMensaje);
+    socket.on("historia:reaccion", alRecibirReaccion);
+
+    return () => {
+      socket.off("historia:mensaje", alRecibirMensaje);
+      socket.off("historia:reaccion", alRecibirReaccion);
+      socket.disconnect();
+    };
+  }, [token]);
+
+  // Se une a la "sala" de la historia actual para recibir sus burbujas en
+  // vivo, y sale al cambiar de historia o cerrar el visor.
+  useEffect(() => {
+    const socket = socketRef.current;
+    if (!socket || !historia) return;
+    socket.emit("historia:unirse", historia.id);
+    return () => {
+      socket.emit("historia:salir", historia.id);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [historia?.id]);
 
@@ -183,28 +239,17 @@ export function VisorHistorias({
     }
   }
 
-  // Responder a la historia envía un mensaje directo de verdad al autor
-  // (reusa el mismo chat/sala que ya existe) — se queda mostrando "Enviado"
-  // dentro de la historia, sin abrir el chat, igual que Instagram.
-  async function enviarMensajeHistoria() {
+  // El mensaje ya NO se envía como chat privado: es efímero, solo se
+  // retransmite en vivo como burbuja flotante a quien esté viendo esta
+  // historia en ese momento (incluido quien la envía). No queda guardado en
+  // ningún lado — se queda mostrando "Enviado" dentro de la historia.
+  function enviarMensajeHistoria() {
     const texto = mensaje.trim();
-    if (!texto || !token || !sesion?.id || enviandoMensaje) return;
-    setEnviandoMensaje(true);
-    try {
-      const sala = salaIndividual(sesion.id, historia.autorId);
-      await apiPost(
-        `/chat/mensajes/${sala}`,
-        { texto, referenciaTipo: "historia", referenciaId: historia.id },
-        token,
-      );
-      setMensaje("");
-      setMensajeEnviado(true);
-      setTimeout(() => setMensajeEnviado(false), 2000);
-    } catch (err) {
-      setMensajeError(err instanceof ApiError ? err.message : "No se pudo enviar el mensaje.");
-    } finally {
-      setEnviandoMensaje(false);
-    }
+    if (!texto || !socketRef.current) return;
+    socketRef.current.emit("historia:mensaje", { historiaId: historia.id, texto });
+    setMensaje("");
+    setMensajeEnviado(true);
+    setTimeout(() => setMensajeEnviado(false), 2000);
   }
 
   // Mantener presionado pausa la historia (barra de progreso + video real);
@@ -399,6 +444,28 @@ export function VisorHistorias({
         </div>
       </div>
 
+      {/* Burbujas flotantes en vivo: cualquiera viendo esta misma historia en
+          este momento las ve aparecer (mensajes efímeros + reacciones), estilo
+          comentarios de un live — no bloquean el contenido ni los taps. */}
+      <div className="pointer-events-none absolute bottom-24 left-3 right-20 z-20 flex flex-col gap-1.5">
+        {burbujas.map((b) => (
+          <div
+            key={b.id}
+            className={`animate-burbuja-entrada flex w-fit max-w-full items-center gap-1.5 rounded-full bg-black/60 px-3 py-1.5 text-sm text-white transition-all duration-300 ${
+              b.saliendo ? "translate-y-2 opacity-0" : "translate-y-0 opacity-100"
+            }`}
+          >
+            <span className="font-semibold text-text-accent">{b.nombre}</span>
+            {b.esReaccion ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src="/corazon2.png" alt="" className="h-4 w-4 shrink-0" />
+            ) : (
+              <span className="truncate">{b.texto}</span>
+            )}
+          </div>
+        ))}
+      </div>
+
       {/* Zonas de tap sobre el media: mitad izquierda retrocede, derecha avanza.
           Si el toque activó la pausa (mantener presionado), soltar solo
           reanuda — no debe además navegar a la historia anterior/siguiente. */}
@@ -429,7 +496,7 @@ export function VisorHistorias({
 
       {/* El autor ve quién reaccionó (como Instagram); cualquier otro puede
           responder (mensaje directo real, mismo chat de siempre) y/o
-          reaccionar con el patín dorado. */}
+          reaccionar con el corazón. */}
       <div className="absolute bottom-6 left-0 right-0 z-20 px-4" data-no-swipe>
         {esAutor ? (
           <div className="flex justify-center">
@@ -438,7 +505,8 @@ export function VisorHistorias({
               onClick={() => setMostrarReacciones(true)}
               className="flex items-center gap-2 rounded-full bg-black/60 px-4 py-2 text-sm font-semibold text-white"
             >
-              <span>🛼</span>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/corazon2.png" alt="" className="h-4 w-4" />
               {reaccionesCount} · Ver quién reaccionó
             </button>
           </div>
@@ -460,25 +528,25 @@ export function VisorHistorias({
                   }}
                   placeholder="Enviar mensaje"
                   maxLength={300}
-                  disabled={enviandoMensaje}
                   className="h-11 flex-1 rounded-full border border-white/30 bg-black/40 px-4 text-sm text-white outline-none transition placeholder:text-white/50 focus:border-fill-primary focus:shadow-[0_0_12px_rgba(231,193,104,0.6)]"
                 />
               )}
               <button
                 type="button"
                 onClick={() => (mensaje.trim() ? enviarMensajeHistoria() : reaccionar())}
-                disabled={enviandoMensaje}
-                aria-label={mensaje.trim() ? "Enviar mensaje" : "Reaccionar con un patín"}
-                className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-black/60 text-2xl transition disabled:opacity-60 ${
-                  miReaccion || mensaje.trim()
-                    ? "drop-shadow-[0_0_10px_rgba(231,193,104,0.9)]"
-                    : "opacity-60 grayscale"
-                }`}
+                aria-label={mensaje.trim() ? "Enviar mensaje" : "Reaccionar con un corazón"}
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-black/60 transition disabled:opacity-60"
               >
-                🛼
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={miReaccion || mensaje.trim() ? "/corazon2.png" : "/corazon1.png"}
+                  alt=""
+                  className={`h-7 w-7 transition ${
+                    miReaccion || mensaje.trim() ? "drop-shadow-[0_0_8px_rgba(231,193,104,0.9)]" : ""
+                  }`}
+                />
               </button>
             </div>
-            {mensajeError && <p className="text-xs text-fill-warning">{mensajeError}</p>}
           </div>
         )}
       </div>

@@ -28,8 +28,10 @@ export function ListaReaccionesHistoria({
   return (
     <div className="absolute inset-0 z-30 flex flex-col bg-black/90" data-no-swipe>
       <div className="flex items-center justify-between p-3">
-        <h3 className="text-sm font-semibold text-white">
-          🛼 {reacciones?.length ?? 0} {reacciones?.length === 1 ? "reacción" : "reacciones"}
+        <h3 className="flex items-center gap-1.5 text-sm font-semibold text-white">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/corazon2.png" alt="" className="h-4 w-4" />
+          {reacciones?.length ?? 0} {reacciones?.length === 1 ? "reacción" : "reacciones"}
         </h3>
         <button type="button" onClick={onCerrar} aria-label="Cerrar" className="text-white">
           <IconX size={20} />

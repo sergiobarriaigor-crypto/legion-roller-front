@@ -227,3 +227,27 @@ body {
     animation: none;
   }
 }
+
+/* Mensajes flotantes en Historias: entrada sutil al aparecer una burbuja
+   (la salida es una transición normal disparada por la clase "saliendo" en
+   VisorHistorias.tsx, esto solo cubre el primer instante al montar). */
+@keyframes burbujaFlotanteEntrada {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.animate-burbuja-entrada {
+  animation: burbujaFlotanteEntrada 250ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-burbuja-entrada {
+    animation: none;
+  }
+}
