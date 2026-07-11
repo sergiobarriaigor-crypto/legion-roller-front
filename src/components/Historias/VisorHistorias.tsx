@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { IconX } from "@tabler/icons-react";
 import type { GrupoHistorias } from "@/lib/historias";
 import { marcarVistaHistoria, parsearEstiloTexto, toggleReaccionHistoria } from "@/lib/historias";
+import { apiPost, ApiError } from "@/lib/api";
+import { salaIndividual } from "@/lib/chat";
 import { useSession } from "@/context/SessionContext";
 import { Avatar } from "@/components/Avatar";
 import { estiloVisualTexto } from "@/components/Historias/TextoSobreImagen";
@@ -88,6 +90,10 @@ export function VisorHistorias({
   const [reaccionLocal, setReaccionLocal] = useState<{ count: number; mia: boolean } | null>(null);
   const [mostrarReacciones, setMostrarReacciones] = useState(false);
   const [pausado, setPausado] = useState(false);
+  const [mensaje, setMensaje] = useState("");
+  const [enviandoMensaje, setEnviandoMensaje] = useState(false);
+  const [mensajeEnviado, setMensajeEnviado] = useState(false);
+  const [mensajeError, setMensajeError] = useState("");
   const startYRef = useRef(0);
   const videoRef = useRef<HTMLVideoElement>(null);
   const holdTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -123,6 +129,9 @@ export function VisorHistorias({
     setReaccionLocal(null);
     setMostrarReacciones(false);
     setPausado(false);
+    setMensaje("");
+    setMensajeEnviado(false);
+    setMensajeError("");
   }, [historia?.id]);
 
   // Se marca como vista apenas se muestra, no solo al abrir el visor completo.
@@ -162,6 +171,30 @@ export function VisorHistorias({
       setReaccionLocal({ count: resultado.reaccionesCount, mia: resultado.miReaccion });
     } catch {
       setReaccionLocal(anterior);
+    }
+  }
+
+  // Responder a la historia envía un mensaje directo de verdad al autor
+  // (reusa el mismo chat/sala que ya existe) — se queda mostrando "Enviado"
+  // dentro de la historia, sin abrir el chat, igual que Instagram.
+  async function enviarMensajeHistoria() {
+    const texto = mensaje.trim();
+    if (!texto || !token || !sesion?.id || enviandoMensaje) return;
+    setEnviandoMensaje(true);
+    try {
+      const sala = salaIndividual(sesion.id, historia.autorId);
+      await apiPost(
+        `/chat/mensajes/${sala}`,
+        { texto, referenciaTipo: "historia", referenciaId: historia.id },
+        token,
+      );
+      setMensaje("");
+      setMensajeEnviado(true);
+      setTimeout(() => setMensajeEnviado(false), 2000);
+    } catch (err) {
+      setMensajeError(err instanceof ApiError ? err.message : "No se pudo enviar el mensaje.");
+    } finally {
+      setEnviandoMensaje(false);
     }
   }
 
@@ -386,29 +419,58 @@ export function VisorHistorias({
       />
 
       {/* El autor ve quién reaccionó (como Instagram); cualquier otro puede
+          responder (mensaje directo real, mismo chat de siempre) y/o
           reaccionar con el patín dorado. */}
-      <div className="absolute bottom-6 left-0 right-0 z-20 flex justify-center" data-no-swipe>
+      <div className="absolute bottom-6 left-0 right-0 z-20 px-4" data-no-swipe>
         {esAutor ? (
-          <button
-            type="button"
-            onClick={() => setMostrarReacciones(true)}
-            className="flex items-center gap-2 rounded-full bg-black/60 px-4 py-2 text-sm font-semibold text-white"
-          >
-            <span>🛼</span>
-            {reaccionesCount} · Ver quién reaccionó
-          </button>
+          <div className="flex justify-center">
+            <button
+              type="button"
+              onClick={() => setMostrarReacciones(true)}
+              className="flex items-center gap-2 rounded-full bg-black/60 px-4 py-2 text-sm font-semibold text-white"
+            >
+              <span>🛼</span>
+              {reaccionesCount} · Ver quién reaccionó
+            </button>
+          </div>
         ) : (
-          <button
-            type="button"
-            onClick={reaccionar}
-            aria-label="Reaccionar con un patín"
-            className={`flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition ${
-              miReaccion ? "bg-fill-primary text-on-primary" : "bg-black/60 text-white"
-            }`}
-          >
-            <span>🛼</span>
-            {reaccionesCount}
-          </button>
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-2">
+              {mensajeEnviado ? (
+                <div className="flex h-11 flex-1 items-center justify-center rounded-full border border-fill-primary/60 bg-black/60 text-sm text-fill-primary">
+                  Mensaje enviado ✓
+                </div>
+              ) : (
+                <input
+                  value={mensaje}
+                  onChange={(e) => setMensaje(e.target.value)}
+                  onFocus={() => setPausado(true)}
+                  onBlur={() => setPausado(false)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") enviarMensajeHistoria();
+                  }}
+                  placeholder="Enviar mensaje"
+                  maxLength={300}
+                  disabled={enviandoMensaje}
+                  className="h-11 flex-1 rounded-full border border-white/30 bg-black/40 px-4 text-sm text-white outline-none transition placeholder:text-white/50 focus:border-fill-primary focus:shadow-[0_0_12px_rgba(231,193,104,0.6)]"
+                />
+              )}
+              <button
+                type="button"
+                onClick={() => (mensaje.trim() ? enviarMensajeHistoria() : reaccionar())}
+                disabled={enviandoMensaje}
+                aria-label={mensaje.trim() ? "Enviar mensaje" : "Reaccionar con un patín"}
+                className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-black/60 text-2xl transition disabled:opacity-60 ${
+                  miReaccion || mensaje.trim()
+                    ? "drop-shadow-[0_0_10px_rgba(231,193,104,0.9)]"
+                    : "opacity-60 grayscale"
+                }`}
+              >
+                🛼
+              </button>
+            </div>
+            {mensajeError && <p className="text-xs text-fill-warning">{mensajeError}</p>}
+          </div>
         )}
       </div>
 
