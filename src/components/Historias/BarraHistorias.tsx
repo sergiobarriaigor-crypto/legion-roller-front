@@ -104,6 +104,10 @@ export function BarraHistorias() {
               >
                 <IconPlus size={12} />
               </button>
+              {/* Notificación liviana: alguien reaccionó con el patín y todavía no lo viste. */}
+              {misHistorias?.reaccionesSinLeer && (
+                <span className="absolute -top-1 -right-1 h-3.5 w-3.5 rounded-full border-2 border-page-bg bg-fill-primary" />
+              )}
             </Avatar>
           </div>
           <span className="max-w-[60px] truncate text-center text-[11px] text-text-secondary">

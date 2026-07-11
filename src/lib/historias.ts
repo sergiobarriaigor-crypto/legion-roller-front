@@ -11,6 +11,8 @@ export interface Historia {
   mencionadoNombre: string | null;
   mencionX: number | null;
   mencionY: number | null;
+  reaccionesCount: number;
+  miReaccion: boolean;
   createdAt: string;
 }
 
@@ -19,7 +21,15 @@ export interface GrupoHistorias {
   autorNombre: string;
   autorFotoUrl: string | null;
   vistoCompleto: boolean;
+  reaccionesSinLeer: boolean;
   historias: Historia[];
+}
+
+export interface ReaccionHistoriaDetalle {
+  miembroId: number;
+  nombre: string;
+  fotoUrl: string | null;
+  createdAt: string;
 }
 
 export interface CrearHistoriaInput {
@@ -77,4 +87,18 @@ export function marcarVistaHistoria(id: number, token: string | null) {
 
 export function eliminarHistoria(id: number, token: string | null) {
   return apiDelete<{ mensaje: string }>(`/historias/${id}`, token);
+}
+
+// El "patín dorado" de Legión Roller, en vez del corazón de Instagram.
+export function toggleReaccionHistoria(id: number, token: string | null) {
+  return apiPost<{ reaccionesCount: number; miReaccion: boolean }>(
+    `/historias/${id}/reaccion`,
+    {},
+    token,
+  );
+}
+
+// Solo el autor puede consultarla (el backend responde 403 si no lo es).
+export function listarReaccionesHistoria(id: number, token: string | null) {
+  return apiGet<ReaccionHistoriaDetalle[]>(`/historias/${id}/reacciones`, token);
 }

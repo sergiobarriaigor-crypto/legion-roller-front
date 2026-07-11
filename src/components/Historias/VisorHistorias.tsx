@@ -3,10 +3,12 @@
 import { useEffect, useRef, useState } from "react";
 import { IconX } from "@tabler/icons-react";
 import type { GrupoHistorias } from "@/lib/historias";
-import { marcarVistaHistoria, parsearEstiloTexto } from "@/lib/historias";
+import { marcarVistaHistoria, parsearEstiloTexto, toggleReaccionHistoria } from "@/lib/historias";
+import { useSession } from "@/context/SessionContext";
 import { Avatar } from "@/components/Avatar";
 import { estiloVisualTexto } from "@/components/Historias/TextoSobreImagen";
 import { estiloVisualMencion } from "@/components/Historias/MencionSobreImagen";
+import { ListaReaccionesHistoria } from "@/components/Historias/ListaReaccionesHistoria";
 
 const DURACION_FOTO_MS = 5000;
 const UMBRAL_SWIPE_CIERRE_PX = 80;
@@ -61,9 +63,12 @@ export function VisorHistorias({
   token: string | null;
   onClose: () => void;
 }) {
+  const { sesion } = useSession();
   const [indiceGrupo, setIndiceGrupo] = useState(indiceInicial);
   const [indiceHistoria, setIndiceHistoria] = useState(0);
   const [duracionVideoMs, setDuracionVideoMs] = useState<number | null>(null);
+  const [reaccionLocal, setReaccionLocal] = useState<{ count: number; mia: boolean } | null>(null);
+  const [mostrarReacciones, setMostrarReacciones] = useState(false);
   const startYRef = useRef(0);
 
   const grupo = grupos[indiceGrupo];
@@ -93,6 +98,8 @@ export function VisorHistorias({
 
   useEffect(() => {
     setDuracionVideoMs(null);
+    setReaccionLocal(null);
+    setMostrarReacciones(false);
   }, [historia?.id]);
 
   // Se marca como vista apenas se muestra, no solo al abrir el visor completo.
@@ -105,6 +112,24 @@ export function VisorHistorias({
   if (!grupo || !historia) return null;
 
   const duracionMs = historia.tipo === "foto" ? DURACION_FOTO_MS : (duracionVideoMs ?? 0);
+  const esAutor = sesion?.id === grupo.autorId;
+  const reaccionesCount = reaccionLocal?.count ?? historia.reaccionesCount;
+  const miReaccion = reaccionLocal?.mia ?? historia.miReaccion;
+
+  // El "patín dorado" de Legión Roller: actualización optimista (se ve al
+  // toque, sin esperar la respuesta) con reversión si falla la llamada.
+  async function reaccionar() {
+    if (!token) return;
+    const anterior = reaccionLocal;
+    const nuevaMia = !miReaccion;
+    setReaccionLocal({ count: reaccionesCount + (nuevaMia ? 1 : -1), mia: nuevaMia });
+    try {
+      const resultado = await toggleReaccionHistoria(historia.id, token);
+      setReaccionLocal({ count: resultado.reaccionesCount, mia: resultado.miReaccion });
+    } catch {
+      setReaccionLocal(anterior);
+    }
+  }
 
   return (
     <div
@@ -204,6 +229,41 @@ export function VisorHistorias({
         onClick={avanzar}
         className="absolute right-0 top-0 z-[5] h-full w-1/2"
       />
+
+      {/* El autor ve quién reaccionó (como Instagram); cualquier otro puede
+          reaccionar con el patín dorado. */}
+      <div className="absolute bottom-6 left-0 right-0 z-20 flex justify-center" data-no-swipe>
+        {esAutor ? (
+          <button
+            type="button"
+            onClick={() => setMostrarReacciones(true)}
+            className="flex items-center gap-2 rounded-full bg-black/60 px-4 py-2 text-sm font-semibold text-white"
+          >
+            <span>🛼</span>
+            {reaccionesCount} · Ver quién reaccionó
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={reaccionar}
+            aria-label="Reaccionar con un patín"
+            className={`flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition ${
+              miReaccion ? "bg-fill-primary text-on-primary" : "bg-black/60 text-white"
+            }`}
+          >
+            <span>🛼</span>
+            {reaccionesCount}
+          </button>
+        )}
+      </div>
+
+      {mostrarReacciones && (
+        <ListaReaccionesHistoria
+          historiaId={historia.id}
+          token={token}
+          onCerrar={() => setMostrarReacciones(false)}
+        />
+      )}
     </div>
   );
 }
