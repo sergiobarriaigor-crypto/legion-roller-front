@@ -328,27 +328,6 @@ export function EditorHistoria({
             {tipo === "foto" && (
               <FiltrosFoto previewUrl={previewUrl} filtroActual={filtro} onCambiar={setFiltro} />
             )}
-            {menciones.length > 0 && (
-              <div className="flex flex-col gap-1 rounded-app bg-black/60 px-3 py-2 text-sm text-white">
-                <span className="text-xs text-text-secondary">
-                  Mencionaste a {menciones.length}/{MAX_MENCIONES_POR_HISTORIA}:
-                </span>
-                {menciones.map((m) => (
-                  <div key={m.miembroId} className="flex items-center justify-between">
-                    <span>@{m.nombre}</span>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setMenciones((prev) => prev.filter((p) => p.miembroId !== m.miembroId))
-                      }
-                      className="text-fill-warning"
-                    >
-                      Quitar
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
             {estiloTexto && (
               <BarraTextoHistoria
                 estilo={estiloTexto}
