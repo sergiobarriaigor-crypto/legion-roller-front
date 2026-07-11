@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { IconX } from "@tabler/icons-react";
+import { IconX, IconMessageCircle, IconShare } from "@tabler/icons-react";
 import type { GrupoHistorias } from "@/lib/historias";
 import { marcarVistaHistoria, parsearEstiloTexto, toggleReaccionHistoria } from "@/lib/historias";
 import { obtenerSocket } from "@/lib/socket";
@@ -18,6 +18,10 @@ const UMBRAL_HOLD_MS = 200;
 const DURACION_BURBUJA_MS = 3000;
 const DURACION_SALIDA_BURBUJA_MS = 300;
 const MAX_BURBUJAS_VISIBLES = 4;
+// Zona segura reservada abajo para la barra flotante de acciones: la foto/
+// video se centra dentro de un área que ya descuenta este espacio (en vez de
+// ocupar los 100% del alto), así el contenido nunca queda tapado por la barra.
+const ALTURA_ZONA_SEGURA_PX = 110;
 
 interface BurbujaFlotante {
   id: string;
@@ -255,6 +259,40 @@ export function VisorHistorias({
     setTimeout(() => setMensajeEnviado(false), 2000);
   }
 
+  // Comparte la foto/video real (no un link) con el selector nativo del
+  // sistema — mismo patrón ya usado en CompartirRecorridoModal. Si el
+  // navegador no soporta compartir archivos (ej. escritorio), se descarga
+  // en su lugar para que el usuario la comparta a mano.
+  async function compartirHistoria() {
+    try {
+      const respuesta = await fetch(historia.mediaUrl);
+      const blob = await respuesta.blob();
+      const extension = historia.tipo === "video" ? "mp4" : "jpg";
+      const archivo = new File([blob], `historia-legion-roller.${extension}`, { type: blob.type });
+
+      if (
+        typeof navigator.share === "function" &&
+        typeof navigator.canShare === "function" &&
+        navigator.canShare({ files: [archivo] })
+      ) {
+        await navigator.share({
+          files: [archivo],
+          title: "Legión Roller",
+          text: historia.texto || "Mira esta historia en Legión Roller",
+        });
+        return;
+      }
+
+      const enlace = document.createElement("a");
+      enlace.href = URL.createObjectURL(blob);
+      enlace.download = `historia-legion-roller.${extension}`;
+      enlace.click();
+      URL.revokeObjectURL(enlace.href);
+    } catch {
+      // el usuario canceló el panel de compartir, o el navegador lo rechazó
+    }
+  }
+
   // Mantener presionado pausa la historia (barra de progreso + video real);
   // un toque rápido sigue avanzando/retrocediendo como siempre. Se distingue
   // con un pequeño umbral: si se soltó antes de que se activara la pausa, fue
@@ -325,7 +363,10 @@ export function VisorHistorias({
         </div>
       </div>
 
-      <div className="relative z-0 flex h-full w-full items-center justify-center">
+      <div
+        className="relative z-0 flex h-full w-full items-center justify-center"
+        style={{ paddingBottom: ALTURA_ZONA_SEGURA_PX }}
+      >
         {/* Historias republicadas ("Compartido por..."): en vez del clásico
             fondo difuminado, se arma un estilo propio — difuminado + marca de
             agua del logo al 7% + resplandor dorado detrás, tarjeta flotante
@@ -497,30 +538,41 @@ export function VisorHistorias({
         className="absolute right-0 top-0 z-[5] h-full w-1/2"
       />
 
-      {/* El autor ve quién reaccionó (como Instagram); cualquier otro puede
-          responder (mensaje directo real, mismo chat de siempre) y/o
+      {/* El autor ve un resumen en una sola barra (reacciones, comentarios,
+          compartir); cualquier otro puede responder (burbuja flotante) y/o
           reaccionar con el corazón. */}
-      <div className="absolute bottom-6 left-0 right-0 z-20 px-4" data-no-swipe>
+      <div className="absolute bottom-5 left-0 right-0 z-20 px-4" data-no-swipe>
         {esAutor ? (
-          <div className="flex justify-center gap-2">
-            <button
-              type="button"
-              onClick={() => setMostrarReacciones(true)}
-              className="flex items-center gap-2 rounded-full bg-black/60 px-4 py-2 text-sm font-semibold text-white"
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/corazon2.png" alt="" className="h-4 w-4" />
-              {reaccionesCount} · Ver quién reaccionó
-            </button>
-            {historia.comentariosCount > 0 && (
+          <div className="flex justify-center">
+            <div className="flex items-center gap-3 rounded-full bg-black/55 px-4 py-2.5">
+              <button
+                type="button"
+                onClick={() => setMostrarReacciones(true)}
+                className="flex items-center gap-1.5 text-sm font-semibold text-white"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src="/corazon2.png" alt="" className="h-4 w-4" />
+                {reaccionesCount}
+              </button>
+              <span className="h-4 w-px bg-white/25" aria-hidden />
               <button
                 type="button"
                 onClick={() => setMostrarComentarios(true)}
-                className="flex items-center gap-2 rounded-full bg-black/60 px-4 py-2 text-sm font-semibold text-white"
+                className="flex items-center gap-1.5 text-sm font-semibold text-white"
               >
-                {historia.comentariosCount} · Ver comentarios
+                <IconMessageCircle size={16} />
+                {historia.comentariosCount} comentarios
               </button>
-            )}
+              <span className="h-4 w-px bg-white/25" aria-hidden />
+              <button
+                type="button"
+                onClick={compartirHistoria}
+                className="flex items-center gap-1.5 text-sm font-semibold text-white"
+              >
+                <IconShare size={16} />
+                Compartir
+              </button>
+            </div>
           </div>
         ) : (
           <div className="flex flex-col gap-1">
