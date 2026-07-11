@@ -40,6 +40,13 @@ export function BarraHistorias() {
         .then((p) => setMiFotoUrl(p.fotoUrl))
         .catch(() => {});
     }
+    // Sondeo periódico (mismo patrón que la campana de menciones y el badge
+    // de chat sin leer): si el usuario acepta una mención desde la campana
+    // — un componente aparte, montado en el header — esta barra no se entera
+    // sola; sin esto, el anillo dorado de "Mi historia" quedaría desactualizado
+    // hasta recargar la página.
+    const intervalo = setInterval(cargar, 20000);
+    return () => clearInterval(intervalo);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
