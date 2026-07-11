@@ -34,6 +34,7 @@ export interface Historia {
   mencionSinVer: boolean;
   reaccionesCount: number;
   miReaccion: boolean;
+  comentariosCount: number;
   createdAt: string;
 }
 
@@ -50,6 +51,15 @@ export interface ReaccionHistoriaDetalle {
   miembroId: number;
   nombre: string;
   fotoUrl: string | null;
+  createdAt: string;
+}
+
+export interface ComentarioHistoriaDetalle {
+  id: number;
+  miembroId: number;
+  nombre: string;
+  fotoUrl: string | null;
+  texto: string;
   createdAt: string;
 }
 
@@ -127,6 +137,12 @@ export function toggleReaccionHistoria(id: number, token: string | null) {
 // Solo el autor puede consultarla (el backend responde 403 si no lo es).
 export function listarReaccionesHistoria(id: number, token: string | null) {
   return apiGet<ReaccionHistoriaDetalle[]>(`/historias/${id}/reacciones`, token);
+}
+
+// Los mensajes flotantes se guardan además de retransmitirse en vivo — solo
+// el autor puede revisarlos después (el backend responde 403 si no lo es).
+export function listarComentariosHistoria(id: number, token: string | null) {
+  return apiGet<ComentarioHistoriaDetalle[]>(`/historias/${id}/comentarios`, token);
 }
 
 // El mencionado decide si la historia también aparece bajo su propio avatar.

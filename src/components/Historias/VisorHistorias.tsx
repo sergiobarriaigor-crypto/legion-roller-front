@@ -10,6 +10,7 @@ import { Avatar } from "@/components/Avatar";
 import { estiloVisualTexto } from "@/components/Historias/TextoSobreImagen";
 import { estiloVisualMencion } from "@/components/Historias/MencionSobreImagen";
 import { ListaReaccionesHistoria } from "@/components/Historias/ListaReaccionesHistoria";
+import { ListaComentariosHistoria } from "@/components/Historias/ListaComentariosHistoria";
 
 const DURACION_FOTO_MS = 5000;
 const UMBRAL_SWIPE_CIERRE_PX = 80;
@@ -99,6 +100,7 @@ export function VisorHistorias({
   const [duracionVideoMs, setDuracionVideoMs] = useState<number | null>(null);
   const [reaccionLocal, setReaccionLocal] = useState<{ count: number; mia: boolean } | null>(null);
   const [mostrarReacciones, setMostrarReacciones] = useState(false);
+  const [mostrarComentarios, setMostrarComentarios] = useState(false);
   const [pausado, setPausado] = useState(false);
   // Aparte de `pausado` (gesto de mantener presionado): si no fueran estados
   // separados, soltar el dedo sobre el campo de texto para enfocarlo dispara
@@ -154,6 +156,7 @@ export function VisorHistorias({
     setDuracionVideoMs(null);
     setReaccionLocal(null);
     setMostrarReacciones(false);
+    setMostrarComentarios(false);
     setPausado(false);
     setEscribiendoMensaje(false);
     setMensaje("");
@@ -499,7 +502,7 @@ export function VisorHistorias({
           reaccionar con el corazón. */}
       <div className="absolute bottom-6 left-0 right-0 z-20 px-4" data-no-swipe>
         {esAutor ? (
-          <div className="flex justify-center">
+          <div className="flex justify-center gap-2">
             <button
               type="button"
               onClick={() => setMostrarReacciones(true)}
@@ -509,6 +512,15 @@ export function VisorHistorias({
               <img src="/corazon2.png" alt="" className="h-4 w-4" />
               {reaccionesCount} · Ver quién reaccionó
             </button>
+            {historia.comentariosCount > 0 && (
+              <button
+                type="button"
+                onClick={() => setMostrarComentarios(true)}
+                className="flex items-center gap-2 rounded-full bg-black/60 px-4 py-2 text-sm font-semibold text-white"
+              >
+                {historia.comentariosCount} · Ver comentarios
+              </button>
+            )}
           </div>
         ) : (
           <div className="flex flex-col gap-1">
@@ -556,6 +568,14 @@ export function VisorHistorias({
           historiaId={historia.id}
           token={token}
           onCerrar={() => setMostrarReacciones(false)}
+        />
+      )}
+
+      {mostrarComentarios && (
+        <ListaComentariosHistoria
+          historiaId={historia.id}
+          token={token}
+          onCerrar={() => setMostrarComentarios(false)}
         />
       )}
     </div>
