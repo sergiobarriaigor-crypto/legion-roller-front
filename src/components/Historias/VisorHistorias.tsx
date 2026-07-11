@@ -55,17 +55,19 @@ function SegmentoProgreso({
 export function VisorHistorias({
   grupos,
   indiceInicial,
+  indiceHistoriaInicial = 0,
   token,
   onClose,
 }: {
   grupos: GrupoHistorias[];
   indiceInicial: number;
+  indiceHistoriaInicial?: number;
   token: string | null;
   onClose: () => void;
 }) {
   const { sesion } = useSession();
   const [indiceGrupo, setIndiceGrupo] = useState(indiceInicial);
-  const [indiceHistoria, setIndiceHistoria] = useState(0);
+  const [indiceHistoria, setIndiceHistoria] = useState(indiceHistoriaInicial);
   const [duracionVideoMs, setDuracionVideoMs] = useState<number | null>(null);
   const [reaccionLocal, setReaccionLocal] = useState<{ count: number; mia: boolean } | null>(null);
   const [mostrarReacciones, setMostrarReacciones] = useState(false);

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { IconPlus } from "@tabler/icons-react";
+import { IconAt, IconPlus } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
 import { apiGet } from "@/lib/api";
 import { listarHistorias, type GrupoHistorias } from "@/lib/historias";
@@ -21,6 +21,7 @@ export function BarraHistorias() {
   const [miFotoUrl, setMiFotoUrl] = useState<string | null>(null);
   const [archivoElegido, setArchivoElegido] = useState<File | null>(null);
   const [indiceVisor, setIndiceVisor] = useState<number | null>(null);
+  const [indiceHistoriaVisor, setIndiceHistoriaVisor] = useState(0);
 
   async function cargar() {
     if (!token) return;
@@ -49,10 +50,20 @@ export function BarraHistorias() {
 
   function abrirMiHistoriaOEditor() {
     if (misHistorias) {
+      setIndiceHistoriaVisor(0);
       setIndiceVisor(grupos.indexOf(misHistorias));
     } else {
       inputRef.current?.click();
     }
+  }
+
+  // Si alguna historia del grupo te menciona y todavía no la viste, abre el
+  // visor directo ahí — acceso directo a la mención, no solo a la primera
+  // historia del autor.
+  function abrirGrupo(g: GrupoHistorias) {
+    const indiceMencion = g.historias.findIndex((h) => h.mencionSinVer);
+    setIndiceHistoriaVisor(indiceMencion !== -1 ? indiceMencion : 0);
+    setIndiceVisor(grupos.indexOf(g));
   }
 
   // El "+" abre directo la cámara/galería nativa del teléfono — el editor a
@@ -119,14 +130,21 @@ export function BarraHistorias() {
           <button
             key={g.autorId}
             type="button"
-            onClick={() => setIndiceVisor(grupos.indexOf(g))}
+            onClick={() => abrirGrupo(g)}
             className="flex flex-col items-center gap-1"
           >
             <Avatar
               fotoUrl={g.autorFotoUrl}
               nombre={g.autorNombre}
               anillo={g.vistoCompleto ? "ninguno" : "dorado"}
-            />
+            >
+              {/* Te mencionaron en una historia de esta persona y todavía no la viste. */}
+              {g.historias.some((h) => h.mencionSinVer) && (
+                <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full border-2 border-page-bg bg-text-accent text-on-primary">
+                  <IconAt size={10} />
+                </span>
+              )}
+            </Avatar>
             <span className="max-w-[60px] truncate text-center text-[11px] text-text-secondary">
               {g.autorNombre.split(" ")[0]}
             </span>
@@ -154,6 +172,7 @@ export function BarraHistorias() {
         <VisorHistorias
           grupos={grupos}
           indiceInicial={indiceVisor}
+          indiceHistoriaInicial={indiceHistoriaVisor}
           token={token}
           onClose={() => {
             setIndiceVisor(null);

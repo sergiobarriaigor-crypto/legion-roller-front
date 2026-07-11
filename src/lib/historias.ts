@@ -11,6 +11,7 @@ export interface Historia {
   mencionadoNombre: string | null;
   mencionX: number | null;
   mencionY: number | null;
+  mencionSinVer: boolean;
   reaccionesCount: number;
   miReaccion: boolean;
   createdAt: string;
