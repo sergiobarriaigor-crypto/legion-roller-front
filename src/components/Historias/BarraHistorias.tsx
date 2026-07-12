@@ -20,7 +20,12 @@ export function BarraHistorias() {
   const inputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
   const searchParams = useSearchParams();
-  const deepLinkManejadoRef = useRef(false);
+  // Guarda "historiaId:comentarioId" del último deep-link ya procesado (no
+  // solo un booleano de "primera vez"): si ya se estaba en /post y se toca
+  // otra notificación desde la campana, el `router.push` de AppHeader.tsx es
+  // navegación del lado del cliente — este componente sigue montado, así que
+  // hace falta reaccionar al cambio de `searchParams`, no solo al montar.
+  const ultimoDeepLinkRef = useRef<string | null>(null);
 
   const [grupos, setGrupos] = useState<GrupoHistorias[]>([]);
   const [miFotoUrl, setMiFotoUrl] = useState<string | null>(null);
@@ -42,18 +47,21 @@ export function BarraHistorias() {
     }
   }
 
-  // Deep-link desde la notificación de "te respondieron un comentario" (ver
+  // Deep-link desde la notificación de "te respondieron/comentaron" (ver
   // AppHeader.tsx): abre directo la historia con el panel de comentarios
-  // mostrando el hilo completo, resaltando esa respuesta.
+  // mostrando el hilo completo, resaltando ese comentario.
   async function cargarYManejarDeepLink() {
-    const lista = await cargar();
-    if (deepLinkManejadoRef.current || !lista) return;
     const historiaIdParam = searchParams.get("historia");
     if (!historiaIdParam) return;
-    deepLinkManejadoRef.current = true;
+    const comentarioIdParam = searchParams.get("comentario");
+    const clave = `${historiaIdParam}:${comentarioIdParam ?? ""}`;
+    if (ultimoDeepLinkRef.current === clave) return;
+    ultimoDeepLinkRef.current = clave;
+
+    const lista = await cargar();
+    if (!lista) return;
 
     const historiaId = Number(historiaIdParam);
-    const comentarioIdParam = searchParams.get("comentario");
     const indiceGrupo = lista.findIndex((g) => g.historias.some((h) => h.id === historiaId));
     if (indiceGrupo === -1) {
       setHistoriaNoDisponible(true);
@@ -66,8 +74,18 @@ export function BarraHistorias() {
     router.replace("/post", { scroll: false });
   }
 
+  // Aparte del efecto de carga normal: reacciona a `searchParams` para que
+  // funcione también cuando ya se estaba en /post y se toca otra notificación
+  // (navegación del lado del cliente, este componente no se remonta).
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     cargarYManejarDeepLink();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    cargar();
 
     if (token) {
       apiGet<{ fotoUrl: string | null }>("/perfil/mio", token)

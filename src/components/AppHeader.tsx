@@ -185,7 +185,8 @@ export function AppHeader() {
                     >
                       <Avatar fotoUrl={r.autorFotoUrl} nombre={r.autorNombre} tamano={32} />
                       <span className="flex-1">
-                        <strong>{r.autorNombre}</strong> respondió tu comentario: &ldquo;
+                        <strong>{r.autorNombre}</strong>{" "}
+                        {r.esRespuesta ? "respondió tu comentario" : "comentó tu historia"}: &ldquo;
                         {r.texto.length > 40 ? `${r.texto.slice(0, 40)}…` : r.texto}&rdquo;
                         <span className="block text-[11px] text-text-secondary">
                           {tiempoTranscurrido(r.createdAt)}

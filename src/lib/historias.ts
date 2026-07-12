@@ -64,7 +64,8 @@ export interface ComentarioHistoriaDetalle {
   createdAt: string;
 }
 
-// Notificación para la campana: alguien respondió uno de mis comentarios.
+// Notificación para la campana: alguien respondió uno de mis comentarios, o
+// dejó un comentario raíz en mi historia (misma metodología para ambos).
 export interface RespuestaSinLeer {
   id: number;
   historiaId: number;
@@ -72,6 +73,7 @@ export interface RespuestaSinLeer {
   autorFotoUrl: string | null;
   texto: string;
   createdAt: string;
+  esRespuesta: boolean;
 }
 
 export interface MencionInput {
