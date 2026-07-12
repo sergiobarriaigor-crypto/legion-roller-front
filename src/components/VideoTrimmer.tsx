@@ -19,6 +19,31 @@ function formatearTiempo(seg: number): string {
   return min > 0 ? `${min}:${resto.padStart(4, "0")}` : `${resto}s`;
 }
 
+// Espera a que termine un seek, con un timeout de respaldo: algunos videos
+// reales (codec no soportado por el navegador, archivo dañado) nunca disparan
+// "seeked" — sin este límite, el efecto se queda esperando para siempre.
+function buscarConLimite(video: HTMLVideoElement, tiempo: number, timeoutMs = 4000): Promise<boolean> {
+  return new Promise((resolve) => {
+    let resuelto = false;
+    function terminar(ok: boolean) {
+      if (resuelto) return;
+      resuelto = true;
+      video.removeEventListener("seeked", alBuscar);
+      clearTimeout(idTimeout);
+      resolve(ok);
+    }
+    function alBuscar() {
+      terminar(true);
+    }
+    video.addEventListener("seeked", alBuscar);
+    const idTimeout = setTimeout(() => terminar(false), timeoutMs);
+    video.currentTime = tiempo;
+  });
+}
+
+const MENSAJE_VIDEO_NO_COMPATIBLE =
+  "No se pudo leer este video (formato no compatible o archivo dañado). Probá con otro archivo, o recortalo en otra app antes de subirlo.";
+
 // Recorta un video en el navegador cuando supera la duración máxima permitida
 // (Historias: 30s, Post: 50s) — sin backend ni librerías nuevas. No hay forma
 // de "cortar" un archivo arbitrario sin re-codificarlo, así que se reproduce
@@ -39,7 +64,7 @@ export function VideoTrimmer({
   const trackRef = useRef<HTMLDivElement>(null);
   const arrastrandoRef = useRef<"inicio" | "fin" | null>(null);
 
-  const [urlArchivo] = useState(() => URL.createObjectURL(archivo));
+  const [urlArchivo, setUrlArchivo] = useState<string | null>(null);
   const [duracionTotal, setDuracionTotal] = useState(0);
   const [inicio, setInicio] = useState(0);
   const [fin, setFin] = useState(0);
@@ -48,11 +73,22 @@ export function VideoTrimmer({
   const [procesando, setProcesando] = useState(false);
   const [error, setError] = useState("");
   const [sinSoporte, setSinSoporte] = useState(false);
+  const [mensajeSinSoporte, setMensajeSinSoporte] = useState(
+    "Tu navegador no admite recortar video acá. Probá con Chrome o Edge, o recorta el video antes de subirlo.",
+  );
 
+  // La URL se crea y revoca dentro del mismo efecto (no en el useState inicial):
+  // en desarrollo, React StrictMode monta-desmonta-remonta los efectos una vez
+  // para detectar código no idempotente, y revocaría una URL creada afuera antes
+  // de que el <video> llegue a leerla — con archivos grandes, que tardan más en
+  // cargar, esto rompía la carga. Creándola acá, el remontaje genera una URL
+  // nueva en vez de dejar una revocada colgando del último `src` renderizado.
   useEffect(() => {
-    return () => URL.revokeObjectURL(urlArchivo);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    const url = URL.createObjectURL(archivo);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setUrlArchivo(url);
+    return () => URL.revokeObjectURL(url);
+  }, [archivo]);
 
   // Metadatos + tira de miniaturas (mismo patrón de canvas que aplicarFiltroABlob
   // en FiltrosFoto.tsx, aplicado a fotogramas del video en vez de una imagen).
@@ -61,6 +97,11 @@ export function VideoTrimmer({
     if (!video) return;
 
     if (typeof (video as VideoConCaptureStream).captureStream !== "function") {
+      setSinSoporte(true);
+    }
+
+    function marcarNoCompatible() {
+      setMensajeSinSoporte(MENSAJE_VIDEO_NO_COMPATIBLE);
       setSinSoporte(true);
     }
 
@@ -75,14 +116,11 @@ export function VideoTrimmer({
       const resultado: string[] = [];
       for (let i = 0; i < CANTIDAD_MINIATURAS; i++) {
         const t = (duracion * i) / CANTIDAD_MINIATURAS;
-        await new Promise<void>((resolve) => {
-          const alBuscar = () => {
-            video.removeEventListener("seeked", alBuscar);
-            resolve();
-          };
-          video.addEventListener("seeked", alBuscar);
-          video.currentTime = t;
-        });
+        const ok = await buscarConLimite(video, t);
+        if (!ok) {
+          marcarNoCompatible();
+          return;
+        }
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         resultado.push(canvas.toDataURL("image/jpeg", 0.6));
       }
@@ -92,13 +130,21 @@ export function VideoTrimmer({
 
     function alCargarMetadatos() {
       if (!video) return;
+      if (!Number.isFinite(video.duration) || video.duration <= 0) {
+        marcarNoCompatible();
+        return;
+      }
       setDuracionTotal(video.duration);
       setFin(Math.min(duracionMaxima, video.duration));
       generarMiniaturas(video.duration);
     }
 
     video.addEventListener("loadedmetadata", alCargarMetadatos);
-    return () => video.removeEventListener("loadedmetadata", alCargarMetadatos);
+    video.addEventListener("error", marcarNoCompatible);
+    return () => {
+      video.removeEventListener("loadedmetadata", alCargarMetadatos);
+      video.removeEventListener("error", marcarNoCompatible);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -165,14 +211,8 @@ export function VideoTrimmer({
     setProcesando(true);
     try {
       const el = video as VideoConCaptureStream;
-      el.currentTime = inicio;
-      await new Promise<void>((resolve) => {
-        const alBuscar = () => {
-          el.removeEventListener("seeked", alBuscar);
-          resolve();
-        };
-        el.addEventListener("seeked", alBuscar);
-      });
+      const pudoBuscar = await buscarConLimite(el, inicio);
+      if (!pudoBuscar) throw new Error("timeout al buscar el inicio del recorte");
 
       const stream = el.captureStream();
       const candidatos = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
@@ -248,7 +288,7 @@ export function VideoTrimmer({
       <div className="flex flex-1 items-center justify-center p-4">
         <video
           ref={videoRef}
-          src={urlArchivo}
+          src={urlArchivo ?? undefined}
           onTimeUpdate={alReproducir}
           playsInline
           className="max-h-full max-w-full rounded-app"
@@ -256,9 +296,15 @@ export function VideoTrimmer({
       </div>
 
       {sinSoporte ? (
-        <div className="p-4 text-center text-sm text-white/70">
-          Tu navegador no admite recortar video acá. Probá con Chrome o Edge, o recorta el video antes
-          de subirlo.
+        <div className="flex flex-col gap-3 p-4">
+          <p className="text-center text-sm text-white/70">{mensajeSinSoporte}</p>
+          <button
+            type="button"
+            onClick={onCancelar}
+            className="rounded-app border border-white/30 px-4 py-2 text-sm text-white"
+          >
+            Cancelar
+          </button>
         </div>
       ) : (
         <div className="flex flex-col gap-3 p-4">
