@@ -623,6 +623,19 @@ export function VisorHistorias({
                   className="h-11 flex-1 rounded-full border border-white/30 bg-black/40 px-4 text-sm text-white outline-none transition placeholder:text-white/50 focus:border-fill-primary focus:shadow-[0_0_12px_rgba(231,193,104,0.6)]"
                 />
               )}
+              {/* Botón de enviar independiente: antes reemplazaba al corazón
+                  al escribir, lo que resultaba poco intuitivo. Ahora es un
+                  botón propio, deshabilitado si no hay texto; el corazón
+                  siempre queda visible y siempre reacciona. */}
+              <button
+                type="button"
+                onClick={enviarMensajeHistoria}
+                disabled={!mensaje.trim()}
+                aria-label="Enviar mensaje"
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-black/60 text-lg font-semibold text-fill-primary transition disabled:opacity-40"
+              >
+                <span className={mensaje.trim() ? "drop-shadow-[0_0_8px_rgba(231,193,104,0.9)]" : ""}>➤</span>
+              </button>
               {/* Cualquiera puede abrir el hilo de comentarios (visible para
                   todos, estilo TikTok) — antes solo el autor tenía este botón. */}
               <button
@@ -643,30 +656,19 @@ export function VisorHistorias({
                   </span>
                 )}
               </button>
-              {mensaje.trim() ? (
-                <button
-                  type="button"
-                  onClick={enviarMensajeHistoria}
-                  aria-label="Enviar mensaje"
-                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-black/60 text-lg font-semibold text-fill-primary transition"
-                >
-                  ➤
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={reaccionar}
-                  aria-label="Reaccionar con un corazón"
-                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-black/60 transition"
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={miReaccion ? "/corazon2.png" : "/corazon1.png"}
-                    alt=""
-                    className={`h-7 w-7 transition ${miReaccion ? "drop-shadow-[0_0_8px_rgba(231,193,104,0.9)]" : ""}`}
-                  />
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={reaccionar}
+                aria-label="Reaccionar con un corazón"
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-black/60 transition"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={miReaccion ? "/corazon2.png" : "/corazon1.png"}
+                  alt=""
+                  className={`h-7 w-7 transition ${miReaccion ? "drop-shadow-[0_0_8px_rgba(231,193,104,0.9)]" : ""}`}
+                />
+              </button>
             </div>
           </div>
         )}
