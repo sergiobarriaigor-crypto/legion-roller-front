@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { IconX, IconMessageCircle, IconShare } from "@tabler/icons-react";
+import { IconX, IconShare } from "@tabler/icons-react";
 import type { GrupoHistorias } from "@/lib/historias";
 import { marcarVistaHistoria, parsearEstiloTexto, toggleReaccionHistoria } from "@/lib/historias";
 import { obtenerSocket } from "@/lib/socket";
@@ -583,7 +583,12 @@ export function VisorHistorias({
                 onClick={() => setPanelSocial("comentarios")}
                 className="flex items-center gap-1.5 text-sm font-semibold text-white"
               >
-                <IconMessageCircle size={16} />
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src="/habla.png"
+                  alt=""
+                  className="h-4 w-4 drop-shadow-[0_0_6px_rgba(231,193,104,0.8)]"
+                />
                 {historia.comentariosCount} comentarios
               </button>
               <span className="h-4 w-px bg-white/25" aria-hidden />
@@ -624,9 +629,14 @@ export function VisorHistorias({
                 type="button"
                 onClick={() => setPanelSocial("comentarios")}
                 aria-label="Ver comentarios"
-                className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-black/60 text-white transition"
+                className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-black/60 transition"
               >
-                <IconMessageCircle size={20} />
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src="/habla.png"
+                  alt=""
+                  className="h-7 w-7 drop-shadow-[0_0_8px_rgba(231,193,104,0.9)]"
+                />
                 {historia.comentariosCount > 0 && (
                   <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-fill-primary px-1 text-[10px] text-on-primary">
                     {historia.comentariosCount}
