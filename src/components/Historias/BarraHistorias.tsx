@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { IconAt, IconPlus } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
 import { apiGet } from "@/lib/api";
@@ -8,6 +9,7 @@ import { listarHistorias, type GrupoHistorias } from "@/lib/historias";
 import { Avatar } from "@/components/Avatar";
 import { EditorHistoria } from "@/components/Historias/EditorHistoria";
 import { VisorHistorias } from "@/components/Historias/VisorHistorias";
+import { Toast } from "@/components/Toast";
 
 // Barra horizontal de historias arriba del feed de Post, estilo Instagram.
 // Oculta por completo para Visitante (sin token, no hay forma de calcular
@@ -16,25 +18,57 @@ export function BarraHistorias() {
   const { sesion } = useSession();
   const token = sesion?.token ?? null;
   const inputRef = useRef<HTMLInputElement>(null);
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const deepLinkManejadoRef = useRef(false);
 
   const [grupos, setGrupos] = useState<GrupoHistorias[]>([]);
   const [miFotoUrl, setMiFotoUrl] = useState<string | null>(null);
   const [archivoElegido, setArchivoElegido] = useState<File | null>(null);
   const [indiceVisor, setIndiceVisor] = useState<number | null>(null);
   const [indiceHistoriaVisor, setIndiceHistoriaVisor] = useState(0);
+  const [comentarioDestacadoVisor, setComentarioDestacadoVisor] = useState<number | undefined>(undefined);
+  const [historiaNoDisponible, setHistoriaNoDisponible] = useState(false);
 
   async function cargar() {
-    if (!token) return;
+    if (!token) return null;
     try {
       const lista = await listarHistorias(token);
       setGrupos(lista);
+      return lista;
     } catch {
       // silencioso: si falla, la barra simplemente no muestra historias de otros
+      return null;
     }
   }
 
+  // Deep-link desde la notificación de "te respondieron un comentario" (ver
+  // AppHeader.tsx): abre directo la historia con el panel de comentarios
+  // mostrando el hilo completo, resaltando esa respuesta.
+  async function cargarYManejarDeepLink() {
+    const lista = await cargar();
+    if (deepLinkManejadoRef.current || !lista) return;
+    const historiaIdParam = searchParams.get("historia");
+    if (!historiaIdParam) return;
+    deepLinkManejadoRef.current = true;
+
+    const historiaId = Number(historiaIdParam);
+    const comentarioIdParam = searchParams.get("comentario");
+    const indiceGrupo = lista.findIndex((g) => g.historias.some((h) => h.id === historiaId));
+    if (indiceGrupo === -1) {
+      setHistoriaNoDisponible(true);
+    } else {
+      const indiceHistoria = lista[indiceGrupo].historias.findIndex((h) => h.id === historiaId);
+      setIndiceHistoriaVisor(indiceHistoria);
+      setComentarioDestacadoVisor(comentarioIdParam ? Number(comentarioIdParam) : undefined);
+      setIndiceVisor(indiceGrupo);
+    }
+    router.replace("/post", { scroll: false });
+  }
+
   useEffect(() => {
-    cargar();
+    cargarYManejarDeepLink();
+
     if (token) {
       apiGet<{ fotoUrl: string | null }>("/perfil/mio", token)
         .then((p) => setMiFotoUrl(p.fotoUrl))
@@ -180,11 +214,21 @@ export function BarraHistorias() {
           grupos={grupos}
           indiceInicial={indiceVisor}
           indiceHistoriaInicial={indiceHistoriaVisor}
+          comentarioDestacadoInicial={comentarioDestacadoVisor}
           token={token}
           onClose={() => {
             setIndiceVisor(null);
+            setComentarioDestacadoVisor(undefined);
             cargar();
           }}
+        />
+      )}
+
+      {historiaNoDisponible && (
+        <Toast
+          mensaje="Esa historia ya no está disponible (venció o fue eliminada)."
+          onDismiss={() => setHistoriaNoDisponible(false)}
+          duracionMs={3500}
         />
       )}
     </>

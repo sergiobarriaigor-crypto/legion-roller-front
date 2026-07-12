@@ -87,13 +87,14 @@ export function AppHeader() {
     return () => clearInterval(intervalo);
   }, [token, sesion?.rol]);
 
-  // Al tocar la notificación: se marca leída y se lleva a Post, donde vive la
-  // barra de Historias — no se reabre la historia/panel exactos todavía.
+  // Al tocar la notificación: se marca leída y se abre directo la historia
+  // (BarraHistorias.tsx lee estos parámetros y muestra el panel de
+  // comentarios con el hilo, resaltando esta respuesta).
   function irARespuesta(r: RespuestaSinLeer) {
     setMostrarLista(false);
     setRespuestasSinLeer((prev) => prev.filter((x) => x.id !== r.id));
     if (token) marcarRespuestaLeida(r.id, token).catch(() => {});
-    router.push("/post");
+    router.push(`/post?historia=${r.historiaId}&comentario=${r.id}`);
   }
 
   async function responderMencion(aceptar: boolean) {

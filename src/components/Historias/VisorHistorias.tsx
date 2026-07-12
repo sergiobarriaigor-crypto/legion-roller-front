@@ -88,12 +88,17 @@ export function VisorHistorias({
   grupos,
   indiceInicial,
   indiceHistoriaInicial = 0,
+  comentarioDestacadoInicial,
   token,
   onClose,
 }: {
   grupos: GrupoHistorias[];
   indiceInicial: number;
   indiceHistoriaInicial?: number;
+  // Deep-link desde la notificación de "te respondieron un comentario": abre
+  // directo con el panel de comentarios mostrando el hilo, resaltando la
+  // respuesta que originó la notificación.
+  comentarioDestacadoInicial?: number;
   token: string | null;
   onClose: () => void;
 }) {
@@ -102,7 +107,10 @@ export function VisorHistorias({
   const [indiceHistoria, setIndiceHistoria] = useState(indiceHistoriaInicial);
   const [duracionVideoMs, setDuracionVideoMs] = useState<number | null>(null);
   const [reaccionLocal, setReaccionLocal] = useState<{ count: number; mia: boolean } | null>(null);
-  const [panelSocial, setPanelSocial] = useState<"reacciones" | "comentarios" | null>(null);
+  const [panelSocial, setPanelSocial] = useState<"reacciones" | "comentarios" | null>(
+    comentarioDestacadoInicial ? "comentarios" : null,
+  );
+  const [comentarioDestacado, setComentarioDestacado] = useState(comentarioDestacadoInicial ?? null);
   const [pausado, setPausado] = useState(false);
   // Aparte de `pausado` (gesto de mantener presionado): si no fueran estados
   // separados, soltar el dedo sobre el campo de texto para enfocarlo dispara
@@ -117,6 +125,7 @@ export function VisorHistorias({
   const holdTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const holdActivadoRef = useRef(false);
   const socketRef = useRef<ReturnType<typeof obtenerSocket> | null>(null);
+  const primeraCargaRef = useRef(true);
 
   function agregarBurbuja(nombre: string, texto: string, esReaccion: boolean) {
     const id = `${Date.now()}-${Math.random()}`;
@@ -155,9 +164,18 @@ export function VisorHistorias({
   }
 
   useEffect(() => {
+    // La primera vez que se monta, `panelSocial`/`comentarioDestacado` ya
+    // vienen inicializados desde el deep-link (ver `comentarioDestacadoInicial`)
+    // — este efecto solo debe limpiar esos estados al CAMBIAR de historia
+    // después, no pisar el valor inicial apenas se abre el visor.
+    if (primeraCargaRef.current) {
+      primeraCargaRef.current = false;
+      return;
+    }
     setDuracionVideoMs(null);
     setReaccionLocal(null);
     setPanelSocial(null);
+    setComentarioDestacado(null);
     setPausado(false);
     setEscribiendoMensaje(false);
     setMensaje("");
@@ -634,8 +652,12 @@ export function VisorHistorias({
           historiaId={historia.id}
           historiaAutorId={historia.autorId}
           vistaInicial={panelSocial}
+          comentarioDestacadoId={comentarioDestacado}
           token={token}
-          onCerrar={() => setPanelSocial(null)}
+          onCerrar={() => {
+            setPanelSocial(null);
+            setComentarioDestacado(null);
+          }}
         />
       )}
       </div>

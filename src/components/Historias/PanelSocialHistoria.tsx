@@ -25,12 +25,16 @@ export function PanelSocialHistoria({
   historiaId,
   historiaAutorId,
   vistaInicial,
+  comentarioDestacadoId,
   token,
   onCerrar,
 }: {
   historiaId: number;
   historiaAutorId: number;
   vistaInicial: Vista;
+  // Deep-link desde la notificación de "te respondieron un comentario": una
+  // vez que el hilo carga, se hace scroll hasta acá y se resalta un momento.
+  comentarioDestacadoId?: number | null;
   token: string | null;
   onCerrar: () => void;
 }) {
@@ -49,6 +53,14 @@ export function PanelSocialHistoria({
       .then(setComentarios)
       .catch(() => setComentarios([]));
   }, [historiaId, token]);
+
+  // Apenas carga el hilo, se hace scroll hasta la respuesta que originó la
+  // notificación (el resaltado en sí lo hace la clase condicional en <Fila>).
+  useEffect(() => {
+    if (!comentarioDestacadoId || !comentarios) return;
+    document.getElementById(`comentario-${comentarioDestacadoId}`)?.scrollIntoView({ block: "center" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [comentarios !== null, comentarioDestacadoId]);
 
   // Mientras el panel está abierto, un comentario nuevo (propio o de otro
   // viendo la misma historia) se agrega solo, sin tener que cerrar y volver
@@ -99,8 +111,14 @@ export function PanelSocialHistoria({
   }
 
   function Fila({ c, esRespuesta }: { c: ComentarioHistoriaDetalle; esRespuesta?: boolean }) {
+    const destacado = c.id === comentarioDestacadoId;
     return (
-      <div className={`flex items-start gap-3 px-3 py-2 ${esRespuesta ? "ml-9 mt-1" : ""}`}>
+      <div
+        id={`comentario-${c.id}`}
+        className={`flex items-start gap-3 rounded-xl px-3 py-2 transition-colors ${esRespuesta ? "ml-9 mt-1" : ""} ${
+          destacado ? "bg-fill-primary/15 ring-1 ring-fill-primary/50" : ""
+        }`}
+      >
         <Avatar fotoUrl={c.fotoUrl} nombre={c.nombre} tamano={esRespuesta ? 26 : 32} />
         <div className="flex flex-1 flex-col">
           <div className="flex items-baseline gap-2">
