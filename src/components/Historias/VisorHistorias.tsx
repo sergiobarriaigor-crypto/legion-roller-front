@@ -634,7 +634,7 @@ export function VisorHistorias({
                 aria-label="Enviar mensaje"
                 className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-black/60 text-lg font-semibold text-fill-primary transition disabled:opacity-40"
               >
-                <span className={mensaje.trim() ? "drop-shadow-[0_0_8px_rgba(231,193,104,0.9)]" : ""}>➤</span>
+                <span className="drop-shadow-[0_0_8px_rgba(231,193,104,0.9)]">➤</span>
               </button>
               {/* Cualquiera puede abrir el hilo de comentarios (visible para
                   todos, estilo TikTok) — antes solo el autor tenía este botón. */}
@@ -666,7 +666,7 @@ export function VisorHistorias({
                 <img
                   src={miReaccion ? "/corazon2.png" : "/corazon1.png"}
                   alt=""
-                  className={`h-7 w-7 transition ${miReaccion ? "drop-shadow-[0_0_8px_rgba(231,193,104,0.9)]" : ""}`}
+                  className="h-7 w-7 transition drop-shadow-[0_0_8px_rgba(231,193,104,0.9)]"
                 />
               </button>
             </div>
