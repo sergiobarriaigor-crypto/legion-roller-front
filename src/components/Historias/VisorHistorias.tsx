@@ -632,7 +632,7 @@ export function VisorHistorias({
                 onClick={enviarMensajeHistoria}
                 disabled={!mensaje.trim()}
                 aria-label="Enviar mensaje"
-                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-black/60 text-lg font-semibold text-fill-primary transition disabled:opacity-40"
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-black/60 text-2xl font-semibold text-fill-primary transition disabled:opacity-40"
               >
                 <span className="drop-shadow-[0_0_8px_rgba(231,193,104,0.9)]">➤</span>
               </button>
