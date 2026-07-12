@@ -5,8 +5,8 @@ import { IconMapPin, IconShare, IconVideo } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
 import { apiGet, apiPost, apiDelete, apiUpload, ApiError } from "@/lib/api";
 import type { Post } from "@/lib/posts";
-import { sectorMasCercano } from "@/lib/sectores";
 import { CarruselFotos } from "@/components/Posts/CarruselFotos";
+import { SelectorUbicacion } from "@/components/Posts/SelectorUbicacion";
 import { Avatar } from "@/components/Avatar";
 import { BarraHistorias } from "@/components/Historias/BarraHistorias";
 
@@ -83,6 +83,7 @@ export default function PostPage() {
   const [titulo, setTitulo] = useState("");
   const [resena, setResena] = useState("");
   const [ubicacion, setUbicacion] = useState<string | undefined>(undefined);
+  const [mostrarSelectorUbicacion, setMostrarSelectorUbicacion] = useState(false);
   const [tipoMedia, setTipoMedia] = useState<"foto" | "video" | null>(null);
   const [fotos, setFotos] = useState<string[]>([]);
   const [videoUrl, setVideoUrl] = useState("");
@@ -116,19 +117,14 @@ export default function PostPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  // Ubicación opcional: se autodetecta una vez al abrir el compositor (mismo
-  // patrón ya usado en el editor de Historias) — sin geocoding externo, solo
-  // el sector conocido más cercano. El usuario puede quitarla antes de publicar.
-  useEffect(() => {
-    if (!mostrarCompose || !navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(
-      (pos) => setUbicacion(sectorMasCercano(pos.coords.latitude, pos.coords.longitude)),
-      () => {
-        // sin permiso o sin GPS: simplemente no se sugiere ubicación
-      },
-      { timeout: 5000 },
-    );
-  }, [mostrarCompose]);
+  // Ubicación completamente opcional y a pedido: solo se detecta/muestra si
+  // el usuario toca "Agregar ubicación" — nunca en silencio al abrir el
+  // compositor. El selector (estilo Instagram) ofrece lugares cercanos +
+  // búsqueda manual; acá solo se guarda el nombre elegido, nunca coordenadas.
+  function elegirUbicacion(nombre: string) {
+    setUbicacion(nombre);
+    setMostrarSelectorUbicacion(false);
+  }
 
   function limpiarCompose() {
     setTitulo("");
@@ -311,18 +307,34 @@ export default function PostPage() {
                 className="rounded-app border border-border bg-surface-2 px-3 py-2 text-text-primary outline-none"
               />
 
-              {ubicacion && (
+              {ubicacion ? (
                 <div className="flex w-fit items-center gap-1 rounded-full bg-surface-2 px-3 py-1 text-xs text-text-secondary">
                   <IconMapPin size={14} />
                   {ubicacion}
                   <button
                     type="button"
+                    onClick={() => setMostrarSelectorUbicacion(true)}
+                    className="ml-1 underline"
+                  >
+                    Cambiar
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setUbicacion(undefined)}
-                    className="ml-1 text-fill-warning underline"
+                    className="text-fill-warning underline"
                   >
                     Quitar
                   </button>
                 </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setMostrarSelectorUbicacion(true)}
+                  className="flex w-fit items-center gap-1 rounded-full border border-border px-3 py-1 text-xs text-text-secondary"
+                >
+                  <IconMapPin size={14} />
+                  Agregar ubicación
+                </button>
               )}
 
               {tipoMedia === "video" ? (
@@ -426,6 +438,13 @@ export default function PostPage() {
             </form>
           )}
         </div>
+      )}
+
+      {mostrarSelectorUbicacion && (
+        <SelectorUbicacion
+          onSeleccionar={elegirUbicacion}
+          onCerrar={() => setMostrarSelectorUbicacion(false)}
+        />
       )}
 
       {error && <p className="text-xs text-fill-warning">{error}</p>}
