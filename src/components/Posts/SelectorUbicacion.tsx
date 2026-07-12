@@ -18,16 +18,36 @@ export function SelectorUbicacion({
 }) {
   const [busqueda, setBusqueda] = useState("");
   const [cercanos, setCercanos] = useState<SectorConDistancia[] | null>(null);
+  const [errorGps, setErrorGps] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!navigator.geolocation) return;
+  function detectarUbicacion() {
+    if (!navigator.geolocation) {
+      setErrorGps("Este navegador no admite geolocalización.");
+      return;
+    }
+    setErrorGps(null);
+    setCercanos(null);
     navigator.geolocation.getCurrentPosition(
       (pos) => setCercanos(sectoresPorCercania(pos.coords.latitude, pos.coords.longitude)),
-      () => {
-        // sin permiso o sin GPS: se puede seguir buscando manualmente
+      (err) => {
+        // Los tres códigos posibles del navegador (permiso negado, posición no
+        // disponible, tiempo agotado) — se explican para que el usuario sepa
+        // qué revisar, en vez de quedar viendo "Buscando..." sin explicación.
+        if (err.code === err.PERMISSION_DENIED) {
+          setErrorGps(
+            "No autorizaste el acceso a tu ubicación. Revisa los permisos de ubicación del navegador o busca el lugar manualmente.",
+          );
+        } else {
+          setErrorGps("No se pudo detectar tu ubicación (sin señal de GPS). Podés buscar el lugar manualmente.");
+        }
       },
-      { timeout: 5000 },
+      { timeout: 8000, enableHighAccuracy: true },
     );
+  }
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    detectarUbicacion();
   }, []);
 
   const lista = busqueda.trim()
@@ -60,8 +80,20 @@ export function SelectorUbicacion({
         </div>
 
         <div className="flex-1 overflow-y-auto px-2 pb-3">
-          {!busqueda && cercanos === null && (
-            <p className="px-2 py-3 text-center text-xs text-text-secondary">Buscando lugares cercanos...</p>
+          {!busqueda && cercanos === null && !errorGps && (
+            <p className="px-2 py-3 text-center text-xs text-text-secondary">Detectando tu ubicación...</p>
+          )}
+          {!busqueda && errorGps && (
+            <div className="flex flex-col items-center gap-2 px-3 py-3 text-center">
+              <p className="text-xs text-text-secondary">{errorGps}</p>
+              <button
+                type="button"
+                onClick={detectarUbicacion}
+                className="text-xs font-semibold text-text-accent underline"
+              >
+                Reintentar
+              </button>
+            </div>
           )}
           {lista.length === 0 && (busqueda || cercanos !== null) && (
             <p className="px-2 py-3 text-center text-xs text-text-secondary">Sin resultados.</p>
