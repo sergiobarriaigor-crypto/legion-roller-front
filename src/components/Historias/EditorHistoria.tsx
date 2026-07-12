@@ -16,6 +16,7 @@ import { BarraTextoHistoria } from "@/components/Historias/BarraTextoHistoria";
 import { FILTROS_FOTO, FiltrosFoto, aplicarFiltroABlob, type FiltroFoto } from "@/components/Historias/FiltrosFoto";
 import { MencionSobreImagen } from "@/components/Historias/MencionSobreImagen";
 import { SelectorMencion } from "@/components/Historias/SelectorMencion";
+import { VideoTrimmer } from "@/components/VideoTrimmer";
 
 const DURACION_MAXIMA_VIDEO_SEG = 30;
 
@@ -61,6 +62,8 @@ export function EditorHistoria({
   const [error, setError] = useState("");
   const [publicando, setPublicando] = useState(false);
   const [publicado, setPublicado] = useState(false);
+  const [mostrarRecorte, setMostrarRecorte] = useState(false);
+  const [videoRecortadoBlob, setVideoRecortadoBlob] = useState<Blob | null>(null);
 
   // Ubicación opcional: se autodetecta una vez al abrir el editor (mismo patrón
   // ya usado en "Patinadores activos"/"Mis rutas" — sin geocoding externo, solo
@@ -78,6 +81,7 @@ export function EditorHistoria({
 
   // Valida (duración de video) y prepara la vista previa del archivo recibido.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setError("");
     setFiltro(FILTROS_FOTO[0]);
     setMenciones([]);
@@ -90,13 +94,14 @@ export function EditorHistoria({
       return () => URL.revokeObjectURL(url);
     }
 
-    // Video: se valida la duración en el cliente ANTES de subir, para no gastar
-    // ancho de banda subiendo algo que de todas formas se va a rechazar.
+    // Video: se valida la duración en el cliente ANTES de subir. Si supera el
+    // máximo, en vez de rechazarlo se abre el editor de recorte (VideoTrimmer)
+    // para que el usuario elija el fragmento a publicar, sin salir de la app.
     const video = document.createElement("video");
     video.preload = "metadata";
     video.onloadedmetadata = () => {
       if (video.duration > DURACION_MAXIMA_VIDEO_SEG) {
-        setError(`El video no puede durar más de ${DURACION_MAXIMA_VIDEO_SEG} segundos.`);
+        setMostrarRecorte(true);
         return;
       }
       setPreviewUrl(url);
@@ -129,15 +134,15 @@ export function EditorHistoria({
     setError("");
     try {
       const archivoASubir: Blob =
-        tipo === "foto" && filtro.css !== "none" && previewUrl
-          ? await aplicarFiltroABlob(previewUrl, filtro.css)
-          : archivoInicial;
-      const subida = await apiUpload<{ url: string }>(
-        "/uploads",
-        archivoASubir,
-        token,
-        archivoInicial.name,
-      );
+        tipo === "video" && videoRecortadoBlob
+          ? videoRecortadoBlob
+          : tipo === "foto" && filtro.css !== "none" && previewUrl
+            ? await aplicarFiltroABlob(previewUrl, filtro.css)
+            : archivoInicial;
+      const nombreArchivo = videoRecortadoBlob && archivoASubir === videoRecortadoBlob
+        ? "recorte.webm"
+        : archivoInicial.name;
+      const subida = await apiUpload<{ url: string }>("/uploads", archivoASubir, token, nombreArchivo);
       await crearHistoria(
         {
           tipo,
@@ -347,6 +352,20 @@ export function EditorHistoria({
             </button>
           </div>
         </div>
+      )}
+
+      {mostrarRecorte && (
+        <VideoTrimmer
+          archivo={archivoInicial}
+          duracionMaxima={DURACION_MAXIMA_VIDEO_SEG}
+          onConfirmar={(blob) => {
+            setPreviewUrl(URL.createObjectURL(blob));
+            setVideoRecortadoBlob(blob);
+            setTipo("video");
+            setMostrarRecorte(false);
+          }}
+          onCancelar={onClose}
+        />
       )}
     </div>
   );

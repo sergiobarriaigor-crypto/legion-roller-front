@@ -7,6 +7,7 @@ import { apiGet, apiPost, apiDelete, apiUpload, ApiError } from "@/lib/api";
 import type { Post } from "@/lib/posts";
 import { CarruselFotos } from "@/components/Posts/CarruselFotos";
 import { SelectorUbicacion } from "@/components/Posts/SelectorUbicacion";
+import { VideoTrimmer } from "@/components/VideoTrimmer";
 import { Avatar } from "@/components/Avatar";
 import { BarraHistorias } from "@/components/Historias/BarraHistorias";
 
@@ -89,6 +90,7 @@ export default function PostPage() {
   const [videoUrl, setVideoUrl] = useState("");
   const [subiendoVideo, setSubiendoVideo] = useState(false);
   const [subiendoFotos, setSubiendoFotos] = useState(false);
+  const [videoParaRecortar, setVideoParaRecortar] = useState<File | null>(null);
   const [enviando, setEnviando] = useState(false);
   const videoInputRef = useRef<HTMLInputElement>(null);
   const fotoInputRef = useRef<HTMLInputElement>(null);
@@ -133,6 +135,7 @@ export default function PostPage() {
     setTipoMedia(null);
     setFotos([]);
     setVideoUrl("");
+    setVideoParaRecortar(null);
     setMostrarCompose(false);
     if (videoInputRef.current) videoInputRef.current.value = "";
     if (fotoInputRef.current) fotoInputRef.current.value = "";
@@ -140,7 +143,9 @@ export default function PostPage() {
 
   // Se valida la duración en el cliente ANTES de subir, para no gastar ancho
   // de banda subiendo un archivo que de todas formas se va a rechazar (mismo
-  // criterio que EditorHistoria.tsx, con el límite propio de Post: 50s).
+  // criterio que EditorHistoria.tsx, con el límite propio de Post: 50s). Si
+  // supera el máximo, se abre el editor de recorte (VideoTrimmer) en vez de
+  // rechazarlo directamente.
   function onVideoElegido(e: React.ChangeEvent<HTMLInputElement>) {
     const archivo = e.target.files?.[0];
     if (!archivo || !token) return;
@@ -152,22 +157,27 @@ export default function PostPage() {
     video.onloadedmetadata = async () => {
       URL.revokeObjectURL(url);
       if (video.duration > DURACION_MAXIMA_VIDEO_SEG) {
-        setError(`El video no puede durar más de ${DURACION_MAXIMA_VIDEO_SEG} segundos.`);
-        if (videoInputRef.current) videoInputRef.current.value = "";
+        setVideoParaRecortar(archivo);
         return;
       }
-      setSubiendoVideo(true);
-      try {
-        const subida = await apiUpload<{ url: string }>("/uploads", archivo, token, archivo.name);
-        setVideoUrl(subida.url);
-        setTipoMedia("video");
-      } catch (err) {
-        setError(err instanceof ApiError ? err.message : "No se pudo subir el video.");
-      } finally {
-        setSubiendoVideo(false);
-      }
+      await subirVideo(archivo, archivo.name);
     };
     video.src = url;
+  }
+
+  async function subirVideo(archivo: Blob, nombreArchivo: string) {
+    if (!token) return;
+    setSubiendoVideo(true);
+    try {
+      const subida = await apiUpload<{ url: string }>("/uploads", archivo, token, nombreArchivo);
+      setVideoUrl(subida.url);
+      setTipoMedia("video");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "No se pudo subir el video.");
+    } finally {
+      setSubiendoVideo(false);
+      if (videoInputRef.current) videoInputRef.current.value = "";
+    }
   }
 
   // El selector nativo permite elegir hasta 3 fotos de una sola vez (atributo
@@ -444,6 +454,21 @@ export default function PostPage() {
         <SelectorUbicacion
           onSeleccionar={elegirUbicacion}
           onCerrar={() => setMostrarSelectorUbicacion(false)}
+        />
+      )}
+
+      {videoParaRecortar && (
+        <VideoTrimmer
+          archivo={videoParaRecortar}
+          duracionMaxima={DURACION_MAXIMA_VIDEO_SEG}
+          onConfirmar={(blob) => {
+            setVideoParaRecortar(null);
+            subirVideo(blob, "recorte.webm");
+          }}
+          onCancelar={() => {
+            setVideoParaRecortar(null);
+            if (videoInputRef.current) videoInputRef.current.value = "";
+          }}
         />
       )}
 
