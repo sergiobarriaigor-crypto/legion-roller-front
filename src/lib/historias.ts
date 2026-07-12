@@ -69,6 +69,7 @@ export interface RespuestaSinLeer {
   id: number;
   historiaId: number;
   autorNombre: string;
+  autorFotoUrl: string | null;
   texto: string;
   createdAt: string;
 }

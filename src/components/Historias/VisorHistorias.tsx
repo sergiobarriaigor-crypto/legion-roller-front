@@ -125,7 +125,12 @@ export function VisorHistorias({
   const holdTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const holdActivadoRef = useRef(false);
   const socketRef = useRef<ReturnType<typeof obtenerSocket> | null>(null);
-  const primeraCargaRef = useRef(true);
+  // Compara contra el id anterior (no una bandera de "primera vez") porque en
+  // desarrollo React StrictMode invoca este efecto dos veces al montar: con
+  // una bandera simple, la segunda invocación ya la encuentra en `false` y
+  // termina reseteando `panelSocial` justo después de abrirlo desde el
+  // deep-link. Comparando ids, la segunda invocación ve que no cambió nada.
+  const historiaIdAnteriorRef = useRef<number | null>(null);
 
   function agregarBurbuja(nombre: string, texto: string, esReaccion: boolean) {
     const id = `${Date.now()}-${Math.random()}`;
@@ -164,14 +169,15 @@ export function VisorHistorias({
   }
 
   useEffect(() => {
+    if (!historia) return;
     // La primera vez que se monta, `panelSocial`/`comentarioDestacado` ya
     // vienen inicializados desde el deep-link (ver `comentarioDestacadoInicial`)
     // — este efecto solo debe limpiar esos estados al CAMBIAR de historia
     // después, no pisar el valor inicial apenas se abre el visor.
-    if (primeraCargaRef.current) {
-      primeraCargaRef.current = false;
-      return;
-    }
+    if (historiaIdAnteriorRef.current === historia.id) return;
+    const esPrimeraCarga = historiaIdAnteriorRef.current === null;
+    historiaIdAnteriorRef.current = historia.id;
+    if (esPrimeraCarga) return;
     setDuracionVideoMs(null);
     setReaccionLocal(null);
     setPanelSocial(null);
@@ -181,6 +187,7 @@ export function VisorHistorias({
     setMensaje("");
     setMensajeEnviado(false);
     setBurbujas([]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [historia?.id]);
 
   // Se marca como vista apenas se muestra, no solo al abrir el visor completo.

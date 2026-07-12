@@ -15,8 +15,10 @@ import {
   type Historia,
   type RespuestaSinLeer,
 } from "@/lib/historias";
+import { tiempoTranscurrido } from "@/lib/tiempo";
 import { SosButton } from "@/components/SosButton";
 import { PopupMencion } from "@/components/Historias/PopupMencion";
+import { Avatar } from "@/components/Avatar";
 
 export function AppHeader() {
   const { sesion } = useSession();
@@ -179,10 +181,16 @@ export function AppHeader() {
                       key={`respuesta-${r.id}`}
                       type="button"
                       onClick={() => irARespuesta(r)}
-                      className="block w-full rounded-app px-2 py-2 text-left text-sm text-text-primary hover:bg-bg-accent"
+                      className="flex w-full items-start gap-2 rounded-app px-2 py-2 text-left text-sm text-text-primary hover:bg-bg-accent"
                     >
-                      <strong>{r.autorNombre}</strong> respondió tu comentario: &ldquo;
-                      {r.texto.length > 40 ? `${r.texto.slice(0, 40)}…` : r.texto}&rdquo;
+                      <Avatar fotoUrl={r.autorFotoUrl} nombre={r.autorNombre} tamano={32} />
+                      <span className="flex-1">
+                        <strong>{r.autorNombre}</strong> respondió tu comentario: &ldquo;
+                        {r.texto.length > 40 ? `${r.texto.slice(0, 40)}…` : r.texto}&rdquo;
+                        <span className="block text-[11px] text-text-secondary">
+                          {tiempoTranscurrido(r.createdAt)}
+                        </span>
+                      </span>
                     </button>
                   ))}
                 </>
