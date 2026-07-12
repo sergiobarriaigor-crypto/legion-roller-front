@@ -30,6 +30,7 @@ export function CarruselFotos({ fotos, alt }: { fotos: string[]; alt: string }) 
       <div
         ref={contenedorRef}
         onScroll={alDeslizar}
+        data-no-swipe
         className="flex snap-x snap-mandatory overflow-x-auto rounded-app"
       >
         {fotos.map((url, i) => (
