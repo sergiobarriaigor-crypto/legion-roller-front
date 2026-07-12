@@ -6,7 +6,6 @@ import { useSession } from "@/context/SessionContext";
 import { apiGet, apiPost, apiDelete, apiUpload, ApiError } from "@/lib/api";
 import type { Post } from "@/lib/posts";
 import { sectorMasCercano } from "@/lib/sectores";
-import { ImageUploadCrop } from "@/components/ImageUploadCrop";
 import { CarruselFotos } from "@/components/Posts/CarruselFotos";
 import { Avatar } from "@/components/Avatar";
 import { BarraHistorias } from "@/components/Historias/BarraHistorias";
@@ -88,8 +87,10 @@ export default function PostPage() {
   const [fotos, setFotos] = useState<string[]>([]);
   const [videoUrl, setVideoUrl] = useState("");
   const [subiendoVideo, setSubiendoVideo] = useState(false);
+  const [subiendoFotos, setSubiendoFotos] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const videoInputRef = useRef<HTMLInputElement>(null);
+  const fotoInputRef = useRef<HTMLInputElement>(null);
 
   const [comentarioAbierto, setComentarioAbierto] = useState<number | null>(null);
   const [textoComentario, setTextoComentario] = useState("");
@@ -138,6 +139,7 @@ export default function PostPage() {
     setVideoUrl("");
     setMostrarCompose(false);
     if (videoInputRef.current) videoInputRef.current.value = "";
+    if (fotoInputRef.current) fotoInputRef.current.value = "";
   }
 
   // Se valida la duración en el cliente ANTES de subir, para no gastar ancho
@@ -172,9 +174,34 @@ export default function PostPage() {
     video.src = url;
   }
 
-  function agregarFoto(url: string) {
-    setFotos((prev) => [...prev, url]);
-    setTipoMedia("foto");
+  // El selector nativo permite elegir hasta 3 fotos de una sola vez (atributo
+  // `multiple`) — se suben todas en paralelo y se agregan al array apenas
+  // terminan, sin paso de recorte (a diferencia de ImageUploadCrop, pensado
+  // para una sola foto a la vez).
+  async function onFotosElegidas(e: React.ChangeEvent<HTMLInputElement>) {
+    const elegidos = Array.from(e.target.files ?? []);
+    if (elegidos.length === 0 || !token) return;
+    setError("");
+
+    const espacioDisponible = MAX_FOTOS_POR_POST - fotos.length;
+    const archivos = elegidos.slice(0, espacioDisponible);
+    if (elegidos.length > espacioDisponible) {
+      setError(`Solo se admiten ${MAX_FOTOS_POR_POST} fotos por publicación; se tomaron las primeras ${espacioDisponible}.`);
+    }
+
+    setSubiendoFotos(true);
+    try {
+      const subidas = await Promise.all(
+        archivos.map((archivo) => apiUpload<{ url: string }>("/uploads", archivo, token, archivo.name)),
+      );
+      setFotos((prev) => [...prev, ...subidas.map((s) => s.url)]);
+      setTipoMedia("foto");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "No se pudieron subir las fotos.");
+    } finally {
+      setSubiendoFotos(false);
+      if (fotoInputRef.current) fotoInputRef.current.value = "";
+    }
   }
 
   function quitarFoto(i: number) {
@@ -334,11 +361,28 @@ export default function PostPage() {
                   )}
                   <div className="flex items-center gap-3">
                     {fotos.length < MAX_FOTOS_POR_POST && (
-                      <ImageUploadCrop
-                        token={token}
-                        onSubido={agregarFoto}
-                        etiqueta={fotos.length === 0 ? "Agregar foto (opcional)" : "Agregar otra foto"}
-                      />
+                      <>
+                        <input
+                          ref={fotoInputRef}
+                          type="file"
+                          accept="image/*"
+                          multiple
+                          onChange={onFotosElegidas}
+                          className="hidden"
+                        />
+                        <button
+                          type="button"
+                          disabled={subiendoFotos}
+                          onClick={() => fotoInputRef.current?.click()}
+                          className="rounded-app border border-border px-4 py-2 text-sm text-text-secondary disabled:opacity-60"
+                        >
+                          {subiendoFotos
+                            ? "Subiendo..."
+                            : fotos.length === 0
+                              ? `Agregar fotos (hasta ${MAX_FOTOS_POR_POST}, opcional)`
+                              : "Agregar más fotos"}
+                        </button>
+                      </>
                     )}
                     {fotos.length === 0 && (
                       <>
@@ -366,7 +410,7 @@ export default function PostPage() {
               <div className="flex gap-2">
                 <button
                   type="submit"
-                  disabled={enviando || subiendoVideo}
+                  disabled={enviando || subiendoVideo || subiendoFotos}
                   className="btn-hero flex-1 rounded-app px-4 py-2 text-sm disabled:opacity-60"
                 >
                   {enviando ? "Publicando..." : "Publicar"}
