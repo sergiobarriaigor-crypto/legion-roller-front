@@ -89,6 +89,7 @@ export function VisorHistorias({
   indiceInicial,
   indiceHistoriaInicial = 0,
   comentarioDestacadoInicial,
+  abrirReaccionesInicial,
   token,
   onClose,
 }: {
@@ -99,6 +100,10 @@ export function VisorHistorias({
   // directo con el panel de comentarios mostrando el hilo, resaltando la
   // respuesta que originó la notificación.
   comentarioDestacadoInicial?: number;
+  // Deep-link desde la notificación agrupada de reacciones: abre directo en
+  // la pestaña de reacciones (y de paso las marca leídas, ver `reaccionesDe`
+  // en el backend).
+  abrirReaccionesInicial?: boolean;
   token: string | null;
   onClose: () => void;
 }) {
@@ -108,7 +113,7 @@ export function VisorHistorias({
   const [duracionVideoMs, setDuracionVideoMs] = useState<number | null>(null);
   const [reaccionLocal, setReaccionLocal] = useState<{ count: number; mia: boolean } | null>(null);
   const [panelSocial, setPanelSocial] = useState<"reacciones" | "comentarios" | null>(
-    comentarioDestacadoInicial ? "comentarios" : null,
+    comentarioDestacadoInicial ? "comentarios" : abrirReaccionesInicial ? "reacciones" : null,
   );
   const [comentarioDestacado, setComentarioDestacado] = useState(comentarioDestacadoInicial ?? null);
   const [pausado, setPausado] = useState(false);

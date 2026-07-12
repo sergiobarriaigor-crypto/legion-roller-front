@@ -33,6 +33,7 @@ export function BarraHistorias() {
   const [indiceVisor, setIndiceVisor] = useState<number | null>(null);
   const [indiceHistoriaVisor, setIndiceHistoriaVisor] = useState(0);
   const [comentarioDestacadoVisor, setComentarioDestacadoVisor] = useState<number | undefined>(undefined);
+  const [abrirReaccionesVisor, setAbrirReaccionesVisor] = useState(false);
   const [historiaNoDisponible, setHistoriaNoDisponible] = useState(false);
 
   async function cargar() {
@@ -47,14 +48,15 @@ export function BarraHistorias() {
     }
   }
 
-  // Deep-link desde la notificación de "te respondieron/comentaron" (ver
-  // AppHeader.tsx): abre directo la historia con el panel de comentarios
-  // mostrando el hilo completo, resaltando ese comentario.
+  // Deep-link desde la notificación de "te respondieron/comentaron/reaccionaron"
+  // (ver AppHeader.tsx): abre directo la historia con el panel de comentarios
+  // o de reacciones, según cuál haya originado la notificación.
   async function cargarYManejarDeepLink() {
     const historiaIdParam = searchParams.get("historia");
     if (!historiaIdParam) return;
     const comentarioIdParam = searchParams.get("comentario");
-    const clave = `${historiaIdParam}:${comentarioIdParam ?? ""}`;
+    const reaccionesParam = searchParams.get("reacciones");
+    const clave = `${historiaIdParam}:${comentarioIdParam ?? ""}:${reaccionesParam ?? ""}`;
     if (ultimoDeepLinkRef.current === clave) return;
     ultimoDeepLinkRef.current = clave;
 
@@ -69,6 +71,7 @@ export function BarraHistorias() {
       const indiceHistoria = lista[indiceGrupo].historias.findIndex((h) => h.id === historiaId);
       setIndiceHistoriaVisor(indiceHistoria);
       setComentarioDestacadoVisor(comentarioIdParam ? Number(comentarioIdParam) : undefined);
+      setAbrirReaccionesVisor(!!reaccionesParam);
       setIndiceVisor(indiceGrupo);
     }
     router.replace("/post", { scroll: false });
@@ -233,10 +236,12 @@ export function BarraHistorias() {
           indiceInicial={indiceVisor}
           indiceHistoriaInicial={indiceHistoriaVisor}
           comentarioDestacadoInicial={comentarioDestacadoVisor}
+          abrirReaccionesInicial={abrirReaccionesVisor}
           token={token}
           onClose={() => {
             setIndiceVisor(null);
             setComentarioDestacadoVisor(undefined);
+            setAbrirReaccionesVisor(false);
             cargar();
           }}
         />

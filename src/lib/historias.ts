@@ -76,6 +76,16 @@ export interface RespuestaSinLeer {
   esRespuesta: boolean;
 }
 
+// Notificación agrupada para la campana: N personas reaccionaron con el
+// corazón a la misma historia — se agrupan para no listar una fila por
+// persona. `primeros` trae hasta 2 (las más recientes), con foto.
+export interface ReaccionAgrupadaSinLeer {
+  historiaId: number;
+  total: number;
+  primeros: { nombre: string; fotoUrl: string | null }[];
+  createdAt: string;
+}
+
 export interface MencionInput {
   miembroId: number;
   x: number;
@@ -177,6 +187,13 @@ export function responderMencionHistoria(id: number, aceptar: boolean, token: st
 
 export function listarRespuestasSinLeer(token: string | null) {
   return apiGet<RespuestaSinLeer[]>("/historias/notificaciones/respuestas", token);
+}
+
+// No hace falta una función para "marcar leída": abrir la pestaña de
+// reacciones del panel (mismo deep-link) ya las marca leídas de una, vía
+// `GET /historias/:id/reacciones` (ver `reaccionesDe` en el backend).
+export function listarReaccionesAgrupadasSinLeer(token: string | null) {
+  return apiGet<ReaccionAgrupadaSinLeer[]>("/historias/notificaciones/reacciones", token);
 }
 
 export function marcarRespuestaLeida(comentarioId: number, token: string | null) {
