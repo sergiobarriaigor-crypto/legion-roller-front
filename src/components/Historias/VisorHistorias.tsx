@@ -618,6 +618,21 @@ export function VisorHistorias({
                   className="h-11 flex-1 rounded-full border border-white/30 bg-black/40 px-4 text-sm text-white outline-none transition placeholder:text-white/50 focus:border-fill-primary focus:shadow-[0_0_12px_rgba(231,193,104,0.6)]"
                 />
               )}
+              {/* Cualquiera puede abrir el hilo de comentarios (visible para
+                  todos, estilo TikTok) — antes solo el autor tenía este botón. */}
+              <button
+                type="button"
+                onClick={() => setPanelSocial("comentarios")}
+                aria-label="Ver comentarios"
+                className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-black/60 text-white transition"
+              >
+                <IconMessageCircle size={20} />
+                {historia.comentariosCount > 0 && (
+                  <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-fill-primary px-1 text-[10px] text-on-primary">
+                    {historia.comentariosCount}
+                  </span>
+                )}
+              </button>
               {mensaje.trim() ? (
                 <button
                   type="button"
