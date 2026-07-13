@@ -62,7 +62,8 @@ export function VideoTrimmer({
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
-  const arrastrandoRef = useRef<"inicio" | "fin" | null>(null);
+  const arrastrandoRef = useRef<"inicio" | "fin" | "seleccion" | null>(null);
+  const inicioArrastreRef = useRef<{ clientX: number; inicio: number; fin: number } | null>(null);
 
   const [urlArchivo, setUrlArchivo] = useState<string | null>(null);
   const [duracionTotal, setDuracionTotal] = useState(0);
@@ -156,10 +157,32 @@ export function VideoTrimmer({
     return frac * duracionTotal;
   }
 
+  function moverSeleccion(clientX: number) {
+    const video = videoRef.current;
+    const track = trackRef.current;
+    const inicioArrastre = inicioArrastreRef.current;
+    if (!track || !inicioArrastre || duracionTotal === 0) return;
+
+    const rect = track.getBoundingClientRect();
+    const deltaTiempo = ((clientX - inicioArrastre.clientX) / rect.width) * duracionTotal;
+    const duracion = inicioArrastre.fin - inicioArrastre.inicio;
+    const nuevoInicio = Math.max(0, Math.min(inicioArrastre.inicio + deltaTiempo, duracionTotal - duracion));
+
+    setInicio(nuevoInicio);
+    setFin(nuevoInicio + duracion);
+    if (video) video.currentTime = nuevoInicio;
+  }
+
   function moverManija(clientX: number) {
     const video = videoRef.current;
     const cual = arrastrandoRef.current;
     if (!cual) return;
+
+    if (cual === "seleccion") {
+      moverSeleccion(clientX);
+      return;
+    }
+
     const t = tiempoDesdeClientX(clientX);
 
     if (cual === "inicio") {
@@ -179,12 +202,20 @@ export function VideoTrimmer({
     arrastrandoRef.current = cual;
   }
 
+  // Arrastrar la zona central (entre las dos manijas) desplaza todo el
+  // segmento manteniendo su duración, en vez de mover un solo extremo.
+  function onPointerDownSeleccion(e: React.PointerEvent) {
+    arrastrandoRef.current = "seleccion";
+    inicioArrastreRef.current = { clientX: e.clientX, inicio, fin };
+  }
+
   function onPointerMoveTrack(e: React.PointerEvent) {
     if (arrastrandoRef.current) moverManija(e.clientX);
   }
 
   function detenerArrastre() {
     arrastrandoRef.current = null;
+    inicioArrastreRef.current = null;
   }
 
   function reproducirFragmento() {
@@ -326,7 +357,8 @@ export function VideoTrimmer({
                   ))}
                 </div>
                 <div
-                  className="absolute inset-y-0 border-2 border-fill-primary bg-fill-primary/20"
+                  onPointerDown={onPointerDownSeleccion}
+                  className="absolute inset-y-0 cursor-grab touch-none border-2 border-fill-primary bg-fill-primary/20 active:cursor-grabbing"
                   style={{ left: `${porcentajeInicio}%`, right: `${100 - porcentajeFin}%` }}
                 />
                 <div
