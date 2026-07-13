@@ -1,3 +1,5 @@
+import { apiGet } from "@/lib/api";
+
 export interface UltimoMensaje {
   autorNombre: string;
   texto: string;
@@ -33,9 +35,25 @@ export interface MensajeChat {
 export interface MiembroSimple {
   id: number;
   nombre: string;
+  fotoUrl?: string | null;
+}
+
+// Notificación para la campana: alguien me compartió un post por chat y
+// todavía no vi ese mensaje.
+export interface CompartidoSinLeer {
+  mensajeId: number;
+  sala: string;
+  postId: number;
+  autorNombre: string;
+  autorFotoUrl: string | null;
+  createdAt: string;
 }
 
 export function salaIndividual(id1: number, id2: number): string {
   const [a, b] = [id1, id2].sort((x, y) => x - y);
   return `dm-${a}-${b}`;
+}
+
+export function listarCompartidosSinLeer(token: string | null) {
+  return apiGet<CompartidoSinLeer[]>("/chat/notificaciones/compartidos", token);
 }

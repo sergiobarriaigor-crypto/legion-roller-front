@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import { IconPin } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
 import { apiGet, apiPost, ApiError } from "@/lib/api";
 import type { Conversaciones, MensajeChat } from "@/lib/chat";
@@ -10,6 +11,7 @@ import type { Conversaciones, MensajeChat } from "@/lib/chat";
 export default function ConversacionPage() {
   const params = useParams<{ sala: string }>();
   const sala = params.sala;
+  const router = useRouter();
   const { sesion } = useSession();
   const token = sesion?.token ?? null;
 
@@ -45,6 +47,7 @@ export default function ConversacionPage() {
   }
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     cargarMensajes();
     cargarTitulo();
     const intervalo = setInterval(cargarMensajes, 5000);
@@ -85,6 +88,28 @@ export default function ConversacionPage() {
         )}
         {mensajes.map((m) => {
           const esMio = m.autorId === sesion?.id;
+          // Post compartido: la burbuja se vuelve una tarjeta clickeable que
+          // lleva directo a la publicación (mismo deep-link que usa la
+          // campana de notificaciones).
+          if (m.referenciaTipo === "post" && m.referenciaId !== null) {
+            return (
+              <div key={m.id} className={`flex flex-col ${esMio ? "items-end" : "items-start"}`}>
+                <button
+                  type="button"
+                  onClick={() => router.push(`/post?post=${m.referenciaId}`)}
+                  className={`flex max-w-[75%] items-center gap-2 rounded-app px-3 py-2 text-left text-sm ${
+                    esMio ? "btn-hero" : "border border-border text-text-primary"
+                  }`}
+                >
+                  <IconPin size={16} className="shrink-0" />
+                  <span>
+                    {!esMio && <span className="block text-xs font-semibold text-text-accent">{m.autorNombre}</span>}
+                    {m.texto}
+                  </span>
+                </button>
+              </div>
+            );
+          }
           return (
             <div key={m.id} className={`flex flex-col ${esMio ? "items-end" : "items-start"}`}>
               <div

@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { IconBell, IconMessageCircle2 } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
 import { apiGet } from "@/lib/api";
-import type { Conversaciones } from "@/lib/chat";
+import { listarCompartidosSinLeer, type Conversaciones, type CompartidoSinLeer } from "@/lib/chat";
 import {
   listarHistorias,
   responderMencionHistoria,
@@ -17,6 +17,13 @@ import {
   type RespuestaSinLeer,
   type ReaccionAgrupadaSinLeer,
 } from "@/lib/historias";
+import {
+  listarRespuestasSinLeerPost,
+  marcarRespuestaLeidaPost,
+  listarReaccionesAgrupadasSinLeerPost,
+  type RespuestaPostSinLeer,
+  type ReaccionPostAgrupadaSinLeer,
+} from "@/lib/posts";
 import { tiempoTranscurrido } from "@/lib/tiempo";
 import { SosButton } from "@/components/SosButton";
 import { PopupMencion } from "@/components/Historias/PopupMencion";
@@ -30,6 +37,9 @@ export function AppHeader() {
   const [mencionesPendientes, setMencionesPendientes] = useState<Historia[]>([]);
   const [respuestasSinLeer, setRespuestasSinLeer] = useState<RespuestaSinLeer[]>([]);
   const [reaccionesAgrupadas, setReaccionesAgrupadas] = useState<ReaccionAgrupadaSinLeer[]>([]);
+  const [respuestasSinLeerPost, setRespuestasSinLeerPost] = useState<RespuestaPostSinLeer[]>([]);
+  const [reaccionesAgrupadasPost, setReaccionesAgrupadasPost] = useState<ReaccionPostAgrupadaSinLeer[]>([]);
+  const [compartidosSinLeer, setCompartidosSinLeer] = useState<CompartidoSinLeer[]>([]);
   const [mostrarLista, setMostrarLista] = useState(false);
   const [mencionAbierta, setMencionAbierta] = useState<Historia | null>(null);
   const [enviando, setEnviando] = useState(false);
@@ -109,6 +119,57 @@ export function AppHeader() {
     return () => clearInterval(intervalo);
   }, [token, sesion?.rol]);
 
+  // Respuestas a mis comentarios en Posts que todavía no vi.
+  useEffect(() => {
+    if (!token || sesion?.rol === "visitante") return;
+
+    async function revisarRespuestasPost() {
+      try {
+        setRespuestasSinLeerPost(await listarRespuestasSinLeerPost(token));
+      } catch {
+        // silencioso
+      }
+    }
+
+    revisarRespuestasPost();
+    const intervalo = setInterval(revisarRespuestasPost, 20000);
+    return () => clearInterval(intervalo);
+  }, [token, sesion?.rol]);
+
+  // "Me gusta" sin leer en mis posts, agrupados por post.
+  useEffect(() => {
+    if (!token || sesion?.rol === "visitante") return;
+
+    async function revisarReaccionesPost() {
+      try {
+        setReaccionesAgrupadasPost(await listarReaccionesAgrupadasSinLeerPost(token));
+      } catch {
+        // silencioso
+      }
+    }
+
+    revisarReaccionesPost();
+    const intervalo = setInterval(revisarReaccionesPost, 20000);
+    return () => clearInterval(intervalo);
+  }, [token, sesion?.rol]);
+
+  // Posts que me compartieron por chat y todavía no vi.
+  useEffect(() => {
+    if (!token || sesion?.rol === "visitante") return;
+
+    async function revisarCompartidos() {
+      try {
+        setCompartidosSinLeer(await listarCompartidosSinLeer(token));
+      } catch {
+        // silencioso
+      }
+    }
+
+    revisarCompartidos();
+    const intervalo = setInterval(revisarCompartidos, 20000);
+    return () => clearInterval(intervalo);
+  }, [token, sesion?.rol]);
+
   // Al tocar la notificación: se marca leída y se abre directo la historia
   // (BarraHistorias.tsx lee estos parámetros y muestra el panel de
   // comentarios con el hilo, resaltando esta respuesta).
@@ -138,6 +199,39 @@ export function AppHeader() {
     return `${n1}, ${n2} y otras ${r.total - 2} personas reaccionaron a tu historia`;
   }
 
+  // Mismo mecanismo que las notificaciones de Historias, apuntando a /post
+  // con la publicación en vez de la historia (post/page.tsx interpreta estos
+  // mismos parámetros).
+  function irARespuestaPost(r: RespuestaPostSinLeer) {
+    setMostrarLista(false);
+    setRespuestasSinLeerPost((prev) => prev.filter((x) => x.id !== r.id));
+    if (token) marcarRespuestaLeidaPost(r.id, token).catch(() => {});
+    router.push(`/post?post=${r.postId}&comentario=${r.id}`);
+  }
+
+  function irAReaccionAgrupadaPost(r: ReaccionPostAgrupadaSinLeer) {
+    setMostrarLista(false);
+    setReaccionesAgrupadasPost((prev) => prev.filter((x) => x.postId !== r.postId));
+    router.push(`/post?post=${r.postId}&reacciones=1`);
+  }
+
+  function textoReaccionAgrupadaPost(r: ReaccionPostAgrupadaSinLeer): string {
+    const [n1, n2] = r.primeros.map((p) => p.nombre);
+    if (r.total <= 1) return `${n1} indicó que le gusta tu publicación`;
+    if (r.total === 2) return `${n1} y ${n2} indicaron que les gusta tu publicación`;
+    return `${n1}, ${n2} y otras ${r.total - 2} personas reaccionaron a tu publicación`;
+  }
+
+  // Marcar leído no tiene endpoint propio: abrir la conversación (GET
+  // /chat/mensajes/:sala) ya actualiza LecturaChat como efecto secundario —
+  // se descarta el resultado, solo interesa navegar directo al post.
+  function irACompartido(c: CompartidoSinLeer) {
+    setMostrarLista(false);
+    setCompartidosSinLeer((prev) => prev.filter((x) => x.mensajeId !== c.mensajeId));
+    if (token) apiGet(`/chat/mensajes/${c.sala}`, token).catch(() => {});
+    router.push(`/post?post=${c.postId}`);
+  }
+
   async function responderMencion(aceptar: boolean) {
     if (!mencionAbierta || !token) return;
     setEnviando(true);
@@ -151,6 +245,14 @@ export function AppHeader() {
       setEnviando(false);
     }
   }
+
+  const totalNotificaciones =
+    mencionesPendientes.length +
+    respuestasSinLeer.length +
+    reaccionesAgrupadas.length +
+    respuestasSinLeerPost.length +
+    reaccionesAgrupadasPost.length +
+    compartidosSinLeer.length;
 
   return (
     <header className="flex items-center justify-between px-4 py-3 border-b border-border bg-page-bg">
@@ -185,9 +287,9 @@ export function AppHeader() {
           className="relative flex h-9 w-9 items-center justify-center rounded-full text-text-secondary hover:text-text-primary"
         >
           <IconBell size={20} />
-          {mencionesPendientes.length + respuestasSinLeer.length + reaccionesAgrupadas.length > 0 && (
+          {totalNotificaciones > 0 && (
             <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-fill-primary px-1 text-[10px] text-on-primary">
-              {mencionesPendientes.length + respuestasSinLeer.length + reaccionesAgrupadas.length}
+              {totalNotificaciones}
             </span>
           )}
         </button>
@@ -196,9 +298,7 @@ export function AppHeader() {
           <>
             <div className="fixed inset-0 z-20" onClick={() => setMostrarLista(false)} />
             <div className="card absolute right-0 top-11 z-30 w-72 p-2">
-              {mencionesPendientes.length === 0 &&
-              respuestasSinLeer.length === 0 &&
-              reaccionesAgrupadas.length === 0 ? (
+              {totalNotificaciones === 0 ? (
                 <p className="px-2 py-3 text-center text-sm text-text-secondary">
                   Sin notificaciones nuevas.
                 </p>
@@ -265,6 +365,71 @@ export function AppHeader() {
                         {textoReaccionAgrupada(r)}
                         <span className="block text-[11px] text-text-secondary">
                           {tiempoTranscurrido(r.createdAt)}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+                  {respuestasSinLeerPost.map((r) => (
+                    <button
+                      key={`respuesta-post-${r.id}`}
+                      type="button"
+                      onClick={() => irARespuestaPost(r)}
+                      className="flex w-full items-start gap-2 rounded-app px-2 py-2 text-left text-sm text-text-primary hover:bg-bg-accent"
+                    >
+                      <Avatar fotoUrl={r.autorFotoUrl} nombre={r.autorNombre} tamano={32} />
+                      <span className="flex-1">
+                        <strong>{r.autorNombre}</strong>{" "}
+                        {r.esRespuesta ? "respondió tu comentario" : "comentó tu publicación"}: &ldquo;
+                        {r.texto.length > 40 ? `${r.texto.slice(0, 40)}…` : r.texto}&rdquo;
+                        <span className="block text-[11px] text-text-secondary">
+                          {tiempoTranscurrido(r.createdAt)}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+                  {reaccionesAgrupadasPost.map((r) => (
+                    <button
+                      key={`reaccion-post-${r.postId}`}
+                      type="button"
+                      onClick={() => irAReaccionAgrupadaPost(r)}
+                      className="flex w-full items-start gap-2 rounded-app px-2 py-2 text-left text-sm text-text-primary hover:bg-bg-accent"
+                    >
+                      <div className="relative h-8 w-11 shrink-0">
+                        {r.primeros[1] && (
+                          <div className="absolute left-3 top-0 rounded-full ring-2 ring-page-bg">
+                            <Avatar fotoUrl={r.primeros[1].fotoUrl} nombre={r.primeros[1].nombre} tamano={32} />
+                          </div>
+                        )}
+                        <div className="absolute left-0 top-0 rounded-full ring-2 ring-page-bg">
+                          <Avatar fotoUrl={r.primeros[0].fotoUrl} nombre={r.primeros[0].nombre} tamano={32} />
+                        </div>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src="/corazon2.png"
+                          alt=""
+                          className="absolute -bottom-1 -right-1 h-4 w-4 drop-shadow-[0_0_6px_rgba(231,193,104,0.8)]"
+                        />
+                      </div>
+                      <span className="flex-1 pt-1">
+                        {textoReaccionAgrupadaPost(r)}
+                        <span className="block text-[11px] text-text-secondary">
+                          {tiempoTranscurrido(r.createdAt)}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+                  {compartidosSinLeer.map((c) => (
+                    <button
+                      key={`compartido-${c.mensajeId}`}
+                      type="button"
+                      onClick={() => irACompartido(c)}
+                      className="flex w-full items-start gap-2 rounded-app px-2 py-2 text-left text-sm text-text-primary hover:bg-bg-accent"
+                    >
+                      <Avatar fotoUrl={c.autorFotoUrl} nombre={c.autorNombre} tamano={32} />
+                      <span className="flex-1">
+                        <strong>{c.autorNombre}</strong> te compartió una publicación
+                        <span className="block text-[11px] text-text-secondary">
+                          {tiempoTranscurrido(c.createdAt)}
                         </span>
                       </span>
                     </button>

@@ -1,12 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { IconMapPin, IconShare, IconVideo } from "@tabler/icons-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { IconMapPin, IconShare, IconUsers, IconVideo } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
 import { apiGet, apiPost, apiDelete, apiUpload, ApiError } from "@/lib/api";
 import type { Post } from "@/lib/posts";
 import { CarruselFotos } from "@/components/Posts/CarruselFotos";
 import { SelectorUbicacion } from "@/components/Posts/SelectorUbicacion";
+import { ComentariosPost } from "@/components/Posts/ComentariosPost";
+import { SelectorCompartirPost } from "@/components/Posts/SelectorCompartirPost";
 import { VideoTrimmer } from "@/components/VideoTrimmer";
 import { Avatar } from "@/components/Avatar";
 import { BarraHistorias } from "@/components/Historias/BarraHistorias";
@@ -74,6 +77,15 @@ export default function PostPage() {
   const { sesion } = useSession();
   const token = sesion?.token ?? null;
   const puedeInteractuar = sesion?.rol === "usuario" || sesion?.rol === "admin";
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  // Guarda "postId:comentarioId:reacciones" del último deep-link ya procesado
+  // (no solo un booleano): si ya se estaba en /post y se toca otra
+  // notificación desde la campana, el `router.push` de AppHeader.tsx es
+  // navegación del lado del cliente — este componente sigue montado, así que
+  // hace falta reaccionar al cambio de `searchParams`, no solo al montar
+  // (mismo patrón que BarraHistorias.tsx).
+  const ultimoDeepLinkRef = useRef<string | null>(null);
 
   const [posts, setPosts] = useState<Post[]>([]);
   const [misReacciones, setMisReacciones] = useState<number[]>([]);
@@ -95,8 +107,13 @@ export default function PostPage() {
   const videoInputRef = useRef<HTMLInputElement>(null);
   const fotoInputRef = useRef<HTMLInputElement>(null);
 
-  const [comentarioAbierto, setComentarioAbierto] = useState<number | null>(null);
-  const [textoComentario, setTextoComentario] = useState("");
+  const [panelSocial, setPanelSocial] = useState<{
+    postId: number;
+    postAutorId: number;
+    vista: "reacciones" | "comentarios";
+    comentarioDestacadoId?: number;
+  } | null>(null);
+  const [postACompartir, setPostACompartir] = useState<Post | null>(null);
 
   async function cargar() {
     try {
@@ -106,18 +123,64 @@ export default function PostPage() {
         const mias = await apiGet<number[]>("/posts/mis-reacciones", token);
         setMisReacciones(mias);
       }
+      return lista;
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "No se pudo cargar el feed.");
+      return null;
     } finally {
       setCargando(false);
     }
   }
+
+  // Deep-link desde la notificación de "te comentaron/respondieron/dieron me
+  // gusta/compartieron" (ver AppHeader.tsx): abre directo el panel social del
+  // post, en la pestaña de comentarios o de reacciones según corresponda.
+  async function cargarYManejarDeepLink() {
+    const postIdParam = searchParams.get("post");
+    if (!postIdParam) return;
+    const comentarioIdParam = searchParams.get("comentario");
+    const reaccionesParam = searchParams.get("reacciones");
+    const clave = `${postIdParam}:${comentarioIdParam ?? ""}:${reaccionesParam ?? ""}`;
+    if (ultimoDeepLinkRef.current === clave) return;
+    ultimoDeepLinkRef.current = clave;
+
+    const lista = await cargar();
+    if (!lista) return;
+
+    const postId = Number(postIdParam);
+    const post = lista.find((p) => p.id === postId);
+    if (post) {
+      setPanelSocial({
+        postId: post.id,
+        postAutorId: post.autorId,
+        vista: reaccionesParam ? "reacciones" : "comentarios",
+        comentarioDestacadoId: comentarioIdParam ? Number(comentarioIdParam) : undefined,
+      });
+    }
+    router.replace("/post", { scroll: false });
+  }
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    cargarYManejarDeepLink();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     cargar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
+
+  // Como los comentarios ahora se muestran en línea (no en un panel flotante
+  // de pantalla completa), al abrir vía deep-link hace falta hacer scroll
+  // hasta la tarjeta del post — el resaltado del comentario puntual lo hace
+  // ComentariosPost.tsx una vez que carga su propio hilo.
+  useEffect(() => {
+    if (!panelSocial) return;
+    document.getElementById(`post-${panelSocial.postId}`)?.scrollIntoView({ block: "start", behavior: "smooth" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [panelSocial?.postId]);
 
   // Ubicación completamente opcional y a pedido: solo se detecta/muestra si
   // el usuario toca "Agregar ubicación" — nunca en silencio al abrir el
@@ -258,17 +321,6 @@ export default function PostPage() {
       cargar();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "No se pudo reaccionar.");
-    }
-  }
-
-  async function comentar(postId: number) {
-    if (!token || !textoComentario.trim()) return;
-    try {
-      await apiPost(`/posts/${postId}/comentarios`, { texto: textoComentario }, token);
-      setTextoComentario("");
-      cargar();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "No se pudo comentar.");
     }
   }
 
@@ -483,7 +535,7 @@ export default function PostPage() {
         const puedeEliminar = sesion?.id === p.autorId || sesion?.rol === "admin";
 
         return (
-          <div key={p.id} className="card flex flex-col gap-2 p-4">
+          <div key={p.id} id={`post-${p.id}`} className="card flex flex-col gap-2 p-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Avatar fotoUrl={p.autorFotoUrl} nombre={p.autorNombre} tamano={40} />
@@ -529,9 +581,11 @@ export default function PostPage() {
               )}
               <button
                 type="button"
-                onClick={() => setComentarioAbierto(comentarioAbierto === p.id ? null : p.id)}
+                onClick={() =>
+                  setPanelSocial({ postId: p.id, postAutorId: p.autorId, vista: "comentarios" })
+                }
               >
-                {p.comentarios.length} comentarios
+                {p.comentariosCount} comentarios
               </button>
               <button
                 type="button"
@@ -541,39 +595,43 @@ export default function PostPage() {
                 <IconShare size={14} />
                 Compartir
               </button>
+              {puedeInteractuar && (
+                <button
+                  type="button"
+                  onClick={() => setPostACompartir(p)}
+                  aria-label="Compartir a un usuario"
+                  className="flex items-center gap-1"
+                >
+                  <IconUsers size={14} />
+                </button>
+              )}
             </div>
 
-            {comentarioAbierto === p.id && (
-              <div className="flex flex-col gap-2">
-                {p.comentarios.map((c) => (
-                  <p key={c.id} className="text-xs text-text-secondary">
-                    <span className="font-semibold text-text-primary">{c.autorNombre}:</span>{" "}
-                    {c.texto}
-                  </p>
-                ))}
-                {puedeInteractuar && (
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      placeholder="Escribe un comentario..."
-                      value={textoComentario}
-                      onChange={(e) => setTextoComentario(e.target.value)}
-                      className="flex-1 rounded-app border border-border bg-surface-2 px-3 py-1 text-xs text-text-primary outline-none"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => comentar(p.id)}
-                      className="rounded-app bg-fill-primary px-3 py-1 text-xs text-on-primary"
-                    >
-                      Enviar
-                    </button>
-                  </div>
-                )}
-              </div>
+            {panelSocial?.postId === p.id && (
+              <ComentariosPost
+                postId={p.id}
+                postAutorId={p.autorId}
+                vistaInicial={panelSocial.vista}
+                comentarioDestacadoId={panelSocial.comentarioDestacadoId}
+                token={token}
+                onCerrar={() => {
+                  setPanelSocial(null);
+                  cargar();
+                }}
+              />
             )}
           </div>
         );
       })}
+
+      {postACompartir && (
+        <SelectorCompartirPost
+          post={postACompartir}
+          propioId={sesion?.id}
+          token={token}
+          onCerrar={() => setPostACompartir(null)}
+        />
+      )}
     </div>
   );
 }
