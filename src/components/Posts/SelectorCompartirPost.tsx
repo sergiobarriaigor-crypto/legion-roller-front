@@ -70,7 +70,16 @@ export function SelectorCompartirPost({
     // anclada abajo con esquinas redondeadas y una altura máxima).
     <div className="fixed inset-0 z-50" data-no-swipe>
       <div className="absolute inset-0 bg-black/75" onClick={onCerrar} aria-hidden />
-      <div className="absolute inset-x-0 bottom-0 flex max-h-[55%] flex-col rounded-t-2xl bg-[#161616] shadow-[0_-8px_30px_rgba(0,0,0,0.5)]">
+      <div
+        className="absolute inset-x-0 bottom-0 flex max-h-[55%] flex-col rounded-t-2xl shadow-[0_-8px_30px_rgba(0,0,0,0.5)]"
+        style={{
+          backgroundImage:
+            "linear-gradient(to bottom, rgba(23,16,8,0.4) 0%, rgba(23,16,8,0.65) 45%, rgba(23,16,8,0.88) 100%), url(/fondo-compartir-post.jpg)",
+          backgroundSize: "cover",
+          backgroundRepeat: "no-repeat",
+          backgroundPosition: "50% 100%",
+        }}
+      >
         <div className="flex justify-center pb-1 pt-2">
           <span className="h-1 w-10 rounded-full bg-white/20" />
         </div>
