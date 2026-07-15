@@ -47,7 +47,15 @@ export default function AppGroupLayout({
   }
 
   return (
-    <div className="mx-auto flex min-h-dvh w-full max-w-md flex-1 flex-col bg-page-bg">
+    // El truco de `[transform:translateZ(0)]` no es cosmético: cualquier
+    // ancestro con `transform` distinto de `none` pasa a ser el "containing
+    // block" de sus descendientes `position: fixed` (y `absolute`), según el
+    // spec de CSS. Sin esto, todos los overlays `fixed inset-0` de la app
+    // (paneles, modales, el visor de historias, etc.) se posicionan respecto
+    // a toda la ventana del navegador en vez de este contenedor de ancho de
+    // teléfono — por eso en desktop se veían expandidos a pantalla completa
+    // en vez de quedar centrados y angostos como en un celular.
+    <div className="relative mx-auto flex min-h-dvh w-full max-w-md flex-1 flex-col bg-page-bg [transform:translateZ(0)]">
       <AppHeader />
       {sesion.rol !== "visitante" && <EmergenciaBanner />}
 
