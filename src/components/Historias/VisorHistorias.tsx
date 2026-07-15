@@ -1,7 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { IconX, IconShare, IconVolume, IconMessageCircle2, IconSend2 } from "@tabler/icons-react";
+import {
+  IconX,
+  IconShare,
+  IconVolume,
+  IconMessageCircle2,
+  IconMessageCircleFilled,
+  IconSend2,
+} from "@tabler/icons-react";
 import type { EcoEnHistoria, GrupoHistorias } from "@/lib/historias";
 import {
   eliminarEcoHistoria,
@@ -843,8 +850,7 @@ export function VisorHistorias({
                   aria-label="Ver comentarios"
                   className="relative flex h-9 w-9 items-center justify-center text-white/80 transition"
                 >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src="/habla.png" alt="" className="h-6 w-6" />
+                  <IconMessageCircleFilled size={22} className="text-text-accent" />
                   {historia.comentariosCount > 0 && (
                     <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-fill-primary px-1 text-[10px] text-on-primary">
                       {historia.comentariosCount}
