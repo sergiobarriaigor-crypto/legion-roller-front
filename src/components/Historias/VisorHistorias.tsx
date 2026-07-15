@@ -617,18 +617,19 @@ export function VisorHistorias({
         </div>
       </div>
 
-      {/* Ecos: a diferencia de las burbujas de abajo, quedan FIJOS sobre la
-          imagen para cualquiera que abra la historia (no solo en vivo).
-          Ancladas debajo del encabezado para no pisar la pila de burbujas
-          efímeras de más abajo; hasta MAX_ECOS_VISIBLES a la vez, con un
-          contador para ver el resto. */}
-      <div className="pointer-events-none absolute left-3 right-20 top-24 z-20 flex flex-col gap-1.5">
+      {/* Notificaciones flotantes en la esquina inferior izquierda: Ecos
+          (fijos sobre la imagen para cualquiera que abra la historia, no
+          solo en vivo) arriba, burbujas efímeras de comentarios/reacciones
+          en vivo abajo, cerca del campo de escritura — un solo stack para
+          que nunca se superpongan entre sí, con la misma animación de
+          entrada para ambos tipos. */}
+      <div className="pointer-events-none absolute bottom-24 left-3 right-20 z-20 flex flex-col gap-1.5">
         {ecos.slice(-MAX_ECOS_VISIBLES).map((e) => (
           <button
             key={e.id}
             type="button"
             onClick={() => setPanelEcosAbierto(true)}
-            className="pointer-events-auto flex w-fit max-w-full items-center gap-2 rounded-full bg-black/55 py-1.5 pl-1.5 pr-3 text-left text-sm text-white ring-1 ring-fill-primary/40"
+            className="animate-burbuja-entrada pointer-events-auto flex w-fit max-w-full items-center gap-2 rounded-full bg-black/55 py-1.5 pl-1.5 pr-3 text-left text-sm text-white ring-1 ring-fill-primary/40"
           >
             <Avatar fotoUrl={e.fotoUrl} nombre={e.nombre} tamano={22} />
             <div className="flex min-w-0 flex-col leading-tight">
@@ -644,28 +645,21 @@ export function VisorHistorias({
           <button
             type="button"
             onClick={() => setPanelEcosAbierto(true)}
-            className="pointer-events-auto flex w-fit items-center gap-1 rounded-full bg-fill-primary px-3 py-1 text-xs font-semibold text-on-primary shadow"
+            className="animate-burbuja-entrada pointer-events-auto flex w-fit items-center gap-1 rounded-full bg-fill-primary px-3 py-1 text-xs font-semibold text-on-primary shadow"
           >
             +{ecos.length - MAX_ECOS_VISIBLES} {ecos.length - MAX_ECOS_VISIBLES === 1 ? "eco" : "ecos"} más · Ver
             todos
           </button>
         )}
-      </div>
-
-      {/* Burbujas flotantes en vivo: cualquiera viendo esta misma historia en
-          este momento las ve aparecer (mensajes efímeros + reacciones), estilo
-          comentarios de un live — no bloquean el contenido ni los taps.
-          Ancladas abajo a la izquierda; hasta MAX_BURBUJAS_VISIBLES a la vez. */}
-      <div className="pointer-events-none absolute bottom-24 left-3 right-20 z-20 flex flex-col gap-1.5">
-        {/* Si llegan más de las que caben, en vez de un aviso de "límite
-            alcanzado" se muestra un contador que invita a ver el hilo
-            completo — más útil que un mensaje de error para algo que sigue
-            guardándose igual. */}
+        {/* Si llegan más comentarios en vivo de los que caben, en vez de un
+            aviso de "límite alcanzado" se muestra un contador que invita a
+            ver el hilo completo — más útil que un mensaje de error para algo
+            que sigue guardándose igual. */}
         {comentariosSinMostrar > 0 && (
           <button
             type="button"
             onClick={abrirComentarios}
-            className="pointer-events-auto flex w-fit items-center gap-1 rounded-full bg-fill-primary px-3 py-1 text-xs font-semibold text-on-primary shadow"
+            className="animate-burbuja-entrada pointer-events-auto flex w-fit items-center gap-1 rounded-full bg-fill-primary px-3 py-1 text-xs font-semibold text-on-primary shadow"
           >
             +{comentariosSinMostrar} {comentariosSinMostrar === 1 ? "comentario" : "comentarios"} más · Ver todos
           </button>

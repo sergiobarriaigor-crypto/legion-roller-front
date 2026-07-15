@@ -1,4 +1,5 @@
 import type { PuntoGps } from "./geo";
+import { cargarImagenComoDataUrl } from "./imagenDataUrl";
 
 export interface DatosTarjetaRecorrido {
   puntos: PuntoGps[];
@@ -340,25 +341,6 @@ function construirSvg(
       ${statsSvg}
     </svg>
   `;
-}
-
-// Convierte una imagen propia (misma app, sin problema de CORS) a data URL,
-// para poder incrustarla dentro del SVG con <image href="...">. Si falla por
-// lo que sea, devuelve null y quien la use cae a su respaldo — nunca rompe
-// la generación de la tarjeta.
-function cargarImagenComoDataUrl(ruta: string): Promise<string | null> {
-  return fetch(ruta)
-    .then((res) => (res.ok ? res.blob() : Promise.reject(new Error("no encontrada: " + ruta))))
-    .then(
-      (blob) =>
-        new Promise<string | null>((resolve) => {
-          const lector = new FileReader();
-          lector.onload = () => resolve(typeof lector.result === "string" ? lector.result : null);
-          lector.onerror = () => resolve(null);
-          lector.readAsDataURL(blob);
-        }),
-    )
-    .catch(() => null);
 }
 
 // Genera la tarjeta visual del recorrido (mapa real oscuro + trazo dorado +

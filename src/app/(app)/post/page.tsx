@@ -13,6 +13,7 @@ import { SelectorCompartirPost } from "@/components/Posts/SelectorCompartirPost"
 import { VideoTrimmer } from "@/components/VideoTrimmer";
 import { Avatar } from "@/components/Avatar";
 import { BarraHistorias } from "@/components/Historias/BarraHistorias";
+import { generarTarjetaCompartirPost } from "@/lib/tarjetaPost";
 
 const MAX_FOTOS_POR_POST = 3;
 const DURACION_MAXIMA_VIDEO_SEG = 50;
@@ -34,42 +35,57 @@ function mensajeVencimiento(diasRestantes: number): string {
   return "Vence hoy";
 }
 
-// Comparte 1-3 fotos o el video como archivos reales (no un link) con el
-// selector nativo del sistema — mismo patrón que compartirHistoria() en
-// VisorHistorias.tsx, extendido a múltiples archivos.
+async function compartirArchivo(archivo: File, titulo: string, resena: string) {
+  if (
+    typeof navigator.share === "function" &&
+    typeof navigator.canShare === "function" &&
+    navigator.canShare({ files: [archivo] })
+  ) {
+    await navigator.share({ files: [archivo], title: titulo, text: resena });
+    return;
+  }
+  const enlace = document.createElement("a");
+  enlace.href = URL.createObjectURL(archivo);
+  enlace.download = archivo.name;
+  enlace.click();
+  URL.revokeObjectURL(enlace.href);
+}
+
+// Comparte la publicación como un archivo real (no un link) con el selector
+// nativo del sistema — mismo patrón que compartirHistoria() en
+// VisorHistorias.tsx. Para fotos, en vez de compartir la imagen pelada se
+// arma una vista previa (imagen + título + descripción + logo) con
+// generarTarjetaCompartirPost — así se ve de qué trata la publicación aunque
+// la red social (WhatsApp, Discord, etc.) no muestre el texto del share por
+// separado. El video se sigue compartiendo tal cual: componer texto sobre un
+// video pedía extraer un frame y recodificar, un alcance mucho mayor que no
+// se pidió.
 async function compartirPost(p: Post) {
   try {
-    const urls = p.tipo === "video" && p.videoUrl ? [p.videoUrl] : p.fotos;
-    if (urls.length === 0) {
+    if (p.tipo === "video" && p.videoUrl) {
+      const blob = await (await fetch(p.videoUrl)).blob();
+      const archivo = new File([blob], "post-legion-roller.mp4", { type: blob.type });
+      await compartirArchivo(archivo, p.titulo, p.resena);
+      return;
+    }
+
+    if (p.fotos.length === 0) {
       if (typeof navigator.share === "function") {
         await navigator.share({ title: p.titulo, text: p.resena });
       }
       return;
     }
-    const archivos = await Promise.all(
-      urls.map(async (url, i) => {
-        const blob = await (await fetch(url)).blob();
-        const extension = p.tipo === "video" ? "mp4" : "jpg";
-        return new File([blob], `post-legion-roller-${i + 1}.${extension}`, { type: blob.type });
-      }),
-    );
 
-    if (
-      typeof navigator.share === "function" &&
-      typeof navigator.canShare === "function" &&
-      navigator.canShare({ files: archivos })
-    ) {
-      await navigator.share({ files: archivos, title: p.titulo, text: p.resena });
-      return;
-    }
-
-    const enlace = document.createElement("a");
-    enlace.href = URL.createObjectURL(archivos[0]);
-    enlace.download = archivos[0].name;
-    enlace.click();
-    URL.revokeObjectURL(enlace.href);
+    const blobTarjeta = await generarTarjetaCompartirPost({
+      imagenUrl: p.fotos[0],
+      titulo: p.titulo,
+      resena: p.resena,
+    });
+    const archivo = new File([blobTarjeta], "post-legion-roller.jpg", { type: blobTarjeta.type });
+    await compartirArchivo(archivo, p.titulo, p.resena);
   } catch {
-    // el usuario canceló el panel de compartir, o el navegador lo rechazó
+    // el usuario canceló el panel de compartir, la vista previa no se pudo
+    // generar, o el navegador rechazó el share
   }
 }
 
