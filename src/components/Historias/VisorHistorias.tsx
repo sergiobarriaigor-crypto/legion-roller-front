@@ -7,6 +7,8 @@ import {
   IconVolume,
   IconMessageCircle2,
   IconMessageCircleFilled,
+  IconHeart,
+  IconHeartFilled,
   IconSend2,
 } from "@tabler/icons-react";
 import type { EcoEnHistoria, GrupoHistorias } from "@/lib/historias";
@@ -864,12 +866,11 @@ export function VisorHistorias({
                   aria-label="Reaccionar con un corazón"
                   className="flex h-9 w-9 items-center justify-center text-white/80 transition"
                 >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={miReaccion ? "/corazon2.png" : "/corazon1.png"}
-                    alt=""
-                    className="h-6 w-6 transition"
-                  />
+                  {miReaccion ? (
+                    <IconHeartFilled size={22} className="text-text-accent transition" />
+                  ) : (
+                    <IconHeart size={22} className="text-text-accent transition" />
+                  )}
                 </button>
               </div>
             </div>
