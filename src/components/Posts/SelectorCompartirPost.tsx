@@ -27,7 +27,6 @@ export function SelectorCompartirPost({
   const [busqueda, setBusqueda] = useState("");
   const [seleccionados, setSeleccionados] = useState<number[]>([]);
   const [enviando, setEnviando] = useState(false);
-  const [enviado, setEnviado] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -48,35 +47,19 @@ export function SelectorCompartirPost({
     });
   }
 
+  // Sin pantalla de confirmación intermedia: al compartir con éxito, se
+  // cierra directo (experiencia fluida, sin interrupciones).
   async function enviar() {
     if (!token || seleccionados.length === 0) return;
     setEnviando(true);
     setError("");
     try {
       await compartirPostAUsuarios(post.id, seleccionados, token);
-      setEnviado(true);
+      onCerrar();
     } catch {
       setError("No se pudo compartir la publicación. Probá de nuevo.");
-    } finally {
       setEnviando(false);
     }
-  }
-
-  if (enviado) {
-    return (
-      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-black/90 p-6 text-center" data-no-swipe>
-        <p className="text-sm text-white">
-          Compartido con {seleccionados.length} {seleccionados.length === 1 ? "persona" : "personas"}.
-        </p>
-        <button
-          type="button"
-          onClick={onCerrar}
-          className="rounded-app border border-white/30 px-4 py-2 text-sm text-white"
-        >
-          Cerrar
-        </button>
-      </div>
-    );
   }
 
   return (

@@ -114,6 +114,8 @@ export default function PostPage() {
     comentarioDestacadoId?: number;
   } | null>(null);
   const [postACompartir, setPostACompartir] = useState<Post | null>(null);
+  const [postAEliminar, setPostAEliminar] = useState<Post | null>(null);
+  const [eliminando, setEliminando] = useState(false);
 
   async function cargar() {
     try {
@@ -324,13 +326,17 @@ export default function PostPage() {
     }
   }
 
-  async function eliminar(postId: number) {
-    if (!token) return;
+  async function confirmarEliminar() {
+    if (!token || !postAEliminar) return;
+    setEliminando(true);
     try {
-      await apiDelete(`/posts/${postId}`, token);
+      await apiDelete(`/posts/${postAEliminar.id}`, token);
+      setPostAEliminar(null);
       cargar();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "No se pudo eliminar.");
+    } finally {
+      setEliminando(false);
     }
   }
 
@@ -550,7 +556,7 @@ export default function PostPage() {
               {puedeEliminar && (
                 <button
                   type="button"
-                  onClick={() => eliminar(p.id)}
+                  onClick={() => setPostAEliminar(p)}
                   className="text-xs text-fill-warning underline"
                 >
                   Eliminar
@@ -582,7 +588,9 @@ export default function PostPage() {
               <button
                 type="button"
                 onClick={() =>
-                  setPanelSocial({ postId: p.id, postAutorId: p.autorId, vista: "comentarios" })
+                  setPanelSocial((prev) =>
+                    prev?.postId === p.id ? null : { postId: p.id, postAutorId: p.autorId, vista: "comentarios" },
+                  )
                 }
               >
                 {p.comentariosCount} comentarios
@@ -631,6 +639,35 @@ export default function PostPage() {
           token={token}
           onCerrar={() => setPostACompartir(null)}
         />
+      )}
+
+      {postAEliminar && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-6">
+          <div className="card flex w-full max-w-xs flex-col gap-3 p-5">
+            <h2 className="text-sm font-semibold text-text-accent">Eliminar publicación</h2>
+            <p className="text-xs text-text-secondary">
+              ¿Seguro que quieres eliminar esta publicación? Esta acción no se puede deshacer.
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                disabled={eliminando}
+                onClick={confirmarEliminar}
+                className="rounded-app bg-red-700 px-4 py-2 text-sm text-white disabled:opacity-50"
+              >
+                {eliminando ? "Eliminando..." : "Sí, eliminar"}
+              </button>
+              <button
+                type="button"
+                disabled={eliminando}
+                onClick={() => setPostAEliminar(null)}
+                className="text-xs text-text-secondary underline"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
