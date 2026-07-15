@@ -5,6 +5,7 @@ import { IconX, IconShare } from "@tabler/icons-react";
 import type { GrupoHistorias } from "@/lib/historias";
 import { marcarVistaHistoria, parsearEstiloTexto, toggleReaccionHistoria } from "@/lib/historias";
 import { obtenerSocket } from "@/lib/socket";
+import { tiempoTranscurrido } from "@/lib/tiempo";
 import { useSession } from "@/context/SessionContext";
 import { Avatar } from "@/components/Avatar";
 import { estiloVisualTexto } from "@/components/Historias/TextoSobreImagen";
@@ -25,9 +26,11 @@ const ALTURA_ZONA_SEGURA_PX = 110;
 interface BurbujaFlotante {
   id: string;
   nombre: string;
+  fotoUrl: string | null;
   texto: string;
   esReaccion: boolean;
   saliendo: boolean;
+  createdAt: string;
 }
 
 // Barra de progreso de un segmento, manejada con requestAnimationFrame (en vez
@@ -108,7 +111,14 @@ export function VisorHistorias({
   onClose: () => void;
 }) {
   const { sesion } = useSession();
-  const [indiceGrupo, setIndiceGrupo] = useState(indiceInicial);
+  // Se guarda el autorId del grupo abierto, no su posición en `grupos` — la
+  // lista se reordena sola (no vistos primero) apenas se marca una historia
+  // como vista, así que un índice numérico quedaría apuntando a otro grupo
+  // en cuanto llegue el próximo refetch (sondeo de BarraHistorias) y cerraría
+  // el visor de golpe sin aviso. El autorId es estable ante el reordenamiento.
+  const [grupoAutorId, setGrupoAutorId] = useState(
+    () => grupos[indiceInicial]?.autorId,
+  );
   const [indiceHistoria, setIndiceHistoria] = useState(indiceHistoriaInicial);
   const [duracionVideoMs, setDuracionVideoMs] = useState<number | null>(null);
   const [reaccionLocal, setReaccionLocal] = useState<{ count: number; mia: boolean } | null>(null);
@@ -125,6 +135,10 @@ export function VisorHistorias({
   const [mensaje, setMensaje] = useState("");
   const [mensajeEnviado, setMensajeEnviado] = useState(false);
   const [burbujas, setBurbujas] = useState<BurbujaFlotante[]>([]);
+  // Cuántos comentarios en vivo se quedaron sin lugar en la pila (más de
+  // MAX_BURBUJAS_VISIBLES a la vez) — en vez de un aviso tipo error, se
+  // muestra como un contador chico que invita a abrir el hilo completo.
+  const [comentariosSinMostrar, setComentariosSinMostrar] = useState(0);
   const startYRef = useRef(0);
   const videoRef = useRef<HTMLVideoElement>(null);
   const holdTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -137,9 +151,25 @@ export function VisorHistorias({
   // deep-link. Comparando ids, la segunda invocación ve que no cambió nada.
   const historiaIdAnteriorRef = useRef<number | null>(null);
 
-  function agregarBurbuja(nombre: string, texto: string, esReaccion: boolean) {
+  function agregarBurbuja(
+    nombre: string,
+    fotoUrl: string | null,
+    texto: string,
+    esReaccion: boolean,
+    createdAt: string,
+  ) {
     const id = `${Date.now()}-${Math.random()}`;
-    setBurbujas((prev) => [...prev, { id, nombre, texto, esReaccion, saliendo: false }].slice(-MAX_BURBUJAS_VISIBLES));
+    setBurbujas((prev) => {
+      const siguiente = [...prev, { id, nombre, fotoUrl, texto, esReaccion, saliendo: false, createdAt }];
+      // No cuenta como "sin mostrar" a las que ya estaban saliendo (esas de
+      // todas formas iban a desaparecer solas) — solo a las que se quedaron
+      // sin lugar en la pila por llegar una nueva de más.
+      const activas = siguiente.filter((b) => !b.saliendo).length;
+      if (activas > MAX_BURBUJAS_VISIBLES) {
+        setComentariosSinMostrar((n) => n + (activas - MAX_BURBUJAS_VISIBLES));
+      }
+      return siguiente.slice(-MAX_BURBUJAS_VISIBLES);
+    });
     setTimeout(() => {
       setBurbujas((prev) => prev.map((b) => (b.id === id ? { ...b, saliendo: true } : b)));
       setTimeout(() => {
@@ -148,6 +178,7 @@ export function VisorHistorias({
     }, DURACION_BURBUJA_MS);
   }
 
+  const indiceGrupo = grupos.findIndex((g) => g.autorId === grupoAutorId);
   const grupo = grupos[indiceGrupo];
   const historia = grupo?.historias[indiceHistoria];
 
@@ -156,7 +187,7 @@ export function VisorHistorias({
     if (indiceHistoria < grupo.historias.length - 1) {
       setIndiceHistoria((i) => i + 1);
     } else if (indiceGrupo < grupos.length - 1) {
-      setIndiceGrupo((g) => g + 1);
+      setGrupoAutorId(grupos[indiceGrupo + 1].autorId);
       setIndiceHistoria(0);
     } else {
       onClose();
@@ -168,7 +199,7 @@ export function VisorHistorias({
       setIndiceHistoria((i) => i - 1);
     } else if (indiceGrupo > 0) {
       const anterior = grupos[indiceGrupo - 1];
-      setIndiceGrupo((g) => g - 1);
+      setGrupoAutorId(anterior.autorId);
       setIndiceHistoria(anterior.historias.length - 1);
     }
   }
@@ -192,6 +223,7 @@ export function VisorHistorias({
     setMensaje("");
     setMensajeEnviado(false);
     setBurbujas([]);
+    setComentariosSinMostrar(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [historia?.id]);
 
@@ -209,11 +241,16 @@ export function VisorHistorias({
     const socket = obtenerSocket(token);
     socketRef.current = socket;
 
-    function alRecibirMensaje(data: { nombre: string; texto: string }) {
-      agregarBurbuja(data.nombre, data.texto, false);
+    function alRecibirMensaje(data: {
+      nombre: string;
+      fotoUrl: string | null;
+      texto: string;
+      createdAt: string;
+    }) {
+      agregarBurbuja(data.nombre, data.fotoUrl, data.texto, false, data.createdAt);
     }
-    function alRecibirReaccion(data: { nombre: string }) {
-      agregarBurbuja(data.nombre, "", true);
+    function alRecibirReaccion(data: { nombre: string; fotoUrl: string | null; createdAt: string }) {
+      agregarBurbuja(data.nombre, data.fotoUrl, "", true, data.createdAt);
     }
     socket.on("historia:mensaje", alRecibirMensaje);
     socket.on("historia:reaccion", alRecibirReaccion);
@@ -261,6 +298,13 @@ export function VisorHistorias({
   const miReaccion = reaccionLocal?.mia ?? historia.miReaccion;
 
   // El "patín dorado" de Legión Roller: actualización optimista (se ve al
+  // Abrir el hilo completo "pone al día" al usuario, así que apaga el
+  // contador de comentarios que se quedaron sin lugar en la pila flotante.
+  function abrirComentarios() {
+    setPanelSocial("comentarios");
+    setComentariosSinMostrar(0);
+  }
+
   // toque, sin esperar la respuesta) con reversión si falla la llamada.
   async function reaccionar() {
     if (!token) return;
@@ -525,22 +569,42 @@ export function VisorHistorias({
 
       {/* Burbujas flotantes en vivo: cualquiera viendo esta misma historia en
           este momento las ve aparecer (mensajes efímeros + reacciones), estilo
-          comentarios de un live — no bloquean el contenido ni los taps. */}
+          comentarios de un live — no bloquean el contenido ni los taps.
+          Ancladas abajo a la izquierda; hasta MAX_BURBUJAS_VISIBLES a la vez. */}
       <div className="pointer-events-none absolute bottom-24 left-3 right-20 z-20 flex flex-col gap-1.5">
+        {/* Si llegan más de las que caben, en vez de un aviso de "límite
+            alcanzado" se muestra un contador que invita a ver el hilo
+            completo — más útil que un mensaje de error para algo que sigue
+            guardándose igual. */}
+        {comentariosSinMostrar > 0 && (
+          <button
+            type="button"
+            onClick={abrirComentarios}
+            className="pointer-events-auto flex w-fit items-center gap-1 rounded-full bg-fill-primary px-3 py-1 text-xs font-semibold text-on-primary shadow"
+          >
+            +{comentariosSinMostrar} {comentariosSinMostrar === 1 ? "comentario" : "comentarios"} más · Ver todos
+          </button>
+        )}
         {burbujas.map((b) => (
           <div
             key={b.id}
-            className={`animate-burbuja-entrada flex w-fit max-w-full items-center gap-1.5 rounded-full bg-black/60 px-3 py-1.5 text-sm text-white transition-all duration-300 ${
+            className={`animate-burbuja-entrada flex w-fit max-w-full items-center gap-2 rounded-full bg-black/60 py-1.5 pl-1.5 pr-3 text-sm text-white transition-all duration-300 ${
               b.saliendo ? "translate-y-2 opacity-0" : "translate-y-0 opacity-100"
             }`}
           >
-            <span className="font-semibold text-text-accent">{b.nombre}</span>
-            {b.esReaccion ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src="/corazon2.png" alt="" className="h-4 w-4 shrink-0" />
-            ) : (
-              <span className="truncate">{b.texto}</span>
-            )}
+            <Avatar fotoUrl={b.fotoUrl} nombre={b.nombre} tamano={22} />
+            <div className="flex min-w-0 flex-col leading-tight">
+              <span className="flex items-center gap-1.5">
+                <span className="font-semibold text-text-accent">{b.nombre}</span>
+                {b.esReaccion ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src="/corazon2.png" alt="" className="h-4 w-4 shrink-0" />
+                ) : (
+                  <span className="truncate">{b.texto}</span>
+                )}
+              </span>
+              <span className="text-[10px] text-white/50">{tiempoTranscurrido(b.createdAt)}</span>
+            </div>
           </div>
         ))}
       </div>
@@ -592,7 +656,7 @@ export function VisorHistorias({
               <span className="h-4 w-px bg-white/25" aria-hidden />
               <button
                 type="button"
-                onClick={() => setPanelSocial("comentarios")}
+                onClick={abrirComentarios}
                 className="flex items-center gap-1.5 text-sm font-semibold text-white"
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -652,7 +716,7 @@ export function VisorHistorias({
                   todos, estilo TikTok) — antes solo el autor tenía este botón. */}
               <button
                 type="button"
-                onClick={() => setPanelSocial("comentarios")}
+                onClick={abrirComentarios}
                 aria-label="Ver comentarios"
                 className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-black/60 transition"
               >
