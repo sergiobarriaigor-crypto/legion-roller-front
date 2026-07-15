@@ -623,7 +623,7 @@ export function VisorHistorias({
           en vivo abajo, cerca del campo de escritura — un solo stack para
           que nunca se superpongan entre sí, con la misma animación de
           entrada para ambos tipos. */}
-      <div className="pointer-events-none absolute bottom-24 left-3 right-20 z-20 flex flex-col gap-1.5">
+      <div className="pointer-events-none absolute bottom-32 left-3 right-20 z-20 flex flex-col gap-1.5">
         {ecos.slice(-MAX_ECOS_VISIBLES).map((e) => (
           <button
             key={e.id}
