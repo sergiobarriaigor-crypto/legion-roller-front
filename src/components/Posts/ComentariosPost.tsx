@@ -12,6 +12,7 @@ import {
   type ComentarioPostDetalle,
 } from "@/lib/posts";
 import { tiempoTranscurrido } from "@/lib/tiempo";
+import { primerNombre, separarMencion } from "@/lib/texto";
 import { useSession } from "@/context/SessionContext";
 import { Avatar } from "@/components/Avatar";
 
@@ -44,7 +45,14 @@ export function ComentariosPost({
   const [reacciones, setReacciones] = useState<ReaccionPostDetalle[] | null>(null);
   const [comentarios, setComentarios] = useState<ComentarioPostDetalle[] | null>(null);
   const [texto, setTexto] = useState("");
-  const [respondiendoA, setRespondiendoA] = useState<{ id: number; nombre: string } | null>(null);
+  // `id` siempre es la raíz del hilo (no el comentario que se está
+  // respondiendo) — mismo patrón que PanelSocialHistoria.tsx: un hilo de
+  // respuestas se guarda plano bajo el comentario raíz, y "mencion" marca si
+  // hace falta anteponer "@Nombre " para no perder el contexto de a quién le
+  // respondés cuando no es la raíz (que ya se distingue por la sangría).
+  const [respondiendoA, setRespondiendoA] = useState<{ id: number; nombre: string; mencion: boolean } | null>(
+    null,
+  );
 
   useEffect(() => {
     listarReaccionesPost(postId, token)
@@ -67,7 +75,10 @@ export function ComentariosPost({
     const contenido = texto.trim();
     if (!contenido || !token) return;
     try {
-      const nuevo = await crearComentarioPost(postId, contenido, respondiendoA?.id, token);
+      const textoFinal = respondiendoA?.mencion
+        ? `@${primerNombre(respondiendoA.nombre)} ${contenido}`
+        : contenido;
+      const nuevo = await crearComentarioPost(postId, textoFinal, respondiendoA?.id, token);
       setComentarios((prev) => (prev ? [...prev, nuevo] : prev));
       setTexto("");
       setRespondiendoA(null);
@@ -111,6 +122,7 @@ export function ComentariosPost({
 
   function Fila({ c, esRespuesta }: { c: ComentarioPostDetalle; esRespuesta?: boolean }) {
     const destacado = c.id === comentarioDestacadoId;
+    const { mencion, resto } = separarMencion(c.texto);
     return (
       <div
         id={`comentario-post-${c.id}`}
@@ -121,7 +133,9 @@ export function ComentariosPost({
         <Avatar fotoUrl={c.fotoUrl} nombre={c.nombre} tamano={esRespuesta ? 24 : 28} />
         <div className="flex flex-1 flex-col">
           <p className="text-xs text-text-secondary">
-            <span className="font-semibold text-text-primary">{c.nombre}:</span> {c.texto}
+            <span className="font-semibold text-text-primary">{c.nombre}:</span>{" "}
+            {mencion && <span className="font-semibold text-text-accent">{mencion} </span>}
+            {resto}
           </p>
           <div className="mt-0.5 flex items-center gap-3 text-[11px] text-text-muted">
             <span>{tiempoTranscurrido(c.createdAt)}</span>
@@ -133,7 +147,13 @@ export function ComentariosPost({
               <IconHeart size={12} fill={c.miReaccion ? "currentColor" : "none"} />
               {c.reaccionesCount > 0 && c.reaccionesCount}
             </button>
-            <button type="button" onClick={() => setRespondiendoA({ id: c.id, nombre: c.nombre })} className="font-semibold">
+            <button
+              type="button"
+              onClick={() =>
+                setRespondiendoA({ id: c.respuestaAId ?? c.id, nombre: c.nombre, mencion: !!c.respuestaAId })
+              }
+              className="font-semibold"
+            >
               Responder
             </button>
             {puedeEliminar(c) && (

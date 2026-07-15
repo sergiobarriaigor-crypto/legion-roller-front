@@ -11,6 +11,7 @@ import {
 } from "@/lib/historias";
 import { obtenerSocket } from "@/lib/socket";
 import { tiempoTranscurrido } from "@/lib/tiempo";
+import { primerNombre, separarMencion } from "@/lib/texto";
 import { useSession } from "@/context/SessionContext";
 import { Avatar } from "@/components/Avatar";
 
@@ -43,7 +44,15 @@ export function PanelSocialHistoria({
   const [reacciones, setReacciones] = useState<ReaccionHistoriaDetalle[] | null>(null);
   const [comentarios, setComentarios] = useState<ComentarioHistoriaDetalle[] | null>(null);
   const [texto, setTexto] = useState("");
-  const [respondiendoA, setRespondiendoA] = useState<{ id: number; nombre: string } | null>(null);
+  // `id` siempre es la raíz del hilo (no el comentario que se está
+  // respondiendo): un hilo de respuestas se guarda plano, todas apuntando al
+  // mismo comentario raíz vía `respuestaAId`, sin importar a cuál respuesta
+  // en particular le contestás. `mencion` marca si hace falta anteponer
+  // "@Nombre " al texto para no perder ese contexto (solo cuando `c` en sí ya
+  // era una respuesta — si es la raíz, la sangría ya deja claro a quién).
+  const [respondiendoA, setRespondiendoA] = useState<{ id: number; nombre: string; mencion: boolean } | null>(
+    null,
+  );
 
   useEffect(() => {
     listarReaccionesHistoria(historiaId, token)
@@ -80,9 +89,12 @@ export function PanelSocialHistoria({
   function enviar() {
     const contenido = texto.trim();
     if (!contenido || !token) return;
+    const textoFinal = respondiendoA?.mencion
+      ? `@${primerNombre(respondiendoA.nombre)} ${contenido}`
+      : contenido;
     obtenerSocket(token).emit("historia:mensaje", {
       historiaId,
-      texto: contenido,
+      texto: textoFinal,
       respuestaAId: respondiendoA?.id,
     });
     setTexto("");
@@ -112,6 +124,7 @@ export function PanelSocialHistoria({
 
   function Fila({ c, esRespuesta }: { c: ComentarioHistoriaDetalle; esRespuesta?: boolean }) {
     const destacado = c.id === comentarioDestacadoId;
+    const { mencion, resto } = separarMencion(c.texto);
     return (
       <div
         id={`comentario-${c.id}`}
@@ -125,11 +138,16 @@ export function PanelSocialHistoria({
             <span className="text-sm font-semibold text-white">{c.nombre}</span>
             <span className="text-[11px] text-white/50">{tiempoTranscurrido(c.createdAt)}</span>
           </div>
-          <span className="text-sm text-white/80">{c.texto}</span>
+          <span className="text-sm text-white/80">
+            {mencion && <span className="font-semibold text-text-accent">{mencion} </span>}
+            {resto}
+          </span>
           <div className="mt-1 flex items-center gap-3">
             <button
               type="button"
-              onClick={() => setRespondiendoA({ id: c.id, nombre: c.nombre })}
+              onClick={() =>
+                setRespondiendoA({ id: c.respuestaAId ?? c.id, nombre: c.nombre, mencion: !!c.respuestaAId })
+              }
               className="text-xs font-semibold text-white/50"
             >
               Responder
