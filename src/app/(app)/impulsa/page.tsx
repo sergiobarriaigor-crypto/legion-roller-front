@@ -1,10 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { IconShare, IconUsers } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
 import { apiGet, apiPost, apiDelete, ApiError } from "@/lib/api";
 import type { Emprendedor } from "@/lib/emprendedores";
 import { ImageUploadCrop } from "@/components/ImageUploadCrop";
+import { ComentariosEmprendedor } from "@/components/Impulsa/ComentariosEmprendedor";
+import { SelectorCompartirEmprendedor } from "@/components/Impulsa/SelectorCompartirEmprendedor";
+import { generarTarjetaCompartirEmprendedor } from "@/lib/tarjetaEmprendedor";
 
 type SubTab = "directorio" | "ficha";
 
@@ -19,10 +24,55 @@ const FICHA_VACIA = {
   tiktok: "",
 };
 
+async function compartirArchivo(archivo: File, titulo: string, resena: string) {
+  if (
+    typeof navigator.share === "function" &&
+    typeof navigator.canShare === "function" &&
+    navigator.canShare({ files: [archivo] })
+  ) {
+    await navigator.share({ files: [archivo], title: titulo, text: resena });
+    return;
+  }
+  const enlace = document.createElement("a");
+  enlace.href = URL.createObjectURL(archivo);
+  enlace.download = archivo.name;
+  enlace.click();
+  URL.revokeObjectURL(enlace.href);
+}
+
+// Comparte la ficha como un archivo real (no un link) con el selector nativo
+// del sistema — mismo patrón que compartirPost() en post/page.tsx: en vez de
+// compartir la foto pelada se arma una vista previa (imagen + nombre del
+// negocio + descripción + logo) con generarTarjetaCompartirEmprendedor.
+async function compartirEmprendedor(e: Emprendedor) {
+  try {
+    if (e.fotos.length === 0) {
+      if (typeof navigator.share === "function") {
+        await navigator.share({ title: e.nombreNegocio, text: e.descripcion });
+      }
+      return;
+    }
+
+    const blobTarjeta = await generarTarjetaCompartirEmprendedor({
+      imagenUrl: e.fotos[0],
+      nombreNegocio: e.nombreNegocio,
+      descripcion: e.descripcion,
+    });
+    const archivo = new File([blobTarjeta], "emprendedor-legion-roller.jpg", { type: blobTarjeta.type });
+    await compartirArchivo(archivo, e.nombreNegocio, e.descripcion);
+  } catch {
+    // el usuario canceló el panel de compartir, la vista previa no se pudo
+    // generar, o el navegador rechazó el share
+  }
+}
+
 export default function ImpulsaPage() {
   const { sesion } = useSession();
   const token = sesion?.token ?? null;
   const puedeInteractuar = sesion?.rol === "usuario" || sesion?.rol === "admin";
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const ultimoDeepLinkRef = useRef<string | null>(null);
 
   const [subTab, setSubTab] = useState<SubTab>("directorio");
   const [directorio, setDirectorio] = useState<Emprendedor[]>([]);
@@ -30,8 +80,13 @@ export default function ImpulsaPage() {
   const [form, setForm] = useState(FICHA_VACIA);
   const [fotos, setFotos] = useState<string[]>([]);
   const [nuevoAnuncio, setNuevoAnuncio] = useState("");
-  const [resenaAbierta, setResenaAbierta] = useState<number | null>(null);
-  const [textoResena, setTextoResena] = useState("");
+  const [panelResenas, setPanelResenas] = useState<{
+    emprendedorId: number;
+    resenaDestacadaId?: number;
+  } | null>(null);
+  const [emprendedorACompartir, setEmprendedorACompartir] = useState<Emprendedor | null>(null);
+  const [emprendedorAEliminar, setEmprendedorAEliminar] = useState<Emprendedor | null>(null);
+  const [eliminandoFicha, setEliminandoFicha] = useState(false);
   const [error, setError] = useState("");
   const [enviando, setEnviando] = useState(false);
 
@@ -39,8 +94,10 @@ export default function ImpulsaPage() {
     try {
       const lista = await apiGet<Emprendedor[]>("/emprendedores", null);
       setDirectorio(lista);
+      return lista;
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "No se pudo cargar el directorio.");
+      return null;
     }
   }
 
@@ -68,10 +125,51 @@ export default function ImpulsaPage() {
   }
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     cargarDirectorio();
     cargarMiFicha();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
+
+  // Deep-link desde la notificación de "te comentaron/respondieron una
+  // reseña" (ver AppHeader.tsx): cambia al Directorio y abre directo el hilo
+  // de reseñas de esa ficha (mismo patrón que post/page.tsx).
+  async function cargarYManejarDeepLink() {
+    const emprendedorIdParam = searchParams.get("emprendedor");
+    if (!emprendedorIdParam) return;
+    const resenaIdParam = searchParams.get("resena");
+    const clave = `${emprendedorIdParam}:${resenaIdParam ?? ""}`;
+    if (ultimoDeepLinkRef.current === clave) return;
+    ultimoDeepLinkRef.current = clave;
+
+    setSubTab("directorio");
+    const lista = await cargarDirectorio();
+    if (!lista) return;
+
+    const emprendedorId = Number(emprendedorIdParam);
+    const ficha = lista.find((f) => f.id === emprendedorId);
+    if (ficha) {
+      setPanelResenas({
+        emprendedorId: ficha.id,
+        resenaDestacadaId: resenaIdParam ? Number(resenaIdParam) : undefined,
+      });
+    }
+    router.replace("/impulsa", { scroll: false });
+  }
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    cargarYManejarDeepLink();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (!panelResenas) return;
+    document
+      .getElementById(`emprendedor-${panelResenas.emprendedorId}`)
+      ?.scrollIntoView({ block: "start", behavior: "smooth" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [panelResenas?.emprendedorId]);
 
   async function guardarFicha(e: React.FormEvent) {
     e.preventDefault();
@@ -100,15 +198,24 @@ export default function ImpulsaPage() {
     }
   }
 
-  async function eliminarFicha() {
+  // Confirmación previa (mismo patrón que eliminar un post/una ruta) — se usa
+  // tanto desde el botón "Eliminar" de la tarjeta en el Directorio (solo
+  // visible para el dueño) como desde "Eliminar mi ficha" en la pestaña Mi
+  // ficha, reusando el mismo endpoint (siempre opera sobre la ficha del
+  // propio usuario autenticado, nunca sobre la de otro).
+  async function confirmarEliminarFicha() {
     if (!token) return;
+    setEliminandoFicha(true);
     try {
       await apiDelete("/emprendedores/mi-ficha", token);
       setMiFicha(null);
       setForm(FICHA_VACIA);
+      setEmprendedorAEliminar(null);
       cargarDirectorio();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "No se pudo eliminar tu ficha.");
+    } finally {
+      setEliminandoFicha(false);
     }
   }
 
@@ -140,17 +247,6 @@ export default function ImpulsaPage() {
       cargarDirectorio();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "No se pudo reaccionar.");
-    }
-  }
-
-  async function dejarResena(id: number) {
-    if (!token || !textoResena.trim()) return;
-    try {
-      await apiPost(`/emprendedores/${id}/resenas`, { texto: textoResena }, token);
-      setTextoResena("");
-      cargarDirectorio();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "No se pudo dejar la reseña.");
     }
   }
 
@@ -188,93 +284,111 @@ export default function ImpulsaPage() {
               Todavía no hay emprendedores aprobados en el directorio.
             </p>
           )}
-          {directorio.map((e) => (
-            <div key={e.id} className="card flex flex-col gap-2 p-4">
-              <div>
-                <p className="text-sm font-semibold text-text-accent">{e.nombreNegocio}</p>
-                <p className="text-xs text-text-muted">
-                  {e.rubro} · {e.nombreDuenio}
-                </p>
-              </div>
-              {e.fotos.length > 0 && (
-                <div className="flex gap-2 overflow-x-auto">
-                  {e.fotos.map((url) => (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      key={url}
-                      src={url}
-                      alt={e.nombreNegocio}
-                      className="h-20 w-20 shrink-0 rounded-app object-cover"
-                    />
-                  ))}
-                </div>
-              )}
-              <p className="text-sm text-text-secondary">{e.descripcion}</p>
-              <p className="text-xs text-text-primary">Contacto: {e.contacto}</p>
-              {e.ubicacion && <p className="text-xs text-text-muted">{e.ubicacion}</p>}
-
-              <div className="flex gap-3 text-xs text-text-muted">
-                {e.instagram && <span>IG: {e.instagram}</span>}
-                {e.facebook && <span>FB: {e.facebook}</span>}
-                {e.tiktok && <span>TikTok: {e.tiktok}</span>}
-              </div>
-
-              {e.anuncios.length > 0 && (
-                <div className="flex flex-col gap-1 rounded-app bg-bg-accent p-2">
-                  {e.anuncios.map((a) => (
-                    <p key={a.id} className="text-xs text-amber-text">
-                      📣 {a.texto}
+          {directorio.map((e) => {
+            const esDuenio = sesion?.id === e.miembroId;
+            return (
+              <div key={e.id} id={`emprendedor-${e.id}`} className="card flex flex-col gap-2 p-4">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-text-accent">{e.nombreNegocio}</p>
+                    <p className="text-xs text-text-muted">
+                      {e.rubro} · {e.nombreDuenio}
                     </p>
-                  ))}
-                </div>
-              )}
-
-              <div className="flex items-center gap-4 border-t border-border pt-2 text-xs text-text-secondary">
-                {puedeInteractuar ? (
-                  <button type="button" onClick={() => reaccionar(e.id)}>
-                    ★ Me gusta ({e.reaccionesCount})
-                  </button>
-                ) : (
-                  <span>{e.reaccionesCount} me gusta</span>
-                )}
-                <button
-                  type="button"
-                  onClick={() => setResenaAbierta(resenaAbierta === e.id ? null : e.id)}
-                >
-                  {e.resenas.length} reseñas
-                </button>
-              </div>
-
-              {resenaAbierta === e.id && (
-                <div className="flex flex-col gap-2">
-                  {e.resenas.map((r) => (
-                    <p key={r.id} className="text-xs text-text-secondary">
-                      <span className="font-semibold text-text-primary">{r.autorNombre}:</span>{" "}
-                      {r.texto}
-                    </p>
-                  ))}
-                  {puedeInteractuar && (
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        placeholder="Escribe una reseña..."
-                        value={textoResena}
-                        onChange={(ev) => setTextoResena(ev.target.value)}
-                        className="flex-1 rounded-app border border-border bg-surface-2 px-3 py-1 text-xs text-text-primary outline-none"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => dejarResena(e.id)}
-                        className="rounded-app bg-fill-primary px-3 py-1 text-xs text-on-primary"
-                      >
-                        Enviar
-                      </button>
-                    </div>
+                  </div>
+                  {esDuenio && (
+                    <button
+                      type="button"
+                      onClick={() => setEmprendedorAEliminar(e)}
+                      className="text-xs text-fill-warning underline"
+                    >
+                      Eliminar
+                    </button>
                   )}
                 </div>
-              )}
-            </div>
-          ))}
+                {e.fotos.length > 0 && (
+                  <div className="flex gap-2 overflow-x-auto">
+                    {e.fotos.map((url) => (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        key={url}
+                        src={url}
+                        alt={e.nombreNegocio}
+                        className="h-20 w-20 shrink-0 rounded-app object-cover"
+                      />
+                    ))}
+                  </div>
+                )}
+                <p className="text-sm text-text-secondary">{e.descripcion}</p>
+                <p className="text-xs text-text-primary">Contacto: {e.contacto}</p>
+                {e.ubicacion && <p className="text-xs text-text-muted">{e.ubicacion}</p>}
+
+                <div className="flex gap-3 text-xs text-text-muted">
+                  {e.instagram && <span>IG: {e.instagram}</span>}
+                  {e.facebook && <span>FB: {e.facebook}</span>}
+                  {e.tiktok && <span>TikTok: {e.tiktok}</span>}
+                </div>
+
+                {e.anuncios.length > 0 && (
+                  <div className="flex flex-col gap-1 rounded-app bg-bg-accent p-2">
+                    {e.anuncios.map((a) => (
+                      <p key={a.id} className="text-xs text-amber-text">
+                        📣 {a.texto}
+                      </p>
+                    ))}
+                  </div>
+                )}
+
+                <div className="flex items-center gap-4 border-t border-border pt-2 text-xs text-text-secondary">
+                  {puedeInteractuar ? (
+                    <button type="button" onClick={() => reaccionar(e.id)}>
+                      ★ Me gusta ({e.reaccionesCount})
+                    </button>
+                  ) : (
+                    <span>{e.reaccionesCount} me gusta</span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setPanelResenas((prev) => (prev?.emprendedorId === e.id ? null : { emprendedorId: e.id }))
+                    }
+                  >
+                    {e.resenasCount} reseñas
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => compartirEmprendedor(e)}
+                    className="ml-auto flex items-center gap-1"
+                  >
+                    <IconShare size={14} />
+                    Compartir
+                  </button>
+                  {puedeInteractuar && (
+                    <button
+                      type="button"
+                      onClick={() => setEmprendedorACompartir(e)}
+                      aria-label="Compartir a un usuario"
+                      className="flex items-center gap-1"
+                    >
+                      <IconUsers size={14} />
+                    </button>
+                  )}
+                </div>
+
+                {panelResenas?.emprendedorId === e.id && (
+                  <ComentariosEmprendedor
+                    emprendedorId={e.id}
+                    fichaDuenioId={e.miembroId}
+                    resenaDestacadaId={panelResenas.resenaDestacadaId}
+                    token={token}
+                    onCerrar={() => {
+                      setPanelResenas(null);
+                      cargarDirectorio();
+                    }}
+                  />
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -377,7 +491,7 @@ export default function ImpulsaPage() {
             {miFicha && (
               <button
                 type="button"
-                onClick={eliminarFicha}
+                onClick={() => setEmprendedorAEliminar(miFicha)}
                 className="text-xs text-fill-warning underline"
               >
                 Eliminar mi ficha
@@ -418,6 +532,44 @@ export default function ImpulsaPage() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {emprendedorACompartir && (
+        <SelectorCompartirEmprendedor
+          emprendedor={emprendedorACompartir}
+          propioId={sesion?.id}
+          token={token}
+          onCerrar={() => setEmprendedorACompartir(null)}
+        />
+      )}
+
+      {emprendedorAEliminar && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-6">
+          <div className="card flex w-full max-w-xs flex-col gap-3 p-5">
+            <h2 className="text-sm font-semibold text-text-accent">Eliminar ficha</h2>
+            <p className="text-xs text-text-secondary">
+              ¿Seguro que quieres eliminar tu ficha de emprendedor? Esta acción no se puede deshacer.
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                disabled={eliminandoFicha}
+                onClick={confirmarEliminarFicha}
+                className="rounded-app bg-red-700 px-4 py-2 text-sm text-white disabled:opacity-50"
+              >
+                {eliminandoFicha ? "Eliminando..." : "Sí, eliminar"}
+              </button>
+              <button
+                type="button"
+                disabled={eliminandoFicha}
+                onClick={() => setEmprendedorAEliminar(null)}
+                className="text-xs text-text-secondary underline"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

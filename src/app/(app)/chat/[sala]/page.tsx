@@ -88,15 +88,22 @@ export default function ConversacionPage() {
         )}
         {mensajes.map((m) => {
           const esMio = m.autorId === sesion?.id;
-          // Post compartido: la burbuja se vuelve una tarjeta clickeable que
-          // lleva directo a la publicación (mismo deep-link que usa la
-          // campana de notificaciones).
-          if (m.referenciaTipo === "post" && m.referenciaId !== null) {
+          // Post o ficha de emprendedor compartidos: la burbuja se vuelve una
+          // tarjeta clickeable que lleva directo al contenido (mismo
+          // deep-link que usa la campana de notificaciones).
+          if (
+            (m.referenciaTipo === "post" || m.referenciaTipo === "emprendedor") &&
+            m.referenciaId !== null
+          ) {
+            const destino =
+              m.referenciaTipo === "emprendedor"
+                ? `/impulsa?emprendedor=${m.referenciaId}`
+                : `/post?post=${m.referenciaId}`;
             return (
               <div key={m.id} className={`flex flex-col ${esMio ? "items-end" : "items-start"}`}>
                 <button
                   type="button"
-                  onClick={() => router.push(`/post?post=${m.referenciaId}`)}
+                  onClick={() => router.push(destino)}
                   className={`flex max-w-[75%] items-center gap-2 rounded-app px-3 py-2 text-left text-sm ${
                     esMio ? "btn-hero" : "border border-border text-text-primary"
                   }`}

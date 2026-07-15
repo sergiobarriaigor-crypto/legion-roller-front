@@ -38,12 +38,13 @@ export interface MiembroSimple {
   fotoUrl?: string | null;
 }
 
-// Notificación para la campana: alguien me compartió un post por chat y
-// todavía no vi ese mensaje.
+// Notificación para la campana: alguien me compartió un post o una ficha de
+// emprendedor por chat y todavía no vi ese mensaje.
 export interface CompartidoSinLeer {
   mensajeId: number;
   sala: string;
-  postId: number;
+  tipo: "post" | "emprendedor";
+  referenciaId: number;
   autorNombre: string;
   autorFotoUrl: string | null;
   createdAt: string;

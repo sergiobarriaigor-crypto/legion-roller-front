@@ -24,6 +24,11 @@ import {
   type RespuestaPostSinLeer,
   type ReaccionPostAgrupadaSinLeer,
 } from "@/lib/posts";
+import {
+  listarRespuestasSinLeerImpulsa,
+  marcarRespuestaLeidaImpulsa,
+  type RespuestaEmprendedorSinLeer,
+} from "@/lib/emprendedores";
 import { tiempoTranscurrido } from "@/lib/tiempo";
 import { SosButton } from "@/components/SosButton";
 import { PopupMencion } from "@/components/Historias/PopupMencion";
@@ -39,6 +44,7 @@ export function AppHeader() {
   const [reaccionesAgrupadas, setReaccionesAgrupadas] = useState<ReaccionAgrupadaSinLeer[]>([]);
   const [respuestasSinLeerPost, setRespuestasSinLeerPost] = useState<RespuestaPostSinLeer[]>([]);
   const [reaccionesAgrupadasPost, setReaccionesAgrupadasPost] = useState<ReaccionPostAgrupadaSinLeer[]>([]);
+  const [respuestasSinLeerImpulsa, setRespuestasSinLeerImpulsa] = useState<RespuestaEmprendedorSinLeer[]>([]);
   const [compartidosSinLeer, setCompartidosSinLeer] = useState<CompartidoSinLeer[]>([]);
   const [mostrarLista, setMostrarLista] = useState(false);
   const [mencionAbierta, setMencionAbierta] = useState<Historia | null>(null);
@@ -153,6 +159,23 @@ export function AppHeader() {
     return () => clearInterval(intervalo);
   }, [token, sesion?.rol]);
 
+  // Respuestas a mis reseñas en Impulsa que todavía no vi.
+  useEffect(() => {
+    if (!token || sesion?.rol === "visitante") return;
+
+    async function revisarRespuestasImpulsa() {
+      try {
+        setRespuestasSinLeerImpulsa(await listarRespuestasSinLeerImpulsa(token));
+      } catch {
+        // silencioso
+      }
+    }
+
+    revisarRespuestasImpulsa();
+    const intervalo = setInterval(revisarRespuestasImpulsa, 20000);
+    return () => clearInterval(intervalo);
+  }, [token, sesion?.rol]);
+
   // Posts que me compartieron por chat y todavía no vi.
   useEffect(() => {
     if (!token || sesion?.rol === "visitante") return;
@@ -222,14 +245,28 @@ export function AppHeader() {
     return `${n1}, ${n2} y otras ${r.total - 2} personas reaccionaron a tu publicación`;
   }
 
+  // Mismo mecanismo que las notificaciones de Post, apuntando a /impulsa con
+  // la ficha en vez del post (impulsa/page.tsx interpreta estos parámetros).
+  function irARespuestaImpulsa(r: RespuestaEmprendedorSinLeer) {
+    setMostrarLista(false);
+    setRespuestasSinLeerImpulsa((prev) => prev.filter((x) => x.id !== r.id));
+    if (token) marcarRespuestaLeidaImpulsa(r.id, token).catch(() => {});
+    router.push(`/impulsa?emprendedor=${r.emprendedorId}&resena=${r.id}`);
+  }
+
   // Marcar leído no tiene endpoint propio: abrir la conversación (GET
   // /chat/mensajes/:sala) ya actualiza LecturaChat como efecto secundario —
-  // se descarta el resultado, solo interesa navegar directo al post.
+  // se descarta el resultado, solo interesa navegar directo al post o ficha
+  // según corresponda.
   function irACompartido(c: CompartidoSinLeer) {
     setMostrarLista(false);
     setCompartidosSinLeer((prev) => prev.filter((x) => x.mensajeId !== c.mensajeId));
     if (token) apiGet(`/chat/mensajes/${c.sala}`, token).catch(() => {});
-    router.push(`/post?post=${c.postId}`);
+    if (c.tipo === "emprendedor") {
+      router.push(`/impulsa?emprendedor=${c.referenciaId}`);
+    } else {
+      router.push(`/post?post=${c.referenciaId}`);
+    }
   }
 
   async function responderMencion(aceptar: boolean) {
@@ -252,6 +289,7 @@ export function AppHeader() {
     reaccionesAgrupadas.length +
     respuestasSinLeerPost.length +
     reaccionesAgrupadasPost.length +
+    respuestasSinLeerImpulsa.length +
     compartidosSinLeer.length;
 
   return (
@@ -418,6 +456,24 @@ export function AppHeader() {
                       </span>
                     </button>
                   ))}
+                  {respuestasSinLeerImpulsa.map((r) => (
+                    <button
+                      key={`respuesta-impulsa-${r.id}`}
+                      type="button"
+                      onClick={() => irARespuestaImpulsa(r)}
+                      className="flex w-full items-start gap-2 rounded-app px-2 py-2 text-left text-sm text-text-primary hover:bg-bg-accent"
+                    >
+                      <Avatar fotoUrl={r.autorFotoUrl} nombre={r.autorNombre} tamano={32} />
+                      <span className="flex-1">
+                        <strong>{r.autorNombre}</strong>{" "}
+                        {r.esRespuesta ? "respondió tu reseña" : "comentó tu ficha"}: &ldquo;
+                        {r.texto.length > 40 ? `${r.texto.slice(0, 40)}…` : r.texto}&rdquo;
+                        <span className="block text-[11px] text-text-secondary">
+                          {tiempoTranscurrido(r.createdAt)}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
                   {compartidosSinLeer.map((c) => (
                     <button
                       key={`compartido-${c.mensajeId}`}
@@ -427,7 +483,8 @@ export function AppHeader() {
                     >
                       <Avatar fotoUrl={c.autorFotoUrl} nombre={c.autorNombre} tamano={32} />
                       <span className="flex-1">
-                        <strong>{c.autorNombre}</strong> te compartió una publicación
+                        <strong>{c.autorNombre}</strong>{" "}
+                        {c.tipo === "emprendedor" ? "te compartió un emprendimiento" : "te compartió una publicación"}
                         <span className="block text-[11px] text-text-secondary">
                           {tiempoTranscurrido(c.createdAt)}
                         </span>
