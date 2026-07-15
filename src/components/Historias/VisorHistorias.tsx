@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { IconX, IconShare, IconVolume, IconMessageCircle2 } from "@tabler/icons-react";
+import { IconX, IconShare, IconVolume, IconMessageCircle2, IconSend2 } from "@tabler/icons-react";
 import type { EcoEnHistoria, GrupoHistorias } from "@/lib/historias";
 import {
   eliminarEcoHistoria,
@@ -818,49 +818,54 @@ export function VisorHistorias({
               {/* Botón de enviar independiente: antes reemplazaba al corazón
                   al escribir, lo que resultaba poco intuitivo. Ahora es un
                   botón propio, deshabilitado si no hay texto; el corazón
-                  siempre queda visible y siempre reacciona. */}
+                  siempre queda visible y siempre reacciona. Es el único
+                  elemento con relleno dorado sólido — marca la acción
+                  principal sin recurrir a brillos. */}
               <button
                 type="button"
                 onClick={enviarMensajeHistoria}
                 disabled={!mensaje.trim()}
                 aria-label="Enviar mensaje"
-                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-black/60 text-2xl font-semibold text-fill-primary transition disabled:opacity-40"
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-fill-primary text-on-primary transition disabled:opacity-40"
               >
-                <span className="drop-shadow-[0_0_8px_rgba(231,193,104,0.9)]">➤</span>
+                <IconSend2 size={18} />
               </button>
-              {/* Cualquiera puede abrir el hilo de comentarios (visible para
-                  todos, estilo TikTok) — antes solo el autor tenía este botón. */}
-              <button
-                type="button"
-                onClick={abrirComentarios}
-                aria-label="Ver comentarios"
-                className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-black/60 transition"
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src="/habla.png"
-                  alt=""
-                  className="h-7 w-7 drop-shadow-[0_0_8px_rgba(231,193,104,0.9)]"
-                />
-                {historia.comentariosCount > 0 && (
-                  <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-fill-primary px-1 text-[10px] text-on-primary">
-                    {historia.comentariosCount}
-                  </span>
-                )}
-              </button>
-              <button
-                type="button"
-                onClick={reaccionar}
-                aria-label="Reaccionar con un corazón"
-                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-black/60 transition"
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={miReaccion ? "/corazon2.png" : "/corazon1.png"}
-                  alt=""
-                  className="h-7 w-7 transition drop-shadow-[0_0_8px_rgba(231,193,104,0.9)]"
-                />
-              </button>
+              {/* Comentarios y reacción agrupados en una sola pastilla neutra
+                  (sin brillo, ambos íconos en blanco translúcido) — antes eran
+                  dos círculos sueltos con el mismo resplandor dorado que el
+                  botón de enviar, lo que competía visualmente con la acción
+                  principal. Cualquiera puede abrir el hilo de comentarios
+                  (visible para todos, estilo TikTok). */}
+              <div className="flex h-11 shrink-0 items-center gap-1 rounded-full bg-black/45 px-2">
+                <button
+                  type="button"
+                  onClick={abrirComentarios}
+                  aria-label="Ver comentarios"
+                  className="relative flex h-9 w-9 items-center justify-center text-white/80 transition"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src="/habla.png" alt="" className="h-6 w-6" />
+                  {historia.comentariosCount > 0 && (
+                    <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-fill-primary px-1 text-[10px] text-on-primary">
+                      {historia.comentariosCount}
+                    </span>
+                  )}
+                </button>
+                <span className="h-5 w-px bg-white/20" aria-hidden />
+                <button
+                  type="button"
+                  onClick={reaccionar}
+                  aria-label="Reaccionar con un corazón"
+                  className="flex h-9 w-9 items-center justify-center text-white/80 transition"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={miReaccion ? "/corazon2.png" : "/corazon1.png"}
+                    alt=""
+                    className="h-6 w-6 transition"
+                  />
+                </button>
+              </div>
             </div>
           </div>
         )}
