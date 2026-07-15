@@ -1,9 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { IconX, IconShare } from "@tabler/icons-react";
-import type { GrupoHistorias } from "@/lib/historias";
-import { marcarVistaHistoria, parsearEstiloTexto, toggleReaccionHistoria } from "@/lib/historias";
+import { IconX, IconShare, IconVolume, IconMessageCircle2 } from "@tabler/icons-react";
+import type { EcoEnHistoria, GrupoHistorias } from "@/lib/historias";
+import {
+  eliminarEcoHistoria,
+  marcarVistaHistoria,
+  parsearEstiloTexto,
+  toggleReaccionHistoria,
+} from "@/lib/historias";
 import { obtenerSocket } from "@/lib/socket";
 import { tiempoTranscurrido } from "@/lib/tiempo";
 import { useSession } from "@/context/SessionContext";
@@ -11,6 +16,7 @@ import { Avatar } from "@/components/Avatar";
 import { estiloVisualTexto } from "@/components/Historias/TextoSobreImagen";
 import { estiloVisualMencion } from "@/components/Historias/MencionSobreImagen";
 import { PanelSocialHistoria } from "@/components/Historias/PanelSocialHistoria";
+import { PanelEcosHistoria } from "@/components/Historias/PanelEcosHistoria";
 
 const DURACION_FOTO_MS = 5000;
 const UMBRAL_SWIPE_CIERRE_PX = 80;
@@ -18,6 +24,10 @@ const UMBRAL_HOLD_MS = 200;
 const DURACION_BURBUJA_MS = 3000;
 const DURACION_SALIDA_BURBUJA_MS = 300;
 const MAX_BURBUJAS_VISIBLES = 4;
+// A diferencia de las burbujas (efímeras), los Ecos quedan fijos sobre la
+// imagen para siempre (mientras la historia siga activa) — el límite acá es
+// solo para no saturar la pantalla, no una ventana de tiempo.
+const MAX_ECOS_VISIBLES = 4;
 // Zona segura reservada abajo para la barra flotante de acciones: la foto/
 // video se centra dentro de un área que ya descuenta este espacio (en vez de
 // ocupar los 100% del alto), así el contenido nunca queda tapado por la barra.
@@ -139,6 +149,12 @@ export function VisorHistorias({
   // MAX_BURBUJAS_VISIBLES a la vez) — en vez de un aviso tipo error, se
   // muestra como un contador chico que invita a abrir el hilo completo.
   const [comentariosSinMostrar, setComentariosSinMostrar] = useState(0);
+  // Los Ecos son un concepto aparte de los comentarios (sin hilo ni
+  // reacciones propias): quedan fijos sobre la imagen para cualquiera que
+  // abra la historia, no solo para quien la vio en vivo.
+  const [ecos, setEcos] = useState<EcoEnHistoria[]>([]);
+  const [panelEcosAbierto, setPanelEcosAbierto] = useState(false);
+  const [modoEnvio, setModoEnvio] = useState<"comentario" | "eco">("comentario");
   const startYRef = useRef(0);
   const videoRef = useRef<HTMLVideoElement>(null);
   const holdTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -224,6 +240,18 @@ export function VisorHistorias({
     setMensajeEnviado(false);
     setBurbujas([]);
     setComentariosSinMostrar(0);
+    setPanelEcosAbierto(false);
+    setModoEnvio("comentario");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historia?.id]);
+
+  // A diferencia del efecto de arriba, este SÍ debe correr también en la
+  // primera carga: los Ecos ya existentes de la historia vienen en
+  // `historia.ecos` (persistidos, visibles para cualquiera que la abra), no
+  // solo desde el deep-link como panelSocial/comentarioDestacado.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setEcos(historia?.ecos ?? []);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [historia?.id]);
 
@@ -252,12 +280,19 @@ export function VisorHistorias({
     function alRecibirReaccion(data: { nombre: string; fotoUrl: string | null; createdAt: string }) {
       agregarBurbuja(data.nombre, data.fotoUrl, "", true, data.createdAt);
     }
+    // A diferencia de agregarBurbuja, un Eco no tiene temporizador de salida:
+    // queda en la lista hasta que alguien lo borre.
+    function alRecibirEco(data: EcoEnHistoria) {
+      setEcos((prev) => [...prev, data]);
+    }
     socket.on("historia:mensaje", alRecibirMensaje);
     socket.on("historia:reaccion", alRecibirReaccion);
+    socket.on("historia:eco", alRecibirEco);
 
     return () => {
       socket.off("historia:mensaje", alRecibirMensaje);
       socket.off("historia:reaccion", alRecibirReaccion);
+      socket.off("historia:eco", alRecibirEco);
       socket.disconnect();
     };
   }, [token]);
@@ -278,7 +313,7 @@ export function VisorHistorias({
   // — igual que escribir un mensaje o tener abierto el panel de reacciones/
   // comentarios (para poder revisarlos y responder con calma, sin que la
   // historia siga avanzando sola de fondo).
-  const pausadoEfectivo = pausado || escribiendoMensaje || panelSocial !== null;
+  const pausadoEfectivo = pausado || escribiendoMensaje || panelSocial !== null || panelEcosAbierto;
 
   useEffect(() => {
     const video = videoRef.current;
@@ -319,17 +354,32 @@ export function VisorHistorias({
     }
   }
 
-  // El mensaje ya NO se envía como chat privado: es efímero, solo se
-  // retransmite en vivo como burbuja flotante a quien esté viendo esta
-  // historia en ese momento (incluido quien la envía). No queda guardado en
-  // ningún lado — se queda mostrando "Enviado" dentro de la historia.
+  // El mensaje no se envía como chat privado, se retransmite en vivo a quien
+  // esté viendo esta historia en ese momento (incluido quien lo envía) y
+  // queda guardado — la diferencia entre los dos modos es solo qué tan
+  // visible queda después: un "Comentario" solo vive en el hilo (la burbuja
+  // en pantalla es efímera, 3s); un "Eco" además queda FIJO sobre la imagen
+  // para cualquiera que abra la historia más tarde.
   function enviarMensajeHistoria() {
     const texto = mensaje.trim();
     if (!texto || !socketRef.current) return;
-    socketRef.current.emit("historia:mensaje", { historiaId: historia.id, texto });
+    socketRef.current.emit(modoEnvio === "eco" ? "historia:eco" : "historia:mensaje", {
+      historiaId: historia.id,
+      texto,
+    });
     setMensaje("");
     setMensajeEnviado(true);
     setTimeout(() => setMensajeEnviado(false), 2000);
+  }
+
+  async function eliminarEco(ecoId: number) {
+    if (!token) return;
+    try {
+      await eliminarEcoHistoria(historia.id, ecoId, token);
+      setEcos((prev) => prev.filter((e) => e.id !== ecoId));
+    } catch {
+      // Sin feedback elaborado: si falla, el eco simplemente sigue ahí.
+    }
   }
 
   // Comparte la foto/video real (no un link) con el selector nativo del
@@ -567,6 +617,41 @@ export function VisorHistorias({
         </div>
       </div>
 
+      {/* Ecos: a diferencia de las burbujas de abajo, quedan FIJOS sobre la
+          imagen para cualquiera que abra la historia (no solo en vivo).
+          Ancladas debajo del encabezado para no pisar la pila de burbujas
+          efímeras de más abajo; hasta MAX_ECOS_VISIBLES a la vez, con un
+          contador para ver el resto. */}
+      <div className="pointer-events-none absolute left-3 right-20 top-24 z-20 flex flex-col gap-1.5">
+        {ecos.slice(-MAX_ECOS_VISIBLES).map((e) => (
+          <button
+            key={e.id}
+            type="button"
+            onClick={() => setPanelEcosAbierto(true)}
+            className="pointer-events-auto flex w-fit max-w-full items-center gap-2 rounded-full bg-black/55 py-1.5 pl-1.5 pr-3 text-left text-sm text-white ring-1 ring-fill-primary/40"
+          >
+            <Avatar fotoUrl={e.fotoUrl} nombre={e.nombre} tamano={22} />
+            <div className="flex min-w-0 flex-col leading-tight">
+              <span className="flex items-center gap-1 font-semibold text-text-accent">
+                <IconVolume size={12} className="shrink-0" />
+                {e.nombre}
+              </span>
+              <span className="truncate text-white/90">{e.texto}</span>
+            </div>
+          </button>
+        ))}
+        {ecos.length > MAX_ECOS_VISIBLES && (
+          <button
+            type="button"
+            onClick={() => setPanelEcosAbierto(true)}
+            className="pointer-events-auto flex w-fit items-center gap-1 rounded-full bg-fill-primary px-3 py-1 text-xs font-semibold text-on-primary shadow"
+          >
+            +{ecos.length - MAX_ECOS_VISIBLES} {ecos.length - MAX_ECOS_VISIBLES === 1 ? "eco" : "ecos"} más · Ver
+            todos
+          </button>
+        )}
+      </div>
+
       {/* Burbujas flotantes en vivo: cualquiera viendo esta misma historia en
           este momento las ve aparecer (mensajes efímeros + reacciones), estilo
           comentarios de un live — no bloquean el contenido ni los taps.
@@ -667,6 +752,19 @@ export function VisorHistorias({
                 />
                 {historia.comentariosCount} comentarios
               </button>
+              {ecos.length > 0 && (
+                <>
+                  <span className="h-4 w-px bg-white/25" aria-hidden />
+                  <button
+                    type="button"
+                    onClick={() => setPanelEcosAbierto(true)}
+                    className="flex items-center gap-1.5 text-sm font-semibold text-white"
+                  >
+                    <IconVolume size={16} />
+                    {ecos.length} {ecos.length === 1 ? "eco" : "ecos"}
+                  </button>
+                </>
+              )}
               <span className="h-4 w-px bg-white/25" aria-hidden />
               <button
                 type="button"
@@ -680,10 +778,34 @@ export function VisorHistorias({
           </div>
         ) : (
           <div className="flex flex-col gap-1">
+            {/* Elegir entre Comentario (va al hilo, burbuja efímera de 3s) y
+                Eco (queda fijo sobre la imagen para cualquiera que la abra). */}
+            <div className="flex w-fit gap-1 self-start rounded-full bg-black/55 p-1">
+              <button
+                type="button"
+                onClick={() => setModoEnvio("comentario")}
+                className={`flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold transition ${
+                  modoEnvio === "comentario" ? "bg-fill-primary text-on-primary" : "text-white/60"
+                }`}
+              >
+                <IconMessageCircle2 size={14} />
+                Comentario
+              </button>
+              <button
+                type="button"
+                onClick={() => setModoEnvio("eco")}
+                className={`flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold transition ${
+                  modoEnvio === "eco" ? "bg-fill-primary text-on-primary" : "text-white/60"
+                }`}
+              >
+                <IconVolume size={14} />
+                Eco
+              </button>
+            </div>
             <div className="flex items-center gap-2">
               {mensajeEnviado ? (
                 <div className="flex h-11 flex-1 items-center justify-center rounded-full border border-fill-primary/60 bg-black/60 text-sm text-fill-primary">
-                  Mensaje enviado ✓
+                  {modoEnvio === "eco" ? "Eco enviado ✓" : "Mensaje enviado ✓"}
                 </div>
               ) : (
                 <input
@@ -694,7 +816,7 @@ export function VisorHistorias({
                   onKeyDown={(e) => {
                     if (e.key === "Enter") enviarMensajeHistoria();
                   }}
-                  placeholder="Enviar mensaje"
+                  placeholder={modoEnvio === "eco" ? "Escribir un eco..." : "Enviar mensaje"}
                   maxLength={300}
                   className="h-11 flex-1 rounded-full border border-white/30 bg-black/40 px-4 text-sm text-white outline-none transition placeholder:text-white/50 focus:border-fill-primary focus:shadow-[0_0_12px_rgba(231,193,104,0.6)]"
                 />
@@ -761,6 +883,15 @@ export function VisorHistorias({
             setPanelSocial(null);
             setComentarioDestacado(null);
           }}
+        />
+      )}
+
+      {panelEcosAbierto && (
+        <PanelEcosHistoria
+          historiaAutorId={historia.autorId}
+          ecos={ecos}
+          onEliminar={eliminarEco}
+          onCerrar={() => setPanelEcosAbierto(false)}
         />
       )}
       </div>

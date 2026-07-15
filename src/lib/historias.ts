@@ -15,6 +15,18 @@ export interface MencionEnHistoria {
 
 export const MAX_MENCIONES_POR_HISTORIA = 5;
 
+// Distinto de un comentario: un Eco queda FIJO sobre la imagen para
+// cualquiera que abra la historia (no solo quien la vea en vivo), sin hilo
+// de respuestas ni reacciones propias.
+export interface EcoEnHistoria {
+  id: number;
+  miembroId: number;
+  nombre: string;
+  fotoUrl: string | null;
+  texto: string;
+  createdAt: string;
+}
+
 export interface Historia {
   id: number;
   // Autor real (distinto del dueño del grupo cuando `compartida` es true).
@@ -35,6 +47,7 @@ export interface Historia {
   reaccionesCount: number;
   miReaccion: boolean;
   comentariosCount: number;
+  ecos: EcoEnHistoria[];
   createdAt: string;
 }
 
@@ -178,6 +191,12 @@ export function eliminarComentarioHistoria(
     `/historias/${historiaId}/comentarios/${comentarioId}`,
     token,
   );
+}
+
+// Mismo criterio de permiso que un comentario (autor del eco, dueño de la
+// historia, o admin).
+export function eliminarEcoHistoria(historiaId: number, ecoId: number, token: string | null) {
+  return apiDelete<{ mensaje: string }>(`/historias/${historiaId}/ecos/${ecoId}`, token);
 }
 
 // El mencionado decide si la historia también aparece bajo su propio avatar.
