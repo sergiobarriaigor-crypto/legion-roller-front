@@ -14,12 +14,26 @@ export class ApiError extends Error {
 }
 
 async function manejarRespuesta<T>(res: Response): Promise<T> {
-  const data = await res.json().catch(() => ({}) as ApiErrorBody);
+  // Cuando un endpoint devuelve `null` (p. ej. "no tenés ficha" o "sin
+  // emergencia activa"), Nest envía el body vacío (content-length: 0), no el
+  // literal "null" — `res.json()` sobre un body vacío tira SyntaxError. Hay
+  // que distinguir "vacío" (→ null, una respuesta válida) de "JSON inválido"
+  // (→ {}, solo para no romper el mensaje de error de abajo).
+  const texto = await res.text();
+  let data: unknown = null;
+  if (texto) {
+    try {
+      data = JSON.parse(texto);
+    } catch {
+      data = {};
+    }
+  }
 
   if (!res.ok) {
-    const mensaje = Array.isArray(data.message)
-      ? data.message.join(", ")
-      : (data.message ?? "Ocurrió un error inesperado");
+    const cuerpo = (data ?? {}) as ApiErrorBody;
+    const mensaje = Array.isArray(cuerpo.message)
+      ? cuerpo.message.join(", ")
+      : (cuerpo.message ?? "Ocurrió un error inesperado");
     throw new ApiError(mensaje, res.status);
   }
 
