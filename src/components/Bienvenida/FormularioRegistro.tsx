@@ -38,6 +38,7 @@ export function FormularioRegistro({ onVolver }: Props) {
   const [fechaNacimiento, setFechaNacimiento] = useState("");
   const [clave, setClave] = useState("");
   const [confirmarClave, setConfirmarClave] = useState("");
+  const [mostrarClave, setMostrarClave] = useState(false);
   const [fotoUrl, setFotoUrl] = useState("");
 
   const [tocado, setTocado] = useState<Record<string, boolean>>({});
@@ -280,14 +281,23 @@ export function FormularioRegistro({ onVolver }: Props) {
           </div>
 
           <div className="flex flex-col gap-1">
-            <input
-              type="password"
-              placeholder="Contraseña"
-              value={clave}
-              onChange={(e) => setClave(e.target.value)}
-              onBlur={() => marcarTocado("clave")}
-              className="rounded-app border border-border bg-surface-2 px-3 py-2 text-text-primary outline-none"
-            />
+            <div className="relative">
+              <input
+                type={mostrarClave ? "text" : "password"}
+                placeholder="Contraseña"
+                value={clave}
+                onChange={(e) => setClave(e.target.value)}
+                onBlur={() => marcarTocado("clave")}
+                className="w-full rounded-app border border-border bg-surface-2 px-3 py-2 pr-16 text-text-primary outline-none"
+              />
+              <button
+                type="button"
+                onClick={() => setMostrarClave((v) => !v)}
+                className="absolute inset-y-0 right-3 text-xs text-text-secondary underline"
+              >
+                {mostrarClave ? "Ocultar" : "Mostrar"}
+              </button>
+            </div>
             <div className="flex gap-3 text-[11px]">
               <span className={claveTieneLongitud(clave) ? "text-fill-success" : "text-text-muted"}>
                 {claveTieneLongitud(clave) ? "✓" : "○"} 8+ caracteres
@@ -300,7 +310,7 @@ export function FormularioRegistro({ onVolver }: Props) {
 
           <div className="flex flex-col gap-1">
             <input
-              type="password"
+              type={mostrarClave ? "text" : "password"}
               placeholder="Confirmar contraseña"
               value={confirmarClave}
               onChange={(e) => setConfirmarClave(e.target.value)}

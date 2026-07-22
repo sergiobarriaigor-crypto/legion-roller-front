@@ -24,6 +24,7 @@ export default function BienvenidaPage() {
   const [panel, setPanel] = useState<Panel>("roles");
   const [correo, setCorreo] = useState("");
   const [clave, setClave] = useState("");
+  const [mostrarClave, setMostrarClave] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [errorLogin, setErrorLogin] = useState("");
 
@@ -148,13 +149,22 @@ export default function BienvenidaPage() {
             onChange={(e) => setCorreo(e.target.value)}
             className="rounded-app border border-border bg-surface-2 px-3 py-2 text-text-primary outline-none"
           />
-          <input
-            type="password"
-            placeholder="Contraseña"
-            value={clave}
-            onChange={(e) => setClave(e.target.value)}
-            className="rounded-app border border-border bg-surface-2 px-3 py-2 text-text-primary outline-none"
-          />
+          <div className="relative">
+            <input
+              type={mostrarClave ? "text" : "password"}
+              placeholder="Contraseña"
+              value={clave}
+              onChange={(e) => setClave(e.target.value)}
+              className="w-full rounded-app border border-border bg-surface-2 px-3 py-2 pr-16 text-text-primary outline-none"
+            />
+            <button
+              type="button"
+              onClick={() => setMostrarClave((v) => !v)}
+              className="absolute inset-y-0 right-3 text-xs text-text-secondary underline"
+            >
+              {mostrarClave ? "Ocultar" : "Mostrar"}
+            </button>
+          </div>
           {errorLogin && <p className="text-xs text-fill-warning">{errorLogin}</p>}
           <button type="submit" disabled={enviando} className="btn-hero rounded-app px-4 py-2 disabled:opacity-60">
             {enviando ? "Ingresando..." : "Ingresar"}
