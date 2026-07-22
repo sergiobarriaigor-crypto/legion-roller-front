@@ -147,7 +147,7 @@ export function BarraHistorias() {
         className="hidden"
       />
 
-      <div className="flex gap-3 overflow-x-auto pb-1">
+      <div className="flex gap-3 overflow-x-auto pt-2 pb-1">
         <div className="flex flex-col items-center gap-1">
           <div
             role="button"

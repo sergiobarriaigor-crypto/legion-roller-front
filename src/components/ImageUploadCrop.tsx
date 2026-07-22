@@ -10,10 +10,21 @@ interface Props {
   token: string | null;
   onSubido: (url: string) => void;
   etiqueta?: string;
+  formaCircular?: boolean;
+  permitirCamara?: boolean;
+  ruta?: string;
 }
 
-export function ImageUploadCrop({ token, onSubido, etiqueta = "Agregar foto" }: Props) {
+export function ImageUploadCrop({
+  token,
+  onSubido,
+  etiqueta = "Agregar foto",
+  formaCircular = false,
+  permitirCamara = false,
+  ruta = "/uploads",
+}: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const camaraInputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imagenRef = useRef<HTMLImageElement | null>(null);
   const arrastrandoRef = useRef(false);
@@ -39,7 +50,17 @@ export function ImageUploadCrop({ token, onSubido, etiqueta = "Agregar foto" }: 
     const y = (TAMANO_LIENZO - altoDibujo) / 2 + panActual.y;
 
     ctx.clearRect(0, 0, TAMANO_LIENZO, TAMANO_LIENZO);
+    if (formaCircular) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(TAMANO_LIENZO / 2, TAMANO_LIENZO / 2, TAMANO_LIENZO / 2, 0, Math.PI * 2);
+      ctx.closePath();
+      ctx.clip();
+    }
     ctx.drawImage(img, x, y, anchoDibujo, altoDibujo);
+    if (formaCircular) {
+      ctx.restore();
+    }
   }
 
   function limitarPan(zoomActual: number, panDeseado: { x: number; y: number }) {
@@ -114,7 +135,12 @@ export function ImageUploadCrop({ token, onSubido, etiqueta = "Agregar foto" }: 
         return;
       }
       try {
-        const res = await apiUpload<{ url: string }>("/uploads", blob, token);
+        const res = await apiUpload<{ url: string }>(
+          ruta,
+          blob,
+          token,
+          formaCircular ? "foto.webp" : "foto.jpg",
+        );
         onSubido(res.url);
         cancelar();
       } catch (err) {
@@ -122,7 +148,7 @@ export function ImageUploadCrop({ token, onSubido, etiqueta = "Agregar foto" }: 
       } finally {
         setSubiendo(false);
       }
-    }, "image/jpeg", 0.9);
+    }, formaCircular ? "image/webp" : "image/jpeg", formaCircular ? 0.85 : 0.9);
   }
 
   function cancelar() {
@@ -140,22 +166,51 @@ export function ImageUploadCrop({ token, onSubido, etiqueta = "Agregar foto" }: 
         onChange={elegirArchivo}
         className="hidden"
       />
+      {permitirCamara && (
+        <input
+          ref={camaraInputRef}
+          type="file"
+          accept="image/*"
+          capture="user"
+          onChange={elegirArchivo}
+          className="hidden"
+        />
+      )}
 
       {!editando ? (
-        <button
-          type="button"
-          onClick={() => inputRef.current?.click()}
-          className="rounded-app border border-border px-4 py-2 text-sm text-text-secondary"
-        >
-          {etiqueta}
-        </button>
+        permitirCamara ? (
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => camaraInputRef.current?.click()}
+              className="flex-1 rounded-app border border-border px-4 py-2 text-sm text-text-secondary"
+            >
+              Tomar foto
+            </button>
+            <button
+              type="button"
+              onClick={() => inputRef.current?.click()}
+              className="flex-1 rounded-app border border-border px-4 py-2 text-sm text-text-secondary"
+            >
+              Elegir de galería
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            className="rounded-app border border-border px-4 py-2 text-sm text-text-secondary"
+          >
+            {etiqueta}
+          </button>
+        )
       ) : (
         <div className="card flex flex-col items-center gap-2 p-3" data-no-swipe>
           <canvas
             ref={canvasRef}
             width={TAMANO_LIENZO}
             height={TAMANO_LIENZO}
-            className="touch-none rounded-app"
+            className={`touch-none ${formaCircular ? "rounded-full" : "rounded-app"}`}
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={detenerArrastre}

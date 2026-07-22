@@ -2,16 +2,27 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { IconShare, IconUsers } from "@tabler/icons-react";
+import {
+  IconShare,
+  IconUsers,
+  IconMessageCircle2,
+  IconBrandInstagram,
+  IconBrandFacebook,
+  IconBrandTiktok,
+} from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
-import { apiGet, apiPost, apiDelete, ApiError } from "@/lib/api";
+import { apiGet, apiPost, apiDelete, apiUpload, ApiError } from "@/lib/api";
 import type { Emprendedor } from "@/lib/emprendedores";
-import { ImageUploadCrop } from "@/components/ImageUploadCrop";
+import { listarMisReaccionesEmprendedores } from "@/lib/emprendedores";
+import { salaIndividual } from "@/lib/chat";
 import { ComentariosEmprendedor } from "@/components/Impulsa/ComentariosEmprendedor";
+import { CarruselFotosEmprendedor } from "@/components/Impulsa/CarruselFotosEmprendedor";
 import { SelectorCompartirEmprendedor } from "@/components/Impulsa/SelectorCompartirEmprendedor";
 import { generarTarjetaCompartirEmprendedor } from "@/lib/tarjetaEmprendedor";
 
 type SubTab = "directorio" | "ficha";
+
+const MAX_FOTOS_EMPRENDEDOR = 4;
 
 const FICHA_VACIA = {
   nombreNegocio: "",
@@ -76,9 +87,12 @@ export default function ImpulsaPage() {
 
   const [subTab, setSubTab] = useState<SubTab>("directorio");
   const [directorio, setDirectorio] = useState<Emprendedor[]>([]);
+  const [misReacciones, setMisReacciones] = useState<number[]>([]);
   const [miFicha, setMiFicha] = useState<Emprendedor | null>(null);
   const [form, setForm] = useState(FICHA_VACIA);
   const [fotos, setFotos] = useState<string[]>([]);
+  const [subiendoFotos, setSubiendoFotos] = useState(false);
+  const fotoInputRef = useRef<HTMLInputElement>(null);
   const [nuevoAnuncio, setNuevoAnuncio] = useState("");
   const [panelResenas, setPanelResenas] = useState<{
     emprendedorId: number;
@@ -94,6 +108,10 @@ export default function ImpulsaPage() {
     try {
       const lista = await apiGet<Emprendedor[]>("/emprendedores", null);
       setDirectorio(lista);
+      if (token) {
+        const mias = await listarMisReaccionesEmprendedores(token);
+        setMisReacciones(mias);
+      }
       return lista;
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "No se pudo cargar el directorio.");
@@ -111,7 +129,7 @@ export default function ImpulsaPage() {
           nombreNegocio: ficha.nombreNegocio,
           rubro: ficha.rubro,
           descripcion: ficha.descripcion,
-          contacto: ficha.contacto,
+          contacto: ficha.contacto ?? "",
           ubicacion: ficha.ubicacion ?? "",
           instagram: ficha.instagram ?? "",
           facebook: ficha.facebook ?? "",
@@ -173,7 +191,7 @@ export default function ImpulsaPage() {
 
   async function guardarFicha(e: React.FormEvent) {
     e.preventDefault();
-    if (!token || !form.nombreNegocio || !form.rubro || !form.descripcion || !form.contacto) return;
+    if (!token || !form.nombreNegocio || !form.rubro || !form.descripcion || !form.instagram) return;
     setEnviando(true);
     setError("");
     try {
@@ -181,8 +199,8 @@ export default function ImpulsaPage() {
         "/emprendedores/mi-ficha",
         {
           ...form,
+          contacto: form.contacto || undefined,
           ubicacion: form.ubicacion || undefined,
-          instagram: form.instagram || undefined,
           facebook: form.facebook || undefined,
           tiktok: form.tiktok || undefined,
           fotos: fotos.length > 0 ? fotos : undefined,
@@ -219,6 +237,33 @@ export default function ImpulsaPage() {
     }
   }
 
+  // Mismo criterio que onFotosElegidas en post/page.tsx: selector nativo con
+  // `multiple`, sube todo en paralelo sin paso de recorte.
+  async function onFotosElegidas(e: React.ChangeEvent<HTMLInputElement>) {
+    const elegidos = Array.from(e.target.files ?? []);
+    if (elegidos.length === 0 || !token) return;
+    setError("");
+
+    const espacioDisponible = MAX_FOTOS_EMPRENDEDOR - fotos.length;
+    const archivos = elegidos.slice(0, espacioDisponible);
+    if (elegidos.length > espacioDisponible) {
+      setError(`Solo se admiten ${MAX_FOTOS_EMPRENDEDOR} fotos por ficha; se tomaron las primeras ${espacioDisponible}.`);
+    }
+
+    setSubiendoFotos(true);
+    try {
+      const subidas = await Promise.all(
+        archivos.map((archivo) => apiUpload<{ url: string }>("/uploads", archivo, token, archivo.name)),
+      );
+      setFotos((prev) => [...prev, ...subidas.map((s) => s.url)]);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "No se pudieron subir las fotos.");
+    } finally {
+      setSubiendoFotos(false);
+      if (fotoInputRef.current) fotoInputRef.current.value = "";
+    }
+  }
+
   async function agregarAnuncio() {
     if (!token || !miFicha || !nuevoAnuncio.trim()) return;
     try {
@@ -237,6 +282,25 @@ export default function ImpulsaPage() {
       cargarMiFicha();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "No se pudo eliminar el anuncio.");
+    }
+  }
+
+  // Al tocar "Contáctame" se manda de una vez un mensaje predeterminado que
+  // identifica que la consulta es por la ficha del negocio (no un DM genérico),
+  // para que el dueño sepa de inmediato por qué le están escribiendo.
+  async function contactarEmprendedor(e: Emprendedor) {
+    if (!token || sesion?.id == null) return;
+    const sala = salaIndividual(sesion.id, e.miembroId);
+    try {
+      await apiPost(
+        `/chat/mensajes/${sala}`,
+        { texto: `Hola! Vi tu ficha de ${e.nombreNegocio} en Impulsa y quería consultarte.` },
+        token,
+      );
+    } catch {
+      // si falla el envío del mensaje predeterminado, igual se abre el chat
+    } finally {
+      router.push(`/chat/${sala}`);
     }
   }
 
@@ -286,6 +350,7 @@ export default function ImpulsaPage() {
           )}
           {directorio.map((e) => {
             const esDuenio = sesion?.id === e.miembroId;
+            const yaReaccione = misReacciones.includes(e.id);
             return (
               <div key={e.id} id={`emprendedor-${e.id}`} className="card flex flex-col gap-2 p-4">
                 <div className="flex items-start justify-between">
@@ -305,27 +370,45 @@ export default function ImpulsaPage() {
                     </button>
                   )}
                 </div>
-                {e.fotos.length > 0 && (
-                  <div className="flex gap-2 overflow-x-auto">
-                    {e.fotos.map((url) => (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        key={url}
-                        src={url}
-                        alt={e.nombreNegocio}
-                        className="h-20 w-20 shrink-0 rounded-app object-cover"
-                      />
-                    ))}
-                  </div>
-                )}
+                <CarruselFotosEmprendedor fotos={e.fotos} alt={e.nombreNegocio} />
                 <p className="text-sm text-text-secondary">{e.descripcion}</p>
-                <p className="text-xs text-text-primary">Contacto: {e.contacto}</p>
+                {e.contacto && <p className="text-xs text-text-primary">Contacto: {e.contacto}</p>}
                 {e.ubicacion && <p className="text-xs text-text-muted">{e.ubicacion}</p>}
 
-                <div className="flex gap-3 text-xs text-text-muted">
-                  {e.instagram && <span>IG: {e.instagram}</span>}
-                  {e.facebook && <span>FB: {e.facebook}</span>}
-                  {e.tiktok && <span>TikTok: {e.tiktok}</span>}
+                <div className="flex flex-wrap gap-2">
+                  {e.instagram && (
+                    <a
+                      href={e.instagram}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1.5 rounded-full border border-border-accent/40 px-3 py-1 text-xs text-text-accent"
+                    >
+                      <IconBrandInstagram size={14} />
+                      Instagram
+                    </a>
+                  )}
+                  {e.facebook && (
+                    <a
+                      href={e.facebook}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1.5 rounded-full border border-border-accent/40 px-3 py-1 text-xs text-text-accent"
+                    >
+                      <IconBrandFacebook size={14} />
+                      Facebook
+                    </a>
+                  )}
+                  {e.tiktok && (
+                    <a
+                      href={e.tiktok}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1.5 rounded-full border border-border-accent/40 px-3 py-1 text-xs text-text-accent"
+                    >
+                      <IconBrandTiktok size={14} />
+                      TikTok
+                    </a>
+                  )}
                 </div>
 
                 {e.anuncios.length > 0 && (
@@ -340,8 +423,12 @@ export default function ImpulsaPage() {
 
                 <div className="flex items-center gap-4 border-t border-border pt-2 text-xs text-text-secondary">
                   {puedeInteractuar ? (
-                    <button type="button" onClick={() => reaccionar(e.id)}>
-                      ★ Me gusta ({e.reaccionesCount})
+                    <button
+                      type="button"
+                      onClick={() => reaccionar(e.id)}
+                      className={yaReaccione ? "text-text-accent" : ""}
+                    >
+                      {yaReaccione ? "★ Me gusta" : "☆ Me gusta"} ({e.reaccionesCount})
                     </button>
                   ) : (
                     <span>{e.reaccionesCount} me gusta</span>
@@ -354,6 +441,16 @@ export default function ImpulsaPage() {
                   >
                     {e.resenasCount} reseñas
                   </button>
+                  {puedeInteractuar && !esDuenio && sesion?.id != null && (
+                    <button
+                      type="button"
+                      onClick={() => contactarEmprendedor(e)}
+                      className="flex items-center gap-1 text-text-accent"
+                    >
+                      <IconMessageCircle2 size={14} />
+                      Contáctame
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => compartirEmprendedor(e)}
@@ -431,7 +528,7 @@ export default function ImpulsaPage() {
             />
             <input
               type="text"
-              placeholder="Contacto (teléfono, whatsapp, etc)"
+              placeholder="Contacto (teléfono, whatsapp, etc) (opcional)"
               value={form.contacto}
               onChange={(e) => setForm({ ...form, contacto: e.target.value })}
               className="rounded-app border border-border bg-surface-2 px-3 py-2 text-text-primary outline-none"
@@ -445,7 +542,7 @@ export default function ImpulsaPage() {
             />
             <input
               type="text"
-              placeholder="Instagram (opcional)"
+              placeholder="Instagram"
               value={form.instagram}
               onChange={(e) => setForm({ ...form, instagram: e.target.value })}
               className="rounded-app border border-border bg-surface-2 px-3 py-2 text-text-primary outline-none"
@@ -464,22 +561,47 @@ export default function ImpulsaPage() {
               onChange={(e) => setForm({ ...form, tiktok: e.target.value })}
               className="rounded-app border border-border bg-surface-2 px-3 py-2 text-text-primary outline-none"
             />
-            <div className="flex flex-wrap gap-2">
-              {fotos.map((url, i) => (
-                <div key={url} className="relative">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={url} alt="Foto del negocio" className="h-16 w-16 rounded-app object-cover" />
-                  <button
-                    type="button"
-                    onClick={() => setFotos(fotos.filter((_, idx) => idx !== i))}
-                    className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-fill-warning text-[10px] text-on-primary"
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-            </div>
-            <ImageUploadCrop token={token} onSubido={(url) => setFotos([...fotos, url])} etiqueta="Agregar foto del negocio" />
+            {fotos.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {fotos.map((url, i) => (
+                  <div key={url} className="relative">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={url} alt="Foto del negocio" className="h-16 w-16 rounded-app object-cover" />
+                    <button
+                      type="button"
+                      onClick={() => setFotos(fotos.filter((_, idx) => idx !== i))}
+                      className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-page-bg text-xs text-fill-warning"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {fotos.length < MAX_FOTOS_EMPRENDEDOR && (
+              <>
+                <input
+                  ref={fotoInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={onFotosElegidas}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  disabled={subiendoFotos}
+                  onClick={() => fotoInputRef.current?.click()}
+                  className="rounded-app border border-border px-4 py-2 text-sm text-text-secondary disabled:opacity-60"
+                >
+                  {subiendoFotos
+                    ? "Subiendo..."
+                    : fotos.length === 0
+                      ? `Agregar fotos (hasta ${MAX_FOTOS_EMPRENDEDOR}, opcional)`
+                      : "Agregar más fotos"}
+                </button>
+              </>
+            )}
 
             <button
               type="submit"
@@ -514,22 +636,26 @@ export default function ImpulsaPage() {
                   </button>
                 </div>
               ))}
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder="Nuevo anuncio o promo corta"
-                  value={nuevoAnuncio}
-                  onChange={(e) => setNuevoAnuncio(e.target.value)}
-                  className="flex-1 rounded-app border border-border bg-surface-2 px-3 py-1 text-xs text-text-primary outline-none"
-                />
-                <button
-                  type="button"
-                  onClick={agregarAnuncio}
-                  className="rounded-app bg-fill-primary px-3 py-1 text-xs text-on-primary"
-                >
-                  Agregar
-                </button>
-              </div>
+              {miFicha.anuncios.length < 2 ? (
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="Nuevo anuncio o promo corta"
+                    value={nuevoAnuncio}
+                    onChange={(e) => setNuevoAnuncio(e.target.value)}
+                    className="flex-1 rounded-app border border-border bg-surface-2 px-3 py-1 text-xs text-text-primary outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={agregarAnuncio}
+                    className="rounded-app bg-fill-primary px-3 py-1 text-xs text-on-primary"
+                  >
+                    Agregar
+                  </button>
+                </div>
+              ) : (
+                <p className="text-xs text-text-muted">Máximo 2 anuncios.</p>
+              )}
             </div>
           )}
         </div>

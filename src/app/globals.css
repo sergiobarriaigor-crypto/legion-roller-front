@@ -90,6 +90,15 @@ body {
   font-weight: 600;
 }
 
+/* Burbuja propia del chat: mismo dorado de .btn-hero pero más apagado — el
+   gradiente completo se siente demasiado intenso en una superficie grande
+   de texto (ocupada todo el rato en pantalla) comparado con un botón chico. */
+.chat-burbuja-mia {
+  background: linear-gradient(180deg, #c9a565, #9c7f49);
+  color: var(--on-primary);
+  font-weight: 600;
+}
+
 /* Fase 11: transición suave entre pestañas (swipe o clic en la barra inferior) */
 @keyframes slideFromRight {
   from {
@@ -250,4 +259,46 @@ body {
   .animate-burbuja-entrada {
     animation: none;
   }
+}
+
+/* Galería de perfil: apertura fluida del visor a pantalla completa al hacer
+   doble toque sobre una foto (mismo patrón de fade+scale que el resto de
+   overlays de esta app). */
+@keyframes galeriaFotoAbrir {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-galeria-foto-abrir {
+  animation: galeriaFotoAbrir 220ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-galeria-foto-abrir {
+    animation: none;
+  }
+}
+
+/* Mapa: ventana emergente de otro patinador (PopupOtroMiembro) — el chip ya
+   trae su propio fondo/borde redondeado, así que se le quita el marco blanco
+   por defecto de Leaflet (y su triangulito) para que no compita visualmente. */
+.popup-patinador .leaflet-popup-content-wrapper {
+  background: transparent;
+  border-radius: 9999px;
+  box-shadow: none;
+  padding: 0;
+}
+
+.popup-patinador .leaflet-popup-content {
+  margin: 0;
+}
+
+.popup-patinador .leaflet-popup-tip-container {
+  display: none;
 }

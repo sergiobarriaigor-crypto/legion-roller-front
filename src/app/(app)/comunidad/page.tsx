@@ -3,7 +3,13 @@
 import { useEffect, useState } from "react";
 import { useSession } from "@/context/SessionContext";
 import { apiGet, apiPost, ApiError } from "@/lib/api";
-import { ETIQUETA_TIPO, type Publicacion } from "@/lib/publicaciones";
+import {
+  ETIQUETA_TIPO,
+  misAsistenciasEvento,
+  confirmarAsistenciaEvento,
+  type Publicacion,
+} from "@/lib/publicaciones";
+import { CarruselFotosPublicacion } from "@/components/Admin/CarruselFotosPublicacion";
 
 function textoVencimiento(p: Publicacion): string | null {
   if (!p.duracionHoras) return null;
@@ -17,6 +23,9 @@ export default function ComunidadPage() {
   const token = sesion?.token ?? null;
   const [publicaciones, setPublicaciones] = useState<Publicacion[]>([]);
   const [misRespuestas, setMisRespuestas] = useState<Record<number, string>>({});
+  const [misAsistencias, setMisAsistencias] = useState<Record<number, boolean>>({});
+  const [codigosIngresados, setCodigosIngresados] = useState<Record<number, string>>({});
+  const [confirmandoAsistencia, setConfirmandoAsistencia] = useState<number | null>(null);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
 
@@ -28,6 +37,8 @@ export default function ComunidadPage() {
       if (token) {
         const mias = await apiGet<Record<number, string>>("/publicaciones/mis-rsvps", token);
         setMisRespuestas(mias);
+        const asistencias = await misAsistenciasEvento(token);
+        setMisAsistencias(asistencias);
       }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "No se pudo cargar la Comunidad.");
@@ -37,6 +48,7 @@ export default function ComunidadPage() {
   }
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     cargar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
@@ -50,6 +62,43 @@ export default function ComunidadPage() {
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "No se pudo registrar tu respuesta.");
     }
+  }
+
+  async function confirmarAsistencia(
+    publicacionId: number,
+    body: { lat?: number; lon?: number; codigo?: string },
+  ) {
+    if (!token) return;
+    setError("");
+    setConfirmandoAsistencia(publicacionId);
+    try {
+      await confirmarAsistenciaEvento(publicacionId, body, token);
+      setMisAsistencias((prev) => ({ ...prev, [publicacionId]: true }));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "No se pudo confirmar tu asistencia.");
+    } finally {
+      setConfirmandoAsistencia(null);
+    }
+  }
+
+  function confirmarAsistenciaGps(publicacionId: number) {
+    if (!navigator.geolocation) {
+      setError("Tu navegador no soporta geolocalización.");
+      return;
+    }
+    setConfirmandoAsistencia(publicacionId);
+    navigator.geolocation.getCurrentPosition(
+      (posicion) => {
+        confirmarAsistencia(publicacionId, {
+          lat: posicion.coords.latitude,
+          lon: posicion.coords.longitude,
+        });
+      },
+      () => {
+        setError("No se pudo obtener tu ubicación.");
+        setConfirmandoAsistencia(null);
+      },
+    );
   }
 
   if (cargando) {
@@ -91,19 +140,7 @@ export default function ComunidadPage() {
             <h2 className="text-sm font-semibold text-text-primary">{p.titulo}</h2>
             <p className="text-sm text-text-secondary">{p.texto}</p>
 
-            {p.fotos.length > 0 && (
-              <div className="flex gap-2 overflow-x-auto">
-                {p.fotos.map((url) => (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    key={url}
-                    src={url}
-                    alt={p.titulo}
-                    className="h-24 w-24 shrink-0 rounded-app object-cover"
-                  />
-                ))}
-              </div>
-            )}
+            <CarruselFotosPublicacion fotos={p.fotos} alt={p.titulo} />
 
             {(p.fecha || p.hora || p.puntoEncuentro) && (
               <p className="text-xs text-text-muted">
@@ -138,6 +175,61 @@ export default function ComunidadPage() {
                 <p className="text-xs text-text-muted">
                   {p.rsvpCounts.yes} van · {p.rsvpCounts.maybe} tal vez · {p.rsvpCounts.no} no van
                 </p>
+
+                {p.tipo === "evento" &&
+                  p.tipoAsistenciaEvento &&
+                  token &&
+                  (miRespuesta === "yes" || miRespuesta === "maybe") && (
+                    <div className="border-t border-border pt-2">
+                      {misAsistencias[p.id] ? (
+                        <p className="text-xs text-fill-success">✓ Asistencia confirmada</p>
+                      ) : p.tipoAsistenciaEvento === "cierre_manual" ? (
+                        <p className="text-xs text-text-muted">
+                          Un organizador confirmará tu asistencia en el lugar.
+                        </p>
+                      ) : p.tipoAsistenciaEvento === "autoconfirmacion" ? (
+                        <button
+                          type="button"
+                          onClick={() => confirmarAsistencia(p.id, {})}
+                          disabled={confirmandoAsistencia === p.id}
+                          className="btn-hero rounded-app px-3 py-1.5 text-xs disabled:opacity-60"
+                        >
+                          {confirmandoAsistencia === p.id ? "Confirmando..." : "Confirmar mi asistencia"}
+                        </button>
+                      ) : p.tipoAsistenciaEvento === "gps_puntual" ? (
+                        <button
+                          type="button"
+                          onClick={() => confirmarAsistenciaGps(p.id)}
+                          disabled={confirmandoAsistencia === p.id}
+                          className="btn-hero rounded-app px-3 py-1.5 text-xs disabled:opacity-60"
+                        >
+                          {confirmandoAsistencia === p.id ? "Marcando..." : "Marcar llegada"}
+                        </button>
+                      ) : (
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            placeholder="Código de asistencia"
+                            value={codigosIngresados[p.id] ?? ""}
+                            onChange={(e) =>
+                              setCodigosIngresados((prev) => ({ ...prev, [p.id]: e.target.value }))
+                            }
+                            className="flex-1 rounded-app border border-border bg-surface-2 px-2 py-1 text-xs text-text-primary outline-none"
+                          />
+                          <button
+                            type="button"
+                            onClick={() =>
+                              confirmarAsistencia(p.id, { codigo: codigosIngresados[p.id] })
+                            }
+                            disabled={confirmandoAsistencia === p.id}
+                            className="btn-hero rounded-app px-3 py-1.5 text-xs disabled:opacity-60"
+                          >
+                            Confirmar
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
               </div>
             )}
           </div>

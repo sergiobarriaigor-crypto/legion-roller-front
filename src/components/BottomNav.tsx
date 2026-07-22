@@ -9,6 +9,7 @@ import {
   IconMap2,
   IconUsers,
   IconMessage2,
+  IconBuildingStore,
   IconUserCircle,
   IconShieldLock,
 } from "@tabler/icons-react";
@@ -33,12 +34,12 @@ interface NavItem {
 }
 
 const itemsIzquierda: NavItem[] = [
-  { href: "/comunidad", label: "Comunidad", icon: <IconUsers size={22} /> },
+  { href: "/comunidad", label: "Comunidad", icon: <IconUsers size={22} />, ocultoParaVisitante: true },
   { href: "/post", label: "Post", icon: <IconMessage2 size={22} /> },
 ];
 
 const itemsDerecha: NavItem[] = [
-  { href: "/impulsa", label: "Impulsa" },
+  { href: "/impulsa", label: "Impulsa", icon: <IconBuildingStore size={22} /> },
   { href: "/perfil", label: "Perfil", icon: <IconUserCircle size={22} />, ocultoParaVisitante: true },
 ];
 
@@ -96,12 +97,13 @@ export function BottomNav() {
     }
   }
 
+  const activoIzquierda = itemsIzquierda.filter((item) => !(esVisitante && item.ocultoParaVisitante));
   const activoDerecha = itemsDerecha.filter((item) => !(esVisitante && item.ocultoParaVisitante));
 
   return (
     <>
       <nav className="flex items-stretch border-t border-border bg-surface-1">
-        {itemsIzquierda.map((item) => (
+        {activoIzquierda.map((item) => (
           <NavLink key={item.href} item={item} activo={pathname.startsWith(item.href)} />
         ))}
 

@@ -4,13 +4,19 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { IconX, IconChevronLeft } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
-import { apiGet, apiPost, ApiError } from "@/lib/api";
-import type { MensajeChat } from "@/lib/chat";
+import { useConversacion } from "@/hooks/useConversacion";
+import { BurbujaMensaje } from "@/components/Chat/BurbujaMensaje";
+
+const MS_PAUSA_ESCRIBIENDO = 2000;
 
 // Chat flotante sobre el Mapa: al tocar "Enviar mensaje" en la tarjeta de otro
 // patinador, esto se abre como un modal centrado (mismo patrón que el modal
 // de "Enviar reconocimiento") en vez de navegar a /chat/[sala] — así no se
-// pierde el contexto del mapa ni a los demás patinadores visibles.
+// pierde el contexto del mapa ni a los demás patinadores visibles. Migrado al
+// motor compartido (useConversacion + BurbujaMensaje en modo `compacto`): vivo
+// en tiempo real igual que la pantalla completa, pero sin swipe/reacciones/
+// adjuntos/menú — ese modal no reemplaza la pantalla completa de chat, solo un
+// envío rápido con lo esencial en vivo.
 export function ChatFlotante({
   sala,
   nombreOtro,
@@ -26,48 +32,48 @@ export function ChatFlotante({
 }) {
   const router = useRouter();
   const { sesion } = useSession();
-  const [mensajes, setMensajes] = useState<MensajeChat[]>([]);
-  const [texto, setTexto] = useState("");
-  const [error, setError] = useState("");
+  const propioId = sesion?.id ?? null;
   const finRef = useRef<HTMLDivElement>(null);
+  const propioEscribiendoRef = useRef(false);
+  const pausaEscribiendoRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  async function cargarMensajes() {
-    if (!token) return;
-    try {
-      const lista = await apiGet<MensajeChat[]>(`/chat/mensajes/${sala}`, token);
-      setMensajes(lista);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "No se pudo cargar la conversación.");
-    }
-  }
+  const [texto, setTexto] = useState("");
 
-  useEffect(() => {
-    cargarMensajes();
-    const intervalo = setInterval(cargarMensajes, 5000);
-    return () => clearInterval(intervalo);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, sala]);
+  const { mensajes, error, enviando, escribiendo, enviar, notificarEscribiendo, estadoEnvio } =
+    useConversacion({ sala, token, propioId });
 
   useEffect(() => {
     finRef.current?.scrollIntoView({ block: "end" });
   }, [mensajes]);
 
-  async function enviar(e: React.FormEvent) {
-    e.preventDefault();
-    if (!token || !texto.trim()) return;
-    try {
-      await apiPost(`/chat/mensajes/${sala}`, { texto }, token);
-      setTexto("");
-      cargarMensajes();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "No se pudo enviar el mensaje.");
+  function onCambioTexto(valor: string) {
+    setTexto(valor);
+    if (!propioEscribiendoRef.current) {
+      propioEscribiendoRef.current = true;
+      notificarEscribiendo(true);
     }
+    if (pausaEscribiendoRef.current) clearTimeout(pausaEscribiendoRef.current);
+    pausaEscribiendoRef.current = setTimeout(() => {
+      propioEscribiendoRef.current = false;
+      notificarEscribiendo(false);
+    }, MS_PAUSA_ESCRIBIENDO);
+  }
+
+  async function onEnviar(e: React.FormEvent) {
+    e.preventDefault();
+    if (!texto.trim()) return;
+    if (pausaEscribiendoRef.current) clearTimeout(pausaEscribiendoRef.current);
+    propioEscribiendoRef.current = false;
+    notificarEscribiendo(false);
+    await enviar({ texto });
+    setTexto("");
   }
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-6"
       onClick={onClose}
+      data-no-swipe
     >
       <div
         className="card flex w-full max-w-xs flex-col gap-3 p-5 shadow-2xl"
@@ -83,20 +89,25 @@ export function ChatFlotante({
               <IconChevronLeft size={16} />
               Chats
             </button>
-            <div className="flex flex-1 items-center justify-center gap-2 overflow-hidden">
-              {fotoOtro ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={fotoOtro}
-                  alt={nombreOtro}
-                  className="h-7 w-7 shrink-0 rounded-full object-cover"
-                />
-              ) : (
-                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface-2 text-xs font-semibold text-text-accent">
-                  {nombreOtro.charAt(0).toUpperCase()}
-                </div>
+            <div className="flex flex-1 flex-col items-center overflow-hidden">
+              <div className="flex items-center gap-2">
+                {fotoOtro ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={fotoOtro}
+                    alt={nombreOtro}
+                    className="h-7 w-7 shrink-0 rounded-full object-cover"
+                  />
+                ) : (
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface-2 text-xs font-semibold text-text-accent">
+                    {nombreOtro.charAt(0).toUpperCase()}
+                  </div>
+                )}
+                <span className="truncate text-sm font-semibold text-text-accent">{nombreOtro}</span>
+              </div>
+              {escribiendo && (
+                <p className="truncate text-[10px] text-text-muted">{escribiendo.nombre} está escribiendo...</p>
               )}
-              <span className="truncate text-sm font-semibold text-text-accent">{nombreOtro}</span>
             </div>
             <button
               type="button"
@@ -114,21 +125,15 @@ export function ChatFlotante({
             {mensajes.length === 0 && (
               <p className="text-xs text-text-secondary">Todavía no hay mensajes.</p>
             )}
-            {mensajes.map((m) => {
-              const esMio = m.autorId === sesion?.id;
-              return (
-                <div key={m.id} className={`flex flex-col ${esMio ? "items-end" : "items-start"}`}>
-                  <div
-                    className={`max-w-[75%] rounded-app px-3 py-2 text-sm ${
-                      esMio ? "btn-hero" : "border border-border text-text-primary"
-                    }`}
-                  >
-                    {!esMio && <p className="text-xs font-semibold text-text-accent">{m.autorNombre}</p>}
-                    <p>{m.texto}</p>
-                  </div>
-                </div>
-              );
-            })}
+            {mensajes.map((m) => (
+              <BurbujaMensaje
+                key={m.id}
+                mensaje={m}
+                esMio={m.autorId === propioId}
+                estadoEnvio={estadoEnvio(m)}
+                compacto
+              />
+            ))}
             <div ref={finRef} />
           </div>
 
@@ -136,15 +141,15 @@ export function ChatFlotante({
             Los mensajes se eliminan solos a los 7 días.
           </p>
 
-          <form onSubmit={enviar} className="flex gap-2">
+          <form onSubmit={onEnviar} className="flex gap-2">
             <input
               type="text"
               placeholder="Escribe un mensaje..."
               value={texto}
-              onChange={(e) => setTexto(e.target.value)}
+              onChange={(e) => onCambioTexto(e.target.value)}
               className="flex-1 rounded-app border border-border bg-surface-2 px-3 py-2 text-sm text-text-primary outline-none"
             />
-            <button type="submit" className="btn-hero rounded-app px-4 py-2 text-sm">
+            <button type="submit" disabled={enviando} className="btn-hero rounded-app px-4 py-2 text-sm disabled:opacity-60">
               Enviar
             </button>
           </form>

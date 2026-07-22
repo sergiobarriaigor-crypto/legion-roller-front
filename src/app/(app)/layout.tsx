@@ -30,7 +30,7 @@ export default function AppGroupLayout({
       sesion.rol === "visitante" &&
       RUTAS_RESTRINGIDAS_VISITANTE.some((ruta) => pathname.startsWith(ruta))
     ) {
-      router.replace("/comunidad");
+      router.replace("/post");
     }
   }, [cargando, sesion, pathname, router]);
 

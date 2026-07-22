@@ -29,3 +29,12 @@ export function rodadaActivable(fechaHora: Date): boolean {
 export function minutosHasta(fechaHora: Date): number {
   return Math.max(0, Math.round((fechaHora.getTime() - Date.now()) / 60000));
 }
+
+// true solo entre 30 min antes y la hora exacta de inicio — usado para mostrar
+// el punto de partida en el Mapa (sincronizado con el recordatorio push),
+// a diferencia de rodadaEnVentana que sigue vigente 3h después de iniciada.
+export function puntoPartidaVisible(fechaHora: Date): boolean {
+  const inicio = fechaHora.getTime() - MINUTOS_VENTANA_ANTES * 60 * 1000;
+  const ahora = Date.now();
+  return ahora >= inicio && ahora < fechaHora.getTime();
+}

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { IconBell, IconMessageCircle2 } from "@tabler/icons-react";
+import { IconBell, IconBellPlus, IconMessageCircle2 } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
 import { apiGet } from "@/lib/api";
 import { listarCompartidosSinLeer, type Conversaciones, type CompartidoSinLeer } from "@/lib/chat";
@@ -30,6 +30,7 @@ import {
   type RespuestaEmprendedorSinLeer,
 } from "@/lib/emprendedores";
 import { tiempoTranscurrido } from "@/lib/tiempo";
+import { pushDisponible, estaSuscrito, suscribirPush } from "@/lib/push";
 import { SosButton } from "@/components/SosButton";
 import { PopupMencion } from "@/components/Historias/PopupMencion";
 import { Avatar } from "@/components/Avatar";
@@ -49,6 +50,8 @@ export function AppHeader() {
   const [mostrarLista, setMostrarLista] = useState(false);
   const [mencionAbierta, setMencionAbierta] = useState<Historia | null>(null);
   const [enviando, setEnviando] = useState(false);
+  const [pushActivo, setPushActivo] = useState(true);
+  const [activandoPush, setActivandoPush] = useState(false);
 
   useEffect(() => {
     if (!token || sesion?.rol === "visitante") return;
@@ -68,6 +71,24 @@ export function AppHeader() {
     const intervalo = setInterval(revisar, 15000);
     return () => clearInterval(intervalo);
   }, [token, sesion?.rol]);
+
+  useEffect(() => {
+    if (!token || sesion?.rol === "visitante" || !pushDisponible()) return;
+    estaSuscrito().then(setPushActivo);
+  }, [token, sesion?.rol]);
+
+  async function activarNotificaciones() {
+    if (!token || activandoPush) return;
+    setActivandoPush(true);
+    try {
+      const ok = await suscribirPush(token);
+      if (ok) setPushActivo(true);
+    } catch {
+      // el usuario puede reintentar tocando el botón de nuevo
+    } finally {
+      setActivandoPush(false);
+    }
+  }
 
   // Menciones pendientes de respuesta (aceptar/rechazar republicar): se
   // muestran en la campana, no dentro de la historia misma.
@@ -292,6 +313,22 @@ export function AppHeader() {
     respuestasSinLeerImpulsa.length +
     compartidosSinLeer.length;
 
+  // El visitante no participa (sin chat, sin notificaciones, sin SOS) — solo
+  // mira. Se dejan espaciadores del mismo ancho para que el título quede
+  // centrado igual que con los botones presentes.
+  if (sesion?.rol === "visitante") {
+    return (
+      <header className="flex items-center justify-between px-4 py-3 border-b border-border bg-page-bg">
+        <div className="w-9" />
+        <div className="flex items-center gap-2">
+          <span className="text-lg font-bold tracking-wide text-text-accent">LEGIÓN</span>
+          <span className="text-lg font-bold tracking-wide text-text-primary">ROLLER</span>
+        </div>
+        <div className="w-9" />
+      </header>
+    );
+  }
+
   return (
     <header className="flex items-center justify-between px-4 py-3 border-b border-border bg-page-bg">
       <SosButton />
@@ -306,6 +343,17 @@ export function AppHeader() {
       </div>
 
       <div className="relative flex items-center gap-3">
+        {!pushActivo && (
+          <button
+            type="button"
+            onClick={activarNotificaciones}
+            disabled={activandoPush}
+            aria-label="Activar notificaciones"
+            className="flex h-9 w-9 items-center justify-center rounded-full text-text-secondary hover:text-text-primary disabled:opacity-60"
+          >
+            <IconBellPlus size={20} />
+          </button>
+        )}
         <Link
           href="/chat"
           aria-label="Chat"

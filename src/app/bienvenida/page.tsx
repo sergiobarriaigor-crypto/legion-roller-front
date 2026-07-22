@@ -5,8 +5,11 @@ import { useRouter } from "next/navigation";
 import { useSession } from "@/context/SessionContext";
 import { rutaInicialParaRol, type Rol } from "@/lib/session";
 import { apiPost, ApiError } from "@/lib/api";
+import { FormularioRegistro } from "@/components/Bienvenida/FormularioRegistro";
 
 type Panel = "roles" | "login-usuario" | "login-admin" | "registro" | null;
+
+const URL_INSTAGRAM = "https://www.instagram.com/legionrollerpm";
 
 interface LoginResponse {
   accessToken: string;
@@ -15,23 +18,13 @@ interface LoginResponse {
   rol: Rol;
 }
 
-interface RegistroResponse {
-  mensaje: string;
-}
-
 export default function BienvenidaPage() {
   const { sesion, cargando, login } = useSession();
   const router = useRouter();
   const [panel, setPanel] = useState<Panel>("roles");
-  const [telefono, setTelefono] = useState("");
+  const [correo, setCorreo] = useState("");
   const [clave, setClave] = useState("");
   const [enviando, setEnviando] = useState(false);
-  const [nombreRegistro, setNombreRegistro] = useState("");
-  const [telefonoRegistro, setTelefonoRegistro] = useState("");
-  const [ciudadRegistro, setCiudadRegistro] = useState("");
-  const [claveRegistro, setClaveRegistro] = useState("");
-  const [mensajeRegistro, setMensajeRegistro] = useState("");
-  const [errorRegistro, setErrorRegistro] = useState("");
   const [errorLogin, setErrorLogin] = useState("");
 
   useEffect(() => {
@@ -42,41 +35,18 @@ export default function BienvenidaPage() {
 
   async function entrarConClave(e: React.FormEvent) {
     e.preventDefault();
-    if (!telefono || !clave) {
-      setErrorLogin("Ingresa tu teléfono y contraseña.");
+    if (!correo || !clave) {
+      setErrorLogin("Ingresa tu correo y contraseña.");
       return;
     }
     setErrorLogin("");
     setEnviando(true);
     try {
-      const res = await apiPost<LoginResponse>("/auth/login", { telefono, clave });
+      const res = await apiPost<LoginResponse>("/auth/login", { correo, clave });
       login({ id: res.id, nombre: res.nombre, rol: res.rol, token: res.accessToken });
       router.replace(rutaInicialParaRol(res.rol));
     } catch (err) {
       setErrorLogin(err instanceof ApiError ? err.message : "No se pudo conectar con el servidor.");
-    } finally {
-      setEnviando(false);
-    }
-  }
-
-  async function enviarRegistro(e: React.FormEvent) {
-    e.preventDefault();
-    if (!nombreRegistro || !telefonoRegistro || !claveRegistro) {
-      setErrorRegistro("Completa nombre, teléfono y contraseña.");
-      return;
-    }
-    setErrorRegistro("");
-    setEnviando(true);
-    try {
-      const res = await apiPost<RegistroResponse>("/auth/registro", {
-        nombre: nombreRegistro,
-        telefono: telefonoRegistro,
-        ciudad: ciudadRegistro || undefined,
-        clave: claveRegistro,
-      });
-      setMensajeRegistro(res.mensaje);
-    } catch (err) {
-      setErrorRegistro(err instanceof ApiError ? err.message : "No se pudo conectar con el servidor.");
     } finally {
       setEnviando(false);
     }
@@ -94,15 +64,21 @@ export default function BienvenidaPage() {
   return (
     <div className="flex min-h-dvh flex-col items-center justify-center gap-8 px-6 py-12">
       <div className="flex flex-col items-center gap-2">
-        <span className="text-3xl font-bold tracking-wide text-text-accent">
-          LEGIÓN
-        </span>
-        <span className="text-3xl font-bold tracking-wide text-text-primary">
-          ROLLER
-        </span>
-        <p className="text-sm text-text-secondary">
-          Comunidad de patinaje — Puerto Montt / Puerto Varas
-        </p>
+        <div className="relative flex items-center justify-center">
+          <div
+            className="absolute inset-[-30px] rounded-full blur-md"
+            style={{
+              background:
+                "radial-gradient(circle, rgba(231,193,104,0.55) 0%, rgba(201,154,61,0.28) 35%, transparent 70%)",
+            }}
+          />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/logo-legion-roller.png"
+            alt="Legión Roller"
+            className="relative h-40 w-40 object-contain"
+          />
+        </div>
       </div>
 
       {panel === "roles" && (
@@ -141,6 +117,19 @@ export default function BienvenidaPage() {
           >
             Entrar como Visitante
           </button>
+          <a
+            href={URL_INSTAGRAM}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-2 flex justify-center"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/boton-instagram.png"
+              alt="Síguenos en Instagram"
+              className="h-auto w-56 object-contain"
+            />
+          </a>
         </div>
       )}
 
@@ -153,10 +142,10 @@ export default function BienvenidaPage() {
             {panel === "login-usuario" ? "Ingresar como Usuario" : "Ingresar como Admin"}
           </h2>
           <input
-            type="tel"
-            placeholder="Teléfono"
-            value={telefono}
-            onChange={(e) => setTelefono(e.target.value)}
+            type="email"
+            placeholder="Correo electrónico"
+            value={correo}
+            onChange={(e) => setCorreo(e.target.value)}
             className="rounded-app border border-border bg-surface-2 px-3 py-2 text-text-primary outline-none"
           />
           <input
@@ -181,61 +170,7 @@ export default function BienvenidaPage() {
       )}
 
       {panel === "registro" && (
-        <form
-          onSubmit={enviarRegistro}
-          className="card flex w-full max-w-xs flex-col gap-3 p-5"
-        >
-          <h2 className="text-sm font-semibold text-text-primary">
-            Solicitud de registro
-          </h2>
-          <input
-            type="text"
-            placeholder="Nombre completo"
-            value={nombreRegistro}
-            onChange={(e) => setNombreRegistro(e.target.value)}
-            className="rounded-app border border-border bg-surface-2 px-3 py-2 text-text-primary outline-none"
-          />
-          <input
-            type="tel"
-            placeholder="Teléfono"
-            value={telefonoRegistro}
-            onChange={(e) => setTelefonoRegistro(e.target.value)}
-            className="rounded-app border border-border bg-surface-2 px-3 py-2 text-text-primary outline-none"
-          />
-          <input
-            type="text"
-            placeholder="Ciudad"
-            value={ciudadRegistro}
-            onChange={(e) => setCiudadRegistro(e.target.value)}
-            className="rounded-app border border-border bg-surface-2 px-3 py-2 text-text-primary outline-none"
-          />
-          <input
-            type="password"
-            placeholder="Contraseña"
-            value={claveRegistro}
-            onChange={(e) => setClaveRegistro(e.target.value)}
-            className="rounded-app border border-border bg-surface-2 px-3 py-2 text-text-primary outline-none"
-          />
-          {errorRegistro && <p className="text-xs text-fill-warning">{errorRegistro}</p>}
-          {mensajeRegistro ? (
-            <p className="text-xs text-fill-success">{mensajeRegistro}</p>
-          ) : (
-            <button type="submit" disabled={enviando} className="btn-hero rounded-app px-4 py-2 disabled:opacity-60">
-              {enviando ? "Enviando..." : "Enviar solicitud"}
-            </button>
-          )}
-          <button
-            type="button"
-            className="text-xs text-text-secondary underline"
-            onClick={() => {
-              setPanel("roles");
-              setMensajeRegistro("");
-              setErrorRegistro("");
-            }}
-          >
-            Volver
-          </button>
-        </form>
+        <FormularioRegistro onVolver={() => setPanel("roles")} />
       )}
     </div>
   );

@@ -10,10 +10,11 @@ export interface Emprendedor {
   id: number;
   miembroId: number;
   nombreDuenio: string;
+  duenioFotoUrl: string | null;
   nombreNegocio: string;
   rubro: string;
   descripcion: string;
-  contacto: string;
+  contacto: string | null;
   ubicacion: string | null;
   instagram: string | null;
   facebook: string | null;
@@ -79,6 +80,10 @@ export function reaccionarResena(resenaId: number, token: string | null) {
     {},
     token,
   );
+}
+
+export function listarMisReaccionesEmprendedores(token: string | null) {
+  return apiGet<number[]>("/emprendedores/mis-reacciones", token);
 }
 
 export function listarRespuestasSinLeerImpulsa(token: string | null) {
