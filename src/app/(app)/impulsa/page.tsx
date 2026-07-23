@@ -93,6 +93,7 @@ export default function ImpulsaPage() {
   const [fotos, setFotos] = useState<string[]>([]);
   const [subiendoFotos, setSubiendoFotos] = useState(false);
   const fotoInputRef = useRef<HTMLInputElement>(null);
+  const descripcionRef = useRef<HTMLTextAreaElement>(null);
   const [nuevoAnuncio, setNuevoAnuncio] = useState("");
   const [panelResenas, setPanelResenas] = useState<{
     emprendedorId: number;
@@ -148,6 +149,17 @@ export default function ImpulsaPage() {
     cargarMiFicha();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
+
+  // La caja de Descripción crece con el contenido en vez de esconderlo
+  // detrás de un scroll poco visible — corre tanto al escribir como al
+  // cargar una ficha existente para editar (ahí el valor llega de golpe,
+  // no tecla por tecla, así que el resize tiene que reaccionar al valor).
+  useEffect(() => {
+    const el = descripcionRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [form.descripcion]);
 
   // Deep-link desde la notificación de "te comentaron/respondieron una
   // reseña" (ver AppHeader.tsx): cambia al Directorio y abre directo el hilo
@@ -371,7 +383,7 @@ export default function ImpulsaPage() {
                   )}
                 </div>
                 <CarruselFotosEmprendedor fotos={e.fotos} alt={e.nombreNegocio} />
-                <p className="text-sm text-text-secondary">{e.descripcion}</p>
+                <p className="whitespace-pre-wrap text-sm text-text-secondary">{e.descripcion}</p>
                 {e.contacto && <p className="text-xs text-text-primary">Contacto: {e.contacto}</p>}
                 {e.ubicacion && <p className="text-xs text-text-muted">{e.ubicacion}</p>}
 
@@ -520,11 +532,12 @@ export default function ImpulsaPage() {
               className="rounded-app border border-border bg-surface-2 px-3 py-2 text-text-primary outline-none"
             />
             <textarea
+              ref={descripcionRef}
               placeholder="Descripción"
               value={form.descripcion}
               onChange={(e) => setForm({ ...form, descripcion: e.target.value })}
               rows={3}
-              className="rounded-app border border-border bg-surface-2 px-3 py-2 text-text-primary outline-none"
+              className="resize-none overflow-hidden rounded-app border border-border bg-surface-2 px-3 py-2 text-text-primary outline-none"
             />
             <input
               type="text"
