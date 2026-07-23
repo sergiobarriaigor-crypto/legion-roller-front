@@ -19,6 +19,7 @@ import {
 import type { Emprendedor } from "@/lib/emprendedores";
 import { Avatar } from "@/components/Avatar";
 import { BarraFormatoTexto } from "@/components/BarraFormatoTexto";
+import { renderizarTextoFormateado } from "@/lib/textoFormateado";
 
 const SelectorPuntoMapa = dynamic(
   () => import("@/components/Mapa/SelectorPuntoMapa").then((m) => m.SelectorPuntoMapa),
@@ -541,6 +542,14 @@ export default function AdminPage() {
               className="resize-none overflow-hidden rounded-app border border-border bg-surface-2 px-3 py-2 text-text-primary outline-none"
               rows={3}
             />
+            {form.texto.trim() && (
+              <div className="flex flex-col gap-1">
+                <p className="text-xs text-text-muted">Vista previa</p>
+                <p className="whitespace-pre-wrap rounded-app bg-surface-2 px-3 py-2 text-sm text-text-secondary">
+                  {renderizarTextoFormateado(form.texto)}
+                </p>
+              </div>
+            )}
 
             {usaFechaHora && (
               <>
