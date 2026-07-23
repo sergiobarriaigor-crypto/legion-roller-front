@@ -437,9 +437,12 @@ export default function ImpulsaPage() {
                 </div>
 
                 {e.anuncios.length > 0 && (
-                  <div className="flex flex-col gap-1 rounded-app bg-bg-accent p-2">
+                  <div className="flex flex-col gap-2">
                     {e.anuncios.map((a) => (
-                      <p key={a.id} className="text-xs text-amber-text">
+                      <p
+                        key={a.id}
+                        className="rounded-app border-l-2 border-border-accent bg-bg-accent px-3 py-2 text-sm font-medium text-amber-text"
+                      >
                         📣 {a.texto}
                       </p>
                     ))}
@@ -656,12 +659,15 @@ export default function ImpulsaPage() {
             <div className="card -mx-4 flex flex-col gap-2 px-3 py-4">
               <h2 className="text-sm font-semibold text-text-primary">Mis anuncios</h2>
               {miFicha.anuncios.map((a) => (
-                <div key={a.id} className="flex items-center justify-between">
-                  <p className="text-xs text-text-secondary">📣 {a.texto}</p>
+                <div
+                  key={a.id}
+                  className="flex items-center justify-between gap-2 rounded-app border-l-2 border-border-accent bg-bg-accent px-3 py-2"
+                >
+                  <p className="text-sm font-medium text-amber-text">📣 {a.texto}</p>
                   <button
                     type="button"
                     onClick={() => eliminarAnuncio(a.id)}
-                    className="text-xs text-fill-warning underline"
+                    className="shrink-0 text-xs text-fill-warning underline"
                   >
                     Eliminar
                   </button>
@@ -674,12 +680,12 @@ export default function ImpulsaPage() {
                     placeholder="Nuevo anuncio o promo corta"
                     value={nuevoAnuncio}
                     onChange={(e) => setNuevoAnuncio(e.target.value)}
-                    className="flex-1 rounded-app border border-border bg-surface-2 px-3 py-1 text-xs text-text-primary outline-none"
+                    className="flex-1 rounded-app border border-border bg-surface-2 px-3 py-2 text-sm text-text-primary outline-none"
                   />
                   <button
                     type="button"
                     onClick={agregarAnuncio}
-                    className="rounded-app bg-fill-primary px-3 py-1 text-xs text-on-primary"
+                    className="rounded-app bg-fill-primary px-4 py-2 text-sm text-on-primary"
                   >
                     Agregar
                   </button>
