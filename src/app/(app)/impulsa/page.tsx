@@ -19,6 +19,8 @@ import { ComentariosEmprendedor } from "@/components/Impulsa/ComentariosEmprende
 import { CarruselFotosEmprendedor } from "@/components/Impulsa/CarruselFotosEmprendedor";
 import { SelectorCompartirEmprendedor } from "@/components/Impulsa/SelectorCompartirEmprendedor";
 import { generarTarjetaCompartirEmprendedor } from "@/lib/tarjetaEmprendedor";
+import { BarraFormatoTexto } from "@/components/BarraFormatoTexto";
+import { renderizarTextoFormateado } from "@/lib/textoFormateado";
 
 type SubTab = "directorio" | "ficha";
 
@@ -392,7 +394,9 @@ export default function ImpulsaPage() {
                   )}
                 </div>
                 <CarruselFotosEmprendedor fotos={e.fotos} alt={e.nombreNegocio} />
-                <p className="whitespace-pre-wrap text-sm text-text-secondary">{e.descripcion}</p>
+                <p className="whitespace-pre-wrap text-sm text-text-secondary">
+                  {renderizarTextoFormateado(e.descripcion)}
+                </p>
                 {e.contacto && <p className="text-xs text-text-primary">Contacto: {e.contacto}</p>}
                 {e.ubicacion && <p className="text-xs text-text-muted">{e.ubicacion}</p>}
 
@@ -539,6 +543,11 @@ export default function ImpulsaPage() {
               value={form.rubro}
               onChange={(e) => setForm({ ...form, rubro: e.target.value })}
               className="rounded-app border border-border bg-surface-2 px-3 py-2 text-text-primary outline-none"
+            />
+            <BarraFormatoTexto
+              textareaRef={descripcionRef}
+              valor={form.descripcion}
+              onCambiar={(nuevo) => setForm({ ...form, descripcion: nuevo })}
             />
             <textarea
               ref={descripcionRef}

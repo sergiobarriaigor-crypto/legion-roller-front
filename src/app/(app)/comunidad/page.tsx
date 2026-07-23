@@ -10,6 +10,7 @@ import {
   type Publicacion,
 } from "@/lib/publicaciones";
 import { CarruselFotosPublicacion } from "@/components/Admin/CarruselFotosPublicacion";
+import { renderizarTextoFormateado } from "@/lib/textoFormateado";
 
 function textoVencimiento(p: Publicacion): string | null {
   if (!p.duracionHoras) return null;
@@ -138,7 +139,9 @@ export default function ComunidadPage() {
             </div>
 
             <h2 className="text-sm font-semibold text-text-primary">{p.titulo}</h2>
-            <p className="whitespace-pre-wrap text-sm text-text-secondary">{p.texto}</p>
+            <p className="whitespace-pre-wrap text-sm text-text-secondary">
+              {renderizarTextoFormateado(p.texto)}
+            </p>
 
             <CarruselFotosPublicacion fotos={p.fotos} alt={p.titulo} />
 
