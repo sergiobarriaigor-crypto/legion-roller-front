@@ -29,6 +29,16 @@ const MAX_CARACTERES_RECONOCIMIENTO = 100;
 // Centro por defecto: entre Puerto Montt y Puerto Varas (sección 1 del PDF).
 const CENTRO_DEFECTO: [number, number] = [-41.4, -72.96];
 
+// A nivel de módulo (no de estado de React) a propósito: SwipeNavigator
+// desmonta y vuelve a montar esta pantalla al cambiar de pestaña, y con eso
+// se perdía por completo hacia dónde el usuario había arrastrado el mapa a
+// mano (ej. mirando patinadores en otra ciudad) — al volver al Mapa, la
+// pantalla se recreaba desde cero y saltaba de nuevo a su propia ubicación,
+// ignorando la exploración. Una variable de módulo sobrevive a ese
+// desmontaje/remontaje (se reinicia solo con una recarga real de página).
+let ultimaVistaMapa: { lat: number; lon: number; zoom: number } | null = null;
+let siguiendoAlRemontar = true;
+
 // Ajuste post-Fase 11: detección de inactividad para cerrar solo el recorrido.
 const KM_MOVIMIENTO_SIGNIFICATIVO = 0.03; // ~30 metros
 const MIN_AVISO_INACTIVIDAD = 25; // dentro del rango pedido (20 a 30 min)
@@ -383,6 +393,15 @@ export function MapaView() {
   // y se reactiva al tocar "Centrar en mi ubicación".
   const siguiendoRef = useRef(false);
 
+  // Mantiene en sincronía el ref local (para leer dentro de callbacks de
+  // este montaje) y la variable de módulo (para que el próximo montaje, tras
+  // un cambio de pestaña, sepa si debe volver a seguirte o respetar que
+  // estabas explorando el mapa a mano).
+  function marcarSiguiendo(valor: boolean) {
+    siguiendoRef.current = valor;
+    siguiendoAlRemontar = valor;
+  }
+
   useEffect(() => {
     modoRef.current = modo;
   }, [modo]);
@@ -433,7 +452,7 @@ export function MapaView() {
       // (no solo el ruido normal del GPS), se retoma el seguimiento solo.
       if (!siguiendoRef.current && mapRef.current) {
         mapRef.current.flyTo([punto.lat, punto.lon], mapRef.current.getZoom());
-        siguiendoRef.current = true;
+        marcarSiguiendo(true);
       }
     }
   }
@@ -500,7 +519,7 @@ export function MapaView() {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setPosicion(null);
       posicionRef.current = null;
-      siguiendoRef.current = false;
+      marcarSiguiendo(false);
       return;
     }
     if (!navigator.geolocation) {
@@ -544,7 +563,7 @@ export function MapaView() {
         if (necesitaCentrarInicialRef.current && mapRef.current) {
           necesitaCentrarInicialRef.current = false;
           mapRef.current.flyTo([punto.lat, punto.lon], ZOOM_CENTRADO_AUTOMATICO);
-          siguiendoRef.current = true;
+          marcarSiguiendo(true);
         } else if (siguiendoRef.current && mapRef.current) {
           // Modo seguimiento: recentra el mapa en cada posición nueva, como en
           // la navegación de Google Maps, mientras el usuario no lo haya
@@ -582,12 +601,15 @@ export function MapaView() {
             setModo(mia.modo as Modo);
             setPosicion({ lat: mia.lat, lon: mia.lon });
             posicionRef.current = { lat: mia.lat, lon: mia.lon };
-            // El prop `center` de MapContainer solo se usa al crear el mapa
-            // (react-leaflet no lo reactualiza si cambia después) — sin este
-            // `setView` explícito, el mapa se quedaba en el centro por
-            // defecto mientras el marcador ya aparecía en la posición real.
-            mapRef.current?.setView([mia.lat, mia.lon], ZOOM_CENTRADO_AUTOMATICO);
-            siguiendoRef.current = true;
+            siguiendoRef.current = siguiendoAlRemontar;
+            // Solo recentra si el usuario estaba en modo seguimiento antes de
+            // cambiar de pestaña. Si estaba explorando el mapa a mano (ej.
+            // mirando patinadores en otra ciudad), `ultimaVistaMapa` ya deja el
+            // mapa recién creado justo donde lo había dejado (ver `centro` más
+            // abajo) — forzar el centrado acá lo habría ignorado por completo.
+            if (siguiendoAlRemontar) {
+              mapRef.current?.setView([mia.lat, mia.lon], ZOOM_CENTRADO_AUTOMATICO);
+            }
           }
         }
       } catch {
@@ -830,7 +852,17 @@ export function MapaView() {
     return () => clearInterval(intervalo);
   }, [token]);
 
-  const centro: [number, number] = posicion ? [posicion.lat, posicion.lon] : CENTRO_DEFECTO;
+  // `ultimaVistaMapa` (si existe) manda: es la vista real que el usuario
+  // dejó antes de que SwipeNavigator desmontara esta pantalla, y tiene
+  // prioridad sobre mi propia ubicación para no secuestrar una exploración
+  // en curso. Solo se usa `posicion`/`CENTRO_DEFECTO` en el montaje realmente
+  // inicial de toda la sesión (recién después de una recarga de página).
+  const centro: [number, number] = ultimaVistaMapa
+    ? [ultimaVistaMapa.lat, ultimaVistaMapa.lon]
+    : posicion
+      ? [posicion.lat, posicion.lon]
+      : CENTRO_DEFECTO;
+  const zoomInicial = ultimaVistaMapa?.zoom ?? 13;
 
   // "Estoy en Ruta" solo se ofrece cuando hay una rodada confirmada ("Voy") y
   // en su ventana horaria — es el único caso donde ese modo tiene sentido
@@ -845,7 +877,7 @@ export function MapaView() {
   function centrarEnMiUbicacion() {
     if (!posicion || !mapRef.current) return;
     mapRef.current.flyTo([posicion.lat, posicion.lon], mapRef.current.getZoom());
-    siguiendoRef.current = true;
+    marcarSiguiendo(true);
   }
 
   // Modo "Exploración": apenas el usuario arrastra el mapa a mano (ej. para
@@ -859,11 +891,22 @@ export function MapaView() {
     const map = mapRef.current;
     if (!map) return;
     function detenerSeguimiento() {
-      siguiendoRef.current = false;
+      marcarSiguiendo(false);
+    }
+    // Guarda continuamente dónde quedó la cámara (propia o de exploración) en
+    // `ultimaVistaMapa`, para que si SwipeNavigator desmonta esta pantalla al
+    // cambiar de pestaña, el próximo montaje recree el mapa exactamente ahí
+    // en vez de saltar al centro por defecto o a mi propia ubicación.
+    function guardarVista() {
+      if (!map) return;
+      const c = map.getCenter();
+      ultimaVistaMapa = { lat: c.lat, lon: c.lng, zoom: map.getZoom() };
     }
     map.on("dragstart", detenerSeguimiento);
+    map.on("moveend", guardarVista);
     return () => {
       map.off("dragstart", detenerSeguimiento);
+      map.off("moveend", guardarVista);
     };
   }, []);
 
@@ -989,7 +1032,7 @@ export function MapaView() {
         <MapContainer
           ref={mapRef}
           center={centro}
-          zoom={13}
+          zoom={zoomInicial}
           zoomControl={false}
           style={{ height: "100%", width: "100%" }}
         >
