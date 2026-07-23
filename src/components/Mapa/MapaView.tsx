@@ -404,7 +404,7 @@ export function MapaView() {
       .catch(() => {});
   }, [token]);
 
-  function registrarMovimiento(punto: { lat: number; lon: number }) {
+  function registrarMovimiento(punto: { lat: number; lon: number }, precisionM: number) {
     const anterior = ultimaPosSignificativaRef.current;
     const ahora: PuntoGps = { ...punto, timestamp: Date.now() };
     if (!anterior) {
@@ -413,7 +413,16 @@ export function MapaView() {
       return;
     }
     const distanciaKm = distanciaHaversineKm(anterior, ahora);
-    if (distanciaKm >= KM_MOVIMIENTO_SIGNIFICATIVO) {
+    // El GPS de un teléfono puede "saltar" varias decenas de metros entre dos
+    // lecturas aunque la persona esté completamente quieta (ubicación por
+    // red/Wi-Fi, rebotes entre edificios, primeros fixes al activar el modo).
+    // Sin este piso dinámico, ese ruido se confundía con "empezó a moverse de
+    // verdad" y sacaba al usuario del modo Exploración apenas soltaba el dedo
+    // del mapa — exactamente el reporte de que el mapa "siempre" se recentraba.
+    // Se exige superar no solo KM_MOVIMIENTO_SIGNIFICATIVO sino también un
+    // múltiplo de la precisión que el propio GPS reportó en esa lectura.
+    const umbralKm = Math.max(KM_MOVIMIENTO_SIGNIFICATIVO, (precisionM * 1.5) / 1000);
+    if (distanciaKm >= umbralKm) {
       ultimaPosSignificativaRef.current = ahora;
       ultimoMovimientoEnRef.current = Date.now();
       if (avisoInactividadRef.current) {
@@ -505,7 +514,7 @@ export function MapaView() {
         posicionRef.current = punto;
         setPosicion(punto);
         setErrorGeo("");
-        registrarMovimiento(punto);
+        registrarMovimiento(punto, pos.coords.accuracy ?? 0);
 
         if (grabandoRef.current && !avisoVelocidadRef.current) {
           const puntoGrabado = { ...punto, timestamp: Date.now() };
