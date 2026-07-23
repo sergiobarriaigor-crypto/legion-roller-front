@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { IconCheck, IconSearch, IconX } from "@tabler/icons-react";
 import { apiGet } from "@/lib/api";
 import { compartirEmprendedorAUsuarios, type Emprendedor } from "@/lib/emprendedores";
@@ -8,6 +8,10 @@ import type { MiembroSimple } from "@/lib/chat";
 import { Avatar } from "@/components/Avatar";
 
 const MAX_DESTINATARIOS_COMPARTIR = 5;
+
+// Misma hoja arrastrable de MisRutasPanel.tsx / SelectorCompartirPost.tsx.
+const ALTURA_PEEK_VH = 55;
+const ALTURA_EXPANDIDA_VH = 92;
 
 // Ventana flotante para compartir una ficha de emprendedor puertas adentro de
 // la app — calco de SelectorCompartirPost.tsx (mismo fondo con foto + efecto
@@ -28,6 +32,25 @@ export function SelectorCompartirEmprendedor({
   const [seleccionados, setSeleccionados] = useState<number[]>([]);
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState("");
+
+  const [alturaVh, setAlturaVh] = useState(ALTURA_PEEK_VH);
+  const arrastreRef = useRef<{ startY: number; startAltura: number } | null>(null);
+
+  function onDragStart(e: React.TouchEvent) {
+    arrastreRef.current = { startY: e.touches[0].clientY, startAltura: alturaVh };
+  }
+  function onDragMove(e: React.TouchEvent) {
+    if (!arrastreRef.current) return;
+    const deltaVh = ((arrastreRef.current.startY - e.touches[0].clientY) / window.innerHeight) * 100;
+    const nueva = Math.min(ALTURA_EXPANDIDA_VH, Math.max(30, arrastreRef.current.startAltura + deltaVh));
+    setAlturaVh(nueva);
+  }
+  function onDragEnd() {
+    arrastreRef.current = null;
+    setAlturaVh((actual) =>
+      actual > (ALTURA_PEEK_VH + ALTURA_EXPANDIDA_VH) / 2 ? ALTURA_EXPANDIDA_VH : ALTURA_PEEK_VH,
+    );
+  }
 
   useEffect(() => {
     apiGet<MiembroSimple[]>("/chat/miembros", token)
@@ -64,8 +87,9 @@ export function SelectorCompartirEmprendedor({
     <div className="fixed inset-0 z-50" data-no-swipe>
       <div className="absolute inset-0 bg-black/75" onClick={onCerrar} aria-hidden />
       <div
-        className="absolute inset-x-0 bottom-0 flex max-h-[55%] flex-col rounded-t-2xl shadow-[0_-8px_30px_rgba(0,0,0,0.5)]"
+        className="absolute inset-x-0 bottom-0 flex flex-col rounded-t-2xl shadow-[0_-8px_30px_rgba(0,0,0,0.5)] transition-[height] duration-150"
         style={{
+          height: `${alturaVh}vh`,
           backgroundImage:
             "linear-gradient(to bottom, rgba(23,16,8,0.4) 0%, rgba(23,16,8,0.65) 45%, rgba(23,16,8,0.88) 100%), url(/fondo-compartir-post.jpg)",
           backgroundSize: "cover",
@@ -73,14 +97,21 @@ export function SelectorCompartirEmprendedor({
           backgroundPosition: "50% 100%",
         }}
       >
-        <div className="flex justify-center pb-1 pt-2">
-          <span className="h-1 w-10 rounded-full bg-white/20" />
-        </div>
-        <div className="flex items-center justify-between border-b border-white/10 px-3 pb-3">
-          <h3 className="text-sm font-semibold text-white">Compartir ficha</h3>
-          <button type="button" onClick={onCerrar} aria-label="Cerrar" className="text-white">
-            <IconX size={20} />
-          </button>
+        <div
+          className="cursor-grab active:cursor-grabbing"
+          onTouchStart={onDragStart}
+          onTouchMove={onDragMove}
+          onTouchEnd={onDragEnd}
+        >
+          <div className="flex justify-center pb-1 pt-2">
+            <span className="h-1 w-10 rounded-full bg-white/20" />
+          </div>
+          <div className="flex items-center justify-between border-b border-white/10 px-3 pb-3">
+            <h3 className="text-sm font-semibold text-white">Compartir ficha</h3>
+            <button type="button" onClick={onCerrar} aria-label="Cerrar" className="text-white">
+              <IconX size={20} />
+            </button>
+          </div>
         </div>
 
         <p className="px-3 pb-2 pt-2 text-xs text-white/60">
