@@ -364,7 +364,15 @@ export default function ImpulsaPage() {
             const esDuenio = sesion?.id === e.miembroId;
             const yaReaccione = misReacciones.includes(e.id);
             return (
-              <div key={e.id} id={`emprendedor-${e.id}`} className="card flex flex-col gap-2 p-4">
+              <div
+                key={e.id}
+                id={`emprendedor-${e.id}`}
+                // Mismo criterio que el feed de Post: -mx-4 cancela el px-4
+                // compartido de SwipeNavigator y px-3 propio deja ~12px de
+                // margen real hasta el borde de la pantalla, en vez de los
+                // ~32px que dejaba el p-4 sumado al del padre.
+                className="card -mx-4 flex flex-col gap-2 px-3 py-4"
+              >
                 <div className="flex items-start justify-between">
                   <div>
                     <p className="text-sm font-semibold text-text-accent">{e.nombreNegocio}</p>

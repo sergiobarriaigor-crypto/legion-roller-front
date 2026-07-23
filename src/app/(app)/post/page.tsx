@@ -557,7 +557,16 @@ export default function PostPage() {
         const puedeEliminar = sesion?.id === p.autorId || sesion?.rol === "admin";
 
         return (
-          <div key={p.id} id={`post-${p.id}`} className="card flex flex-col gap-2 p-4">
+          <div
+            key={p.id}
+            id={`post-${p.id}`}
+            // -mx-4 cancela el px-4 compartido de SwipeNavigator (ver
+            // components/SwipeNavigator.tsx) y px-3 propio deja un margen de
+            // seguridad de ~12px hasta el borde real de la pantalla — foto,
+            // texto y botones comparten ese mismo ancho, en vez de los ~32px
+            // de margen muerto que dejaba el p-4 anterior sumado al del padre.
+            className="card -mx-4 flex flex-col gap-2 px-3 py-4"
+          >
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Avatar fotoUrl={p.autorFotoUrl} nombre={p.autorNombre} tamano={40} />
