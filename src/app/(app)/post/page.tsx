@@ -14,6 +14,7 @@ import { VideoTrimmer } from "@/components/VideoTrimmer";
 import { Avatar } from "@/components/Avatar";
 import { BarraHistorias } from "@/components/Historias/BarraHistorias";
 import { generarTarjetaCompartirPost } from "@/lib/tarjetaPost";
+import { forzarHttps } from "@/lib/imagenDataUrl";
 
 const MAX_FOTOS_POR_POST = 3;
 const DURACION_MAXIMA_VIDEO_SEG = 50;
@@ -63,7 +64,7 @@ async function compartirArchivo(archivo: File, titulo: string, resena: string) {
 async function compartirPost(p: Post) {
   try {
     if (p.tipo === "video" && p.videoUrl) {
-      const blob = await (await fetch(p.videoUrl)).blob();
+      const blob = await (await fetch(forzarHttps(p.videoUrl))).blob();
       const archivo = new File([blob], "post-legion-roller.mp4", { type: blob.type });
       await compartirArchivo(archivo, p.titulo, p.resena);
       return;
