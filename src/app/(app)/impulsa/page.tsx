@@ -441,7 +441,7 @@ export default function ImpulsaPage() {
                     {e.anuncios.map((a) => (
                       <p
                         key={a.id}
-                        className="rounded-app border-l-2 border-border-accent bg-bg-accent px-3 py-2 text-sm font-medium text-amber-text"
+                        className="rounded-app border-l-2 border-border-accent bg-bg-accent px-3 py-2.5 text-base font-semibold text-amber-text"
                       >
                         📣 {a.texto}
                       </p>
