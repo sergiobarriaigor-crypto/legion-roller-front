@@ -91,7 +91,6 @@ export function SelectorCompartirEmprendedor({
         <div className="mx-3 mb-2 flex items-center gap-2 rounded-app border border-white/20 px-3 py-2">
           <IconSearch size={16} className="text-white/60" />
           <input
-            autoFocus
             value={busqueda}
             onChange={(e) => setBusqueda(e.target.value)}
             placeholder="Buscar integrante..."
