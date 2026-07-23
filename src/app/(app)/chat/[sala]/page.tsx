@@ -304,7 +304,7 @@ export default function ConversacionPage() {
 
   return (
     <div ref={raizRef} className="relative flex h-full flex-col gap-3">
-      <div className="card flex items-center gap-2 px-3 py-2.5">
+      <div className="card -mx-4 flex items-center gap-2 px-3 py-2.5">
         <Link href="/chat" aria-label="Volver" className="shrink-0 text-text-secondary">
           <IconChevronLeft size={20} />
         </Link>
@@ -332,7 +332,7 @@ export default function ConversacionPage() {
 
       <div
         ref={contenedorRef}
-        className="card flex flex-1 flex-col gap-2 overflow-y-auto p-4"
+        className="card -mx-4 flex flex-1 flex-col gap-2 overflow-y-auto px-3 py-4"
         style={{ minHeight: 320 }}
       >
         {mensajes.length === 0 && (

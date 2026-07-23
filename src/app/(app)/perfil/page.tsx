@@ -171,7 +171,7 @@ export default function PerfilPage() {
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="card flex flex-col items-center gap-3 p-5">
+      <div className="card -mx-4 flex flex-col items-center gap-3 px-3 py-5">
         {perfil.fotoUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -209,7 +209,7 @@ export default function PerfilPage() {
       {error && <p className="text-xs text-fill-warning">{error}</p>}
 
       {miEmergencia && (
-        <div className="card flex items-center justify-between border-fill-warning bg-red-700/10 p-4">
+        <div className="card -mx-4 flex items-center justify-between border-fill-warning bg-red-700/10 px-3 py-4">
           <p className="text-xs text-fill-warning">
             🚨 Tienes una emergencia activa —{" "}
             {ETIQUETA_MOTIVO[miEmergencia.motivo as keyof typeof ETIQUETA_MOTIVO] ??
@@ -225,7 +225,7 @@ export default function PerfilPage() {
         </div>
       )}
 
-      <div className="card flex flex-col gap-2 p-4">
+      <div className="card -mx-4 flex flex-col gap-2 px-3 py-4">
         <h2 className="text-sm font-semibold text-text-primary">Estado</h2>
         {perfil.estado ? (
           <div className="flex items-center justify-between">
@@ -251,7 +251,7 @@ export default function PerfilPage() {
         </form>
       </div>
 
-      <div className="card grid grid-cols-3 gap-3 p-4 text-center">
+      <div className="card -mx-4 grid grid-cols-3 gap-3 px-3 py-4 text-center">
         <div>
           <p className="text-lg font-semibold text-text-accent">{perfil.stats.kmTotales}</p>
           <p className="text-xs text-text-muted">km totales</p>
@@ -278,7 +278,7 @@ export default function PerfilPage() {
         </div>
       </div>
 
-      <div className="card flex flex-col gap-3 p-4">
+      <div className="card -mx-4 flex flex-col gap-3 px-3 py-4">
         <h2 className="text-sm font-semibold text-text-primary">Técnicas dominadas</h2>
         {CATALOGO_TECNICAS.map((cat) => (
           <div key={cat.categoria} className="flex flex-col gap-1.5">
@@ -303,7 +303,7 @@ export default function PerfilPage() {
         ))}
       </div>
 
-      <div className="card flex flex-col gap-3 p-4">
+      <div className="card -mx-4 flex flex-col gap-3 px-3 py-4">
         <h2 className="text-sm font-semibold text-text-primary">Distancias Alcanzadas</h2>
         <p className="text-xs text-text-secondary">
           Cada hito se desbloquea al completar esa distancia en una sola ruta — no se suman
@@ -345,7 +345,7 @@ export default function PerfilPage() {
 
       <GaleriaPerfil miembroId={perfil.id} esPropio token={token} />
 
-      <div className="card flex flex-col gap-2 p-4">
+      <div className="card -mx-4 flex flex-col gap-2 px-3 py-4">
         <h2 className="text-sm font-semibold text-text-primary">Reconocimientos recibidos</h2>
         {perfil.reconocimientos.length === 0 && (
           <p className="text-xs text-text-secondary">Todavía no tienes reconocimientos.</p>
@@ -378,7 +378,7 @@ export default function PerfilPage() {
       </div>
 
       {misPosts.length > 0 && (
-        <div className="card flex flex-col gap-2 p-4">
+        <div className="card -mx-4 flex flex-col gap-2 px-3 py-4">
           <h2 className="text-sm font-semibold text-text-primary">Mis publicaciones</h2>
           {(mostrarTodasPublicaciones ? misPosts : misPosts.slice(0, 2)).map((p) => (
             <button
@@ -433,7 +433,7 @@ export default function PerfilPage() {
           dentroDeFiltroFecha(r.createdAt, filtroFecha, fechaDesde, fechaHasta),
         );
         return (
-          <div className="card flex flex-col gap-2 p-4">
+          <div className="card -mx-4 flex flex-col gap-2 px-3 py-4">
             <h2 className="text-sm font-semibold text-text-primary">Historial de recorridos</h2>
 
             <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-1">

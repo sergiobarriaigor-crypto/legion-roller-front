@@ -106,7 +106,7 @@ export default function ChatListaPage() {
 
       {error && <p className="text-xs text-fill-warning">{error}</p>}
 
-      <Link href="/chat/grupal" className="card flex items-center gap-3 p-4">
+      <Link href="/chat/grupal" className="card -mx-4 flex items-center gap-3 px-3 py-4">
         <Avatar fotoUrl="/avatar-chat-grupal.png" nombre="Legión" tamano={44} />
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold text-text-primary">Chat grupal</p>
@@ -132,7 +132,7 @@ export default function ChatListaPage() {
       </Link>
 
       {conversaciones.individuales.map((c) => (
-        <Link key={c.sala} href={`/chat/${c.sala}`} className="card flex items-center gap-3 p-4">
+        <Link key={c.sala} href={`/chat/${c.sala}`} className="card -mx-4 flex items-center gap-3 px-3 py-4">
           <Avatar fotoUrl={c.otroFotoUrl} nombre={c.otroNombre} tamano={44}>
             {(enLinea[c.otroMiembroId] ?? c.otroEnLinea) && (
               <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-page-bg bg-fill-success" />
@@ -164,7 +164,7 @@ export default function ChatListaPage() {
           Nuevo chat
         </button>
       ) : (
-        <div className="card flex flex-col gap-2 p-4">
+        <div className="card -mx-4 flex flex-col gap-2 px-3 py-4">
           <p className="text-sm font-semibold text-text-primary">Elige con quién chatear</p>
           {miembros.map((m) => (
             <Link

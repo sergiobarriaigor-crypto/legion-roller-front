@@ -521,7 +521,7 @@ export default function ImpulsaPage() {
             </p>
           )}
 
-          <form onSubmit={guardarFicha} className="card flex flex-col gap-2 p-4">
+          <form onSubmit={guardarFicha} className="card -mx-4 flex flex-col gap-2 px-3 py-4">
             <h2 className="text-sm font-semibold text-text-primary">
               {miFicha ? "Editar mi ficha" : "Crear mi ficha de emprendedor"}
             </h2>
@@ -643,7 +643,7 @@ export default function ImpulsaPage() {
           </form>
 
           {miFicha && (
-            <div className="card flex flex-col gap-2 p-4">
+            <div className="card -mx-4 flex flex-col gap-2 px-3 py-4">
               <h2 className="text-sm font-semibold text-text-primary">Mis anuncios</h2>
               {miFicha.anuncios.map((a) => (
                 <div key={a.id} className="flex items-center justify-between">

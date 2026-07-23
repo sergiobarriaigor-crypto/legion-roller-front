@@ -54,7 +54,7 @@ export default function PerfilPublicoPage() {
         ← Volver
       </Link>
 
-      <div className="card flex flex-col items-center gap-3 p-5">
+      <div className="card -mx-4 flex flex-col items-center gap-3 px-3 py-5">
         {perfil.fotoUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -78,7 +78,7 @@ export default function PerfilPublicoPage() {
         </div>
       </div>
 
-      <div className="card grid grid-cols-3 gap-3 p-4 text-center">
+      <div className="card -mx-4 grid grid-cols-3 gap-3 px-3 py-4 text-center">
         <div>
           <p className="text-lg font-semibold text-text-accent">{perfil.stats.kmTotales}</p>
           <p className="text-xs text-text-muted">km totales</p>
@@ -105,7 +105,7 @@ export default function PerfilPublicoPage() {
         </div>
       </div>
 
-      <div className="card flex flex-col gap-3 p-4">
+      <div className="card -mx-4 flex flex-col gap-3 px-3 py-4">
         <h2 className="text-sm font-semibold text-text-primary">Técnicas dominadas</h2>
         {CATALOGO_TECNICAS.map((cat) => (
           <div key={cat.categoria} className="flex flex-col gap-1.5">
@@ -128,7 +128,7 @@ export default function PerfilPublicoPage() {
         ))}
       </div>
 
-      <div className="card flex flex-col gap-3 p-4">
+      <div className="card -mx-4 flex flex-col gap-3 px-3 py-4">
         <h2 className="text-sm font-semibold text-text-primary">Distancias Alcanzadas</h2>
         <div className="flex flex-wrap gap-2">
           {(() => {

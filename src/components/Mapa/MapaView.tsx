@@ -1191,7 +1191,7 @@ export function MapaView() {
       </div>
 
       {!pantallaCompleta && emergenciasActivas.length > 0 && (
-        <div className="card border-fill-warning bg-red-700/10 p-3 text-xs text-fill-warning">
+        <div className="card -mx-4 border-fill-warning bg-red-700/10 px-3 py-3 text-xs text-fill-warning">
           🚨 {emergenciasActivas.length === 1 ? "Hay una emergencia activa" : `Hay ${emergenciasActivas.length} emergencias activas`} en el mapa.
         </div>
       )}
@@ -1223,7 +1223,7 @@ export function MapaView() {
             </p>
           )}
 
-          <div className="card flex flex-col gap-2 p-4">
+          <div className="card -mx-4 flex flex-col gap-2 px-3 py-4">
             <h2 className="text-sm font-semibold text-text-accent">Compartir mi ubicación</h2>
             {!modo ? (
               <>

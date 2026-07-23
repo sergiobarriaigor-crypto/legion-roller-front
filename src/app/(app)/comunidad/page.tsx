@@ -107,7 +107,7 @@ export default function ComunidadPage() {
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="card bg-bg-accent p-4">
+      <div className="card -mx-4 bg-bg-accent px-3 py-4">
         <p className="text-xs font-semibold text-amber-text">NO TE PIERDAS</p>
         <p className="text-sm text-text-primary">Las últimas noticias de la comunidad</p>
       </div>
@@ -126,7 +126,7 @@ export default function ComunidadPage() {
         return (
           <div
             key={p.id}
-            className={`card flex flex-col gap-2 p-4 ${esAlerta ? "border-fill-warning" : ""}`}
+            className={`card -mx-4 flex flex-col gap-2 px-3 py-4 ${esAlerta ? "border-fill-warning" : ""}`}
           >
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold uppercase tracking-wide text-text-accent">

@@ -365,7 +365,7 @@ export default function PostPage() {
       <BarraHistorias />
 
       {puedeInteractuar && (
-        <div className="card p-4">
+        <div className="card -mx-4 px-3 py-4">
           {!mostrarCompose ? (
             <button
               type="button"

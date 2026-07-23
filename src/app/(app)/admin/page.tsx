@@ -437,7 +437,7 @@ export default function AdminPage() {
 
   if (sesion?.rol !== "admin") {
     return (
-      <div className="card p-5 text-sm text-fill-warning">
+      <div className="card -mx-4 px-3 py-5 text-sm text-fill-warning">
         No tienes permisos para ver esta sección.
       </div>
     );
@@ -492,7 +492,7 @@ export default function AdminPage() {
 
       {subTab === "publicaciones" && (
         <>
-          <form onSubmit={guardar} className="card flex flex-col gap-3 p-4">
+          <form onSubmit={guardar} className="card -mx-4 flex flex-col gap-3 px-3 py-4">
             <h2 className="text-sm font-semibold text-text-primary">
               {editandoId ? "Editar publicación" : "Nueva publicación"}
             </h2>
@@ -781,7 +781,7 @@ export default function AdminPage() {
             </div>
           </form>
 
-          <div className="card flex flex-col gap-2 p-4">
+          <div className="card -mx-4 flex flex-col gap-2 px-3 py-4">
             <h2 className="text-sm font-semibold text-text-primary">Publicaciones activas</h2>
             {publicaciones.length === 0 && (
               <p className="text-xs text-text-secondary">No hay publicaciones todavía.</p>
@@ -875,7 +875,7 @@ export default function AdminPage() {
 
       {subTab === "integrantes" && (
         <>
-          <div className="card flex flex-col gap-2 p-4">
+          <div className="card -mx-4 flex flex-col gap-2 px-3 py-4">
             <h2 className="text-sm font-semibold text-text-primary">Solicitudes de registro</h2>
             {solicitudesRegistro.length === 0 && (
               <p className="text-xs text-text-secondary">No hay solicitudes pendientes.</p>
@@ -923,7 +923,7 @@ export default function AdminPage() {
             ))}
           </div>
 
-          <div className="card flex flex-col gap-2 p-4">
+          <div className="card -mx-4 flex flex-col gap-2 px-3 py-4">
             <h2 className="text-sm font-semibold text-text-primary">
               Solicitudes de Impulsa (emprendedores)
             </h2>
@@ -958,7 +958,7 @@ export default function AdminPage() {
             ))}
           </div>
 
-          <div className="card flex flex-col gap-2 p-4">
+          <div className="card -mx-4 flex flex-col gap-2 px-3 py-4">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-text-primary">Directorio de Impulsa</h2>
               <span className="text-xs text-text-muted">
@@ -1006,7 +1006,7 @@ export default function AdminPage() {
             ))}
           </div>
 
-          <div className="card flex flex-col gap-2 p-4">
+          <div className="card -mx-4 flex flex-col gap-2 px-3 py-4">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-text-primary">Todos los integrantes</h2>
               <div className="flex items-center gap-2">
