@@ -23,10 +23,8 @@ const FONDO_CARD = "#0b121c";
 
 const TITULO_FONT = 52;
 const TITULO_ALTO = 64;
-const MAX_LINEAS_TITULO = 2;
 const RESENA_FONT = 36;
 const RESENA_ALTO = 50;
-const MAX_LINEAS_RESENA = 5;
 const GAP_TITULO_RESENA = 24;
 const GAP_RESENA_FOOTER = 32;
 const LOGO_TAM = 72;
@@ -42,15 +40,12 @@ function escapeXml(texto: string): string {
 }
 
 // Envuelve el texto a un ancho máximo (medido con la misma tipografía que
-// después se dibuja en el SVG) y lo recorta a `maxLineas`, agregando "…" a
-// la última si sobró texto — no hay wrap nativo en SVG, hay que armar las
-// líneas a mano antes de generarlo.
-function envolverTexto(
-  ctx: CanvasRenderingContext2D,
-  texto: string,
-  maxAncho: number,
-  maxLineas: number,
-): string[] {
+// después se dibuja en el SVG) — no hay wrap nativo en SVG, hay que armar
+// las líneas a mano antes de generarlo. Sin límite de líneas: la tarjeta
+// nunca trunca texto con "…", crece en alto lo que haga falta (ver
+// generarTarjetaCompartirEmprendedor) para mostrar el título y la
+// descripción completos.
+function envolverTexto(ctx: CanvasRenderingContext2D, texto: string, maxAncho: number): string[] {
   const palabras = texto.split(/\s+/).filter(Boolean);
   if (palabras.length === 0) return [];
 
@@ -65,20 +60,8 @@ function envolverTexto(
     }
     lineas.push(actual);
     actual = palabra;
-    if (lineas.length === maxLineas) break;
   }
-  if (lineas.length < maxLineas) lineas.push(actual);
-  const sobra = lineas.length > maxLineas;
-  if (sobra) lineas.length = maxLineas;
-
-  const totalPalabrasMostradas = lineas.join(" ").split(/\s+/).length;
-  if (sobra || totalPalabrasMostradas < palabras.length) {
-    let ultima = lineas[lineas.length - 1];
-    while (ultima.length > 0 && ctx.measureText(ultima + "…").width > maxAncho) {
-      ultima = ultima.slice(0, -1).trimEnd();
-    }
-    lineas[lineas.length - 1] = ultima + "…";
-  }
+  lineas.push(actual);
 
   return lineas;
 }
@@ -105,11 +88,11 @@ export async function generarTarjetaCompartirEmprendedor(datos: DatosTarjetaEmpr
   if (!medidor) throw new Error("No se pudo generar la imagen");
 
   medidor.font = `800 ${TITULO_FONT}px Arial, sans-serif`;
-  const lineasTitulo = envolverTexto(medidor, datos.nombreNegocio.trim(), anchoTexto, MAX_LINEAS_TITULO);
+  const lineasTitulo = envolverTexto(medidor, datos.nombreNegocio.trim(), anchoTexto);
 
   medidor.font = `400 ${RESENA_FONT}px Arial, sans-serif`;
   const descripcion = datos.descripcion.trim();
-  const lineasResena = descripcion ? envolverTexto(medidor, descripcion, anchoTexto, MAX_LINEAS_RESENA) : [];
+  const lineasResena = descripcion ? envolverTexto(medidor, descripcion, anchoTexto) : [];
 
   const altoTitulo = lineasTitulo.length * TITULO_ALTO;
   const altoResena = lineasResena.length * RESENA_ALTO;
@@ -154,7 +137,7 @@ export async function generarTarjetaCompartirEmprendedor(datos: DatosTarjetaEmpr
       </clipPath>
       <g clip-path="url(#marcoTarjetaEmprendedor)">
         <rect width="${ANCHO}" height="${alto}" fill="${FONDO_CARD}"/>
-        <image href="${fotoDataUrl}" x="0" y="0" width="${ANCHO}" height="${ALTO_IMG}" preserveAspectRatio="xMidYMid slice"/>
+        <image href="${fotoDataUrl}" x="0" y="0" width="${ANCHO}" height="${ALTO_IMG}" preserveAspectRatio="xMidYMid meet"/>
       </g>
       <rect x="0" y="${ALTO_IMG - 1}" width="${ANCHO}" height="2" fill="${DORADO_BORDE}" opacity="0.6"/>
       <rect x="14" y="14" width="${ANCHO - 28}" height="${alto - 28}" rx="26" fill="none" stroke="${DORADO_BORDE}" stroke-width="2" opacity="0.7"/>
