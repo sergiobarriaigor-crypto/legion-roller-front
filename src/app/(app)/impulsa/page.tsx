@@ -151,15 +151,16 @@ export default function ImpulsaPage() {
   }, [token]);
 
   // La caja de Descripción crece con el contenido en vez de esconderlo
-  // detrás de un scroll poco visible — corre tanto al escribir como al
-  // cargar una ficha existente para editar (ahí el valor llega de golpe,
-  // no tecla por tecla, así que el resize tiene que reaccionar al valor).
+  // detrás de un scroll poco visible — corre al escribir, al cargar una
+  // ficha existente para editar, y también al volver a la sub-pestaña
+  // "Mi ficha" (el textarea recién se monta ahí, así que sin `subTab` en
+  // las dependencias el resize no se aplicaba al volver de Directorio).
   useEffect(() => {
     const el = descripcionRef.current;
     if (!el) return;
     el.style.height = "auto";
     el.style.height = `${el.scrollHeight}px`;
-  }, [form.descripcion]);
+  }, [form.descripcion, subTab]);
 
   // Deep-link desde la notificación de "te comentaron/respondieron una
   // reseña" (ver AppHeader.tsx): cambia al Directorio y abre directo el hilo

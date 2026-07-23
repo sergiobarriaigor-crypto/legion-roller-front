@@ -107,6 +107,7 @@ export default function AdminPage() {
   const [fotos, setFotos] = useState<string[]>([]);
   const [subiendoFotos, setSubiendoFotos] = useState(false);
   const fotoInputRef = useRef<HTMLInputElement>(null);
+  const textoRef = useRef<HTMLTextAreaElement>(null);
   const [editandoId, setEditandoId] = useState<number | null>(null);
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState("");
@@ -184,6 +185,16 @@ export default function AdminPage() {
     cargarMiembros();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
+
+  // La caja de Texto crece con el contenido en vez de esconderlo/cortarlo
+  // (mismo patrón que la Descripción de Impulsa) — corre tanto al escribir
+  // como al cargar una publicación existente para editar.
+  useEffect(() => {
+    const el = textoRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [form.texto]);
 
   async function aprobarEmprendedor(id: number) {
     if (!token) return;
@@ -517,10 +528,11 @@ export default function AdminPage() {
               className="rounded-app border border-border bg-surface-2 px-3 py-2 text-text-primary outline-none"
             />
             <textarea
+              ref={textoRef}
               placeholder="Texto"
               value={form.texto}
               onChange={(e) => setForm({ ...form, texto: e.target.value })}
-              className="rounded-app border border-border bg-surface-2 px-3 py-2 text-text-primary outline-none"
+              className="resize-none overflow-hidden rounded-app border border-border bg-surface-2 px-3 py-2 text-text-primary outline-none"
               rows={3}
             />
 
