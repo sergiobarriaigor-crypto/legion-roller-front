@@ -25,6 +25,8 @@ const MisRutasPanel = dynamic(
 );
 
 const HOLD_MS = 1500;
+const RADIO_MAPA = 31;
+const CIRCUNFERENCIA_MAPA = 2 * Math.PI * RADIO_MAPA;
 
 interface NavItem {
   href: string;
@@ -65,28 +67,52 @@ export function BottomNav() {
   const esAdmin = sesion?.rol === "admin";
 
   const [mostrarRutas, setMostrarRutas] = useState(false);
-  const holdTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [progresoMapa, setProgresoMapa] = useState(0);
+  const [manteniendoMapa, setManteniendoMapa] = useState(false);
+  const intervaloMapaRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const holdActivadoRef = useRef(false);
   const [logoError, setLogoError] = useState(false);
 
+  // Mismo patrón que el botón SOS: un anillo de progreso mientras se mantiene
+  // presionado. Sin esa señal visual, el usuario no tiene forma de saber si
+  // el gesto se está registrando y suele soltar antes de tiempo pensando que
+  // no está funcionando.
   function iniciarHoldMapa(e: React.PointerEvent<HTMLButtonElement>) {
     // Sin esto, si el dedo se desliza (aunque sea sin querer) hacia el botón
     // vecino ("Impulsa") mientras se mantiene presionado, el navegador puede
     // soltar el click ahí en vez de en este botón — enviando a Impulsa sin
     // importar la pantalla en la que se estaba. Capturar el puntero mantiene
     // todo el gesto (mover y soltar) anclado a este botón hasta que se suelte.
-    e.currentTarget.setPointerCapture(e.pointerId);
+    // Es un extra defensivo, no algo de lo que dependa el hold en sí: en
+    // algunos navegadores/dispositivos setPointerCapture puede lanzar una
+    // excepción (ej. Safari en ciertas versiones de iOS) — sin este try/catch,
+    // esa excepción cortaba toda la función y el hold quedaba muerto sin
+    // ningún aviso.
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // Se ignora: el hold sigue funcionando igual, solo se pierde la
+      // protección contra deslizar hacia el botón vecino.
+    }
     holdActivadoRef.current = false;
-    holdTimeoutRef.current = setTimeout(() => {
-      holdActivadoRef.current = true;
-      limpiarHoldMapa();
-      setMostrarRutas(true);
-    }, HOLD_MS);
+    setManteniendoMapa(true);
+    const inicio = Date.now();
+    intervaloMapaRef.current = setInterval(() => {
+      const pct = Math.min(100, ((Date.now() - inicio) / HOLD_MS) * 100);
+      setProgresoMapa(pct);
+      if (pct >= 100) {
+        holdActivadoRef.current = true;
+        limpiarHoldMapa();
+        setMostrarRutas(true);
+      }
+    }, 30);
   }
 
   function limpiarHoldMapa() {
-    if (holdTimeoutRef.current) clearTimeout(holdTimeoutRef.current);
-    holdTimeoutRef.current = null;
+    if (intervaloMapaRef.current) clearInterval(intervaloMapaRef.current);
+    intervaloMapaRef.current = null;
+    setManteniendoMapa(false);
+    setProgresoMapa(0);
   }
 
   function onPointerUpMapa() {
@@ -130,6 +156,24 @@ export function BottomNav() {
                   className="h-[85%] w-[85%] rounded-full object-cover"
                   onError={() => setLogoError(true)}
                 />
+              )}
+              {manteniendoMapa && (
+                <svg
+                  className="pointer-events-none absolute inset-0 -rotate-90 text-text-accent"
+                  width={70}
+                  height={70}
+                >
+                  <circle
+                    cx={35}
+                    cy={35}
+                    r={RADIO_MAPA}
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={4}
+                    strokeDasharray={CIRCUNFERENCIA_MAPA}
+                    strokeDashoffset={CIRCUNFERENCIA_MAPA * (1 - progresoMapa / 100)}
+                  />
+                </svg>
               )}
             </button>
           </div>
