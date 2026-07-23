@@ -49,12 +49,6 @@ const ZOOM_CENTRADO_AUTOMATICO = 16;
 // Mismo patrón de tap-vs-hold que el botón central del bottom-nav.
 const HOLD_MS_CENTRAR = 1500;
 
-// Al arrastrar el mapa a mano (ej. para ver a otros patinadores cerca), se
-// apaga el seguimiento automático por un momento en vez de quedar apagado
-// hasta que el usuario toque "Centrar en mi ubicación" — se retoma solo
-// después de esta pausa sin nuevos arrastres.
-const MS_ESPERA_REANUDAR_SEGUIMIENTO = 8000;
-
 // Capas de mapa disponibles (botón inferior izquierdo): estándar (OpenStreetMap,
 // ya usado en el resto de la app) y satélite (Esri World Imagery, gratis y sin
 // API key, igual que OpenStreetMap).
@@ -382,7 +376,6 @@ export function MapaView() {
   const holdCentrarTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const holdCentrarActivadoRef = useRef(false);
   const restauroModoRef = useRef(false);
-  const timeoutReanudarSeguimientoRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Modo seguimiento: mientras esté activo, el mapa se recentra solo con cada
   // posición nueva del GPS (como la navegación de Google Maps). Se desactiva
   // apenas el usuario arrastra el mapa a mano (evento "dragstart", que Leaflet
@@ -425,6 +418,13 @@ export function MapaView() {
       ultimoMovimientoEnRef.current = Date.now();
       if (avisoInactividadRef.current) {
         continuarPatinando();
+      }
+      // Modo "Exploración": si el usuario arrastró el mapa a mano (seguimiento
+      // apagado) y recién ahora se detecta que empezó a desplazarse de verdad
+      // (no solo el ruido normal del GPS), se retoma el seguimiento solo.
+      if (!siguiendoRef.current && mapRef.current) {
+        mapRef.current.flyTo([punto.lat, punto.lon], mapRef.current.getZoom());
+        siguiendoRef.current = true;
       }
     }
   }
@@ -835,43 +835,26 @@ export function MapaView() {
 
   function centrarEnMiUbicacion() {
     if (!posicion || !mapRef.current) return;
-    if (timeoutReanudarSeguimientoRef.current) {
-      clearTimeout(timeoutReanudarSeguimientoRef.current);
-      timeoutReanudarSeguimientoRef.current = null;
-    }
     mapRef.current.flyTo([posicion.lat, posicion.lon], mapRef.current.getZoom());
     siguiendoRef.current = true;
   }
 
-  // Apenas el usuario arrastra el mapa a mano (ej. para ver a otros patinadores
-  // cerca), se apaga el modo seguimiento (Leaflet solo dispara "dragstart" ante
-  // un gesto real, nunca ante un panTo/flyTo/setView programático) — pero solo
-  // por unos segundos: pasado ese tiempo sin un nuevo arrastre, se recentra
-  // solo. Tocar "Centrar en mi ubicación" lo retoma antes, de inmediato.
+  // Modo "Exploración": apenas el usuario arrastra el mapa a mano (ej. para
+  // ver a otros patinadores cerca), se apaga el modo seguimiento (Leaflet
+  // solo dispara "dragstart" ante un gesto real, nunca ante un
+  // panTo/flyTo/setView programático). La cámara queda fija ahí — aunque el
+  // GPS siga actualizando mi posición en segundo plano — hasta que el
+  // usuario toque "Centrar en mi ubicación" o se detecte que empezó a
+  // desplazarse de verdad (ver registrarMovimiento).
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
     function detenerSeguimiento() {
       siguiendoRef.current = false;
-      if (timeoutReanudarSeguimientoRef.current) {
-        clearTimeout(timeoutReanudarSeguimientoRef.current);
-      }
-      timeoutReanudarSeguimientoRef.current = setTimeout(() => {
-        timeoutReanudarSeguimientoRef.current = null;
-        const punto = posicionRef.current;
-        if (punto && mapRef.current) {
-          mapRef.current.flyTo([punto.lat, punto.lon], mapRef.current.getZoom());
-          siguiendoRef.current = true;
-        }
-      }, MS_ESPERA_REANUDAR_SEGUIMIENTO);
     }
     map.on("dragstart", detenerSeguimiento);
     return () => {
       map.off("dragstart", detenerSeguimiento);
-      if (timeoutReanudarSeguimientoRef.current) {
-        clearTimeout(timeoutReanudarSeguimientoRef.current);
-        timeoutReanudarSeguimientoRef.current = null;
-      }
     };
   }, []);
 
