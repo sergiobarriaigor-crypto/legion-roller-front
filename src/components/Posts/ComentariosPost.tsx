@@ -132,7 +132,7 @@ export function ComentariosPost({
       >
         <Avatar fotoUrl={c.fotoUrl} nombre={c.nombre} tamano={esRespuesta ? 24 : 28} />
         <div className="flex flex-1 flex-col">
-          <p className="text-xs text-text-secondary">
+          <p className="text-sm text-text-secondary">
             <span className="font-semibold text-text-primary">{c.nombre}:</span>{" "}
             {mencion && <span className="font-semibold text-text-accent">{mencion} </span>}
             {resto}
@@ -248,13 +248,13 @@ export function ComentariosPost({
                 if (e.key === "Enter") enviar();
               }}
               maxLength={300}
-              className="flex-1 rounded-app border border-border bg-surface-2 px-3 py-1 text-xs text-text-primary outline-none"
+              className="flex-1 rounded-app border border-border bg-surface-2 px-3 py-2 text-sm text-text-primary outline-none"
             />
             <button
               type="button"
               onClick={enviar}
               disabled={!texto.trim()}
-              className="rounded-app bg-fill-primary px-3 py-1 text-xs text-on-primary disabled:opacity-50"
+              className="rounded-app bg-fill-primary px-4 py-2 text-sm text-on-primary disabled:opacity-50"
             >
               Enviar
             </button>
