@@ -188,7 +188,7 @@ export function CamaraHistoria({
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-black" data-no-swipe>
-      <div className="flex items-center justify-between p-3">
+      <div className="relative z-10 flex items-center justify-between p-3">
         <button type="button" onClick={cerrar} className="text-white" aria-label="Cerrar cámara">
           <IconX size={22} />
         </button>
@@ -234,14 +234,14 @@ export function CamaraHistoria({
             autoPlay
             muted
             playsInline
-            className="h-full w-full object-cover"
+            className="relative z-0 h-full w-full object-cover"
             style={camaraFrontal ? { transform: "scaleX(-1)" } : undefined}
           />
         )}
       </div>
 
       {!error && (
-        <div className="flex flex-col items-center gap-4 p-4">
+        <div className="relative z-10 flex flex-col items-center gap-4 p-4">
           {!grabando && (
             <div className="flex gap-1 rounded-full bg-white/10 p-1">
               <button
