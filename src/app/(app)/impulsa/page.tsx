@@ -449,7 +449,7 @@ export default function ImpulsaPage() {
                   </div>
                 )}
 
-                <div className="flex items-center gap-4 border-t border-border pt-2 text-xs text-text-secondary">
+                <div className="flex items-center gap-4 border-t border-border pt-2 text-sm text-text-secondary">
                   {puedeInteractuar ? (
                     <button
                       type="button"
@@ -484,7 +484,7 @@ export default function ImpulsaPage() {
                     onClick={() => compartirEmprendedor(e)}
                     className="ml-auto flex items-center gap-1"
                   >
-                    <IconShare size={14} />
+                    <IconShare size={16} />
                     Compartir
                   </button>
                   {puedeInteractuar && (
@@ -494,7 +494,7 @@ export default function ImpulsaPage() {
                       aria-label="Compartir a un usuario"
                       className="flex items-center gap-1"
                     >
-                      <IconUsers size={14} />
+                      <IconUsers size={16} />
                     </button>
                   )}
                 </div>
