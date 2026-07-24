@@ -16,20 +16,16 @@ export function soportaCamaraEnVivo(): boolean {
 
 const TIPOS_VIDEO_CANDIDATOS = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
 
-// "ideal" (no "exact"): es una preferencia, no un requisito — si el equipo
-// no puede entregar exactamente 1080x1920 9:16, el navegador se acerca lo
-// más posible en vez de fallar. Así el video que graba Captura Express sale
-// ya en la misma proporción que la foto (normalizada en FiltrosFoto.tsx),
-// en vez de heredar la resolución/aspecto que le tocara a la cámara por
-// defecto.
+// Solo se pide facingMode — sin width/height/aspectRatio "ideal": pedir una
+// proporción angosta (9:16) hace que varios celulares apliquen un recorte de
+// hardware (zoom) al sensor para acercarse a esa forma, en vez de solo
+// reescalar, dejando la vista previa notoriamente más cerca de lo real. No
+// hace falta: el recorte a 1080x1920 ya se hace en software al dibujar cada
+// cuadro en el canvas (dibujarCuadro más abajo) y en prepararFotoHistoria
+// para la foto, así que la cámara puede entregar su campo de visión normal.
 async function obtenerStreamCamara(frontal: boolean): Promise<MediaStream> {
   const facingMode = frontal ? "user" : "environment";
-  const video: MediaTrackConstraints = {
-    facingMode,
-    width: { ideal: ANCHO_HISTORIA },
-    height: { ideal: ALTO_HISTORIA },
-    aspectRatio: { ideal: ANCHO_HISTORIA / ALTO_HISTORIA },
-  };
+  const video: MediaTrackConstraints = { facingMode };
   try {
     return await navigator.mediaDevices.getUserMedia({ video, audio: true });
   } catch {
