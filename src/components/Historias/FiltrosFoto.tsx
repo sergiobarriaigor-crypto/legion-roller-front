@@ -19,9 +19,10 @@ export const FILTROS_FOTO: FiltroFoto[] = [
 ];
 
 // Resolución/relación de aspecto recomendada para historias (igual que
-// Instagram): 1080x1920, 9:16, pantalla completa vertical.
-const ANCHO_HISTORIA = 1080;
-const ALTO_HISTORIA = 1920;
+// Instagram): 1080x1920, 9:16, pantalla completa vertical. Exportadas para
+// que CamaraHistoria pida esta misma resolución al iniciar la cámara.
+export const ANCHO_HISTORIA = 1080;
+export const ALTO_HISTORIA = 1920;
 
 // Dibuja la imagen en un lienzo 1080x1920 con el filtro CSS "quemado" y
 // devuelve el resultado como Blob JPEG. La foto se dibuja completa y centrada

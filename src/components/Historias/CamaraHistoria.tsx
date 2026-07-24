@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { IconRefresh, IconX } from "@tabler/icons-react";
 import { DURACION_MAXIMA_VIDEO_HISTORIA_SEG } from "@/lib/historias";
+import { ANCHO_HISTORIA, ALTO_HISTORIA } from "@/components/Historias/FiltrosFoto";
 import { Toast } from "@/components/Toast";
 
 export function soportaCamaraEnVivo(): boolean {
@@ -15,15 +16,27 @@ export function soportaCamaraEnVivo(): boolean {
 
 const TIPOS_VIDEO_CANDIDATOS = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
 
+// "ideal" (no "exact"): es una preferencia, no un requisito — si el equipo
+// no puede entregar exactamente 1080x1920 9:16, el navegador se acerca lo
+// más posible en vez de fallar. Así el video que graba Captura Express sale
+// ya en la misma proporción que la foto (normalizada en FiltrosFoto.tsx),
+// en vez de heredar la resolución/aspecto que le tocara a la cámara por
+// defecto.
 async function obtenerStreamCamara(frontal: boolean): Promise<MediaStream> {
   const facingMode = frontal ? "user" : "environment";
+  const video: MediaTrackConstraints = {
+    facingMode,
+    width: { ideal: ANCHO_HISTORIA },
+    height: { ideal: ALTO_HISTORIA },
+    aspectRatio: { ideal: ANCHO_HISTORIA / ALTO_HISTORIA },
+  };
   try {
-    return await navigator.mediaDevices.getUserMedia({ video: { facingMode }, audio: true });
+    return await navigator.mediaDevices.getUserMedia({ video, audio: true });
   } catch {
     // Varios navegadores rechazan todo el pedido si el micrófono no se puede
     // conceder — se reintenta solo con video (queda sin audio, pero la
     // cámara sigue siendo utilizable para foto y video mudo).
-    return await navigator.mediaDevices.getUserMedia({ video: { facingMode } });
+    return await navigator.mediaDevices.getUserMedia({ video });
   }
 }
 
