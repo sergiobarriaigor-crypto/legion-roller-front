@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { IconCameraRotate, IconX } from "@tabler/icons-react";
+import { IconRefresh, IconX } from "@tabler/icons-react";
 import { DURACION_MAXIMA_VIDEO_HISTORIA_SEG } from "@/lib/historias";
 import { Toast } from "@/components/Toast";
 
@@ -205,7 +205,7 @@ export function CamaraHistoria({
             aria-label="Girar cámara"
             className="text-white disabled:opacity-40"
           >
-            <IconCameraRotate size={22} />
+            <IconRefresh size={22} />
           </button>
         ) : (
           <div className="w-[22px]" />
