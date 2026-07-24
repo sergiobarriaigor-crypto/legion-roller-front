@@ -5,6 +5,7 @@ import { apiUpload, ApiError } from "@/lib/api";
 import { RATIO_MIN, RATIO_MAX } from "@/components/CarruselFotos";
 
 const ANCHO_LIENZO = 320;
+const ANCHO_SALIDA = 1080;
 const ZOOM_MAXIMO = 3;
 
 // Paso opcional de "encuadre" para una foto ya subida: el recorte automático
@@ -114,12 +115,37 @@ export function AjustarEncuadreFoto({
     dibujar(nuevoZoom, nuevo);
   }
 
+  // El lienzo de interacción (arriba) se mantiene chico a propósito para que
+  // arrastrar/hacer zoom sea liviano — pero exportar ese mismo lienzo directo
+  // producía una foto de solo 320px de ancho (pixelada al mostrarla a tamaño
+  // real). Acá se vuelve a dibujar el mismo encuadre (mismo pan/zoom, escalado
+  // proporcionalmente) sobre un lienzo aparte a resolución de salida, usando
+  // siempre los píxeles originales de la foto (`img`), antes de subirla.
   async function usarEncuadre() {
-    const canvas = canvasRef.current;
-    if (!canvas || !token) return;
+    const img = imagenRef.current;
+    if (!img || !token) return;
     setSubiendo(true);
     setError("");
-    canvas.toBlob(
+
+    const factor = ANCHO_SALIDA / ANCHO_LIENZO;
+    const salida = document.createElement("canvas");
+    salida.width = ANCHO_SALIDA;
+    salida.height = Math.round(altoLienzo * factor);
+    const ctx = salida.getContext("2d");
+    if (!ctx) {
+      setError("No se pudo generar el encuadre.");
+      setSubiendo(false);
+      return;
+    }
+
+    const baseScale = Math.max(salida.width / img.naturalWidth, salida.height / img.naturalHeight);
+    const anchoDibujo = img.naturalWidth * baseScale * zoom;
+    const altoDibujo = img.naturalHeight * baseScale * zoom;
+    const x = (salida.width - anchoDibujo) / 2 + panRef.current.x * factor;
+    const y = (salida.height - altoDibujo) / 2 + panRef.current.y * factor;
+    ctx.drawImage(img, x, y, anchoDibujo, altoDibujo);
+
+    salida.toBlob(
       async (blob) => {
         if (!blob) {
           setError("No se pudo generar el encuadre.");
