@@ -37,6 +37,7 @@ export function BarraHistorias() {
   const [abrirReaccionesVisor, setAbrirReaccionesVisor] = useState(false);
   const [historiaNoDisponible, setHistoriaNoDisponible] = useState(false);
   const [mostrarOpcionesOrigen, setMostrarOpcionesOrigen] = useState(false);
+  const [camaraBloqueada, setCamaraBloqueada] = useState(false);
 
   async function cargar() {
     if (!token) return null;
@@ -140,6 +141,28 @@ export function BarraHistorias() {
     setMostrarOpcionesOrigen(false);
   }
 
+  // No hay forma de que una página reactive un permiso ya bloqueado por el
+  // usuario (restricción del navegador) — lo único práctico es detectar el
+  // bloqueo con la API de Permisos y explicar cómo reactivarlo, en vez de que
+  // el botón "Cámara" no haga nada sin dar ninguna pista. Si el navegador no
+  // soporta esta consulta (Safari/WebViews viejos), simplemente se abre la
+  // cámara igual y, si está bloqueada, el propio sistema no mostrará nada.
+  async function intentarAbrirCamara() {
+    try {
+      const estado = await navigator.permissions.query({
+        name: "camera" as PermissionName,
+      });
+      if (estado.state === "denied") {
+        setMostrarOpcionesOrigen(false);
+        setCamaraBloqueada(true);
+        return;
+      }
+    } catch {
+      // API no soportada: seguimos igual, sin bloquear el flujo normal.
+    }
+    inputCamaraRef.current?.click();
+  }
+
   return (
     <>
       <input
@@ -241,7 +264,7 @@ export function BarraHistorias() {
             </p>
             <button
               type="button"
-              onClick={() => inputCamaraRef.current?.click()}
+              onClick={intentarAbrirCamara}
               className="flex items-center gap-3 rounded-app px-3 py-3 text-sm text-text-primary hover:bg-surface-2"
             >
               <IconCamera size={20} className="text-text-accent" />
@@ -306,6 +329,14 @@ export function BarraHistorias() {
           mensaje="Esa historia ya no está disponible (venció o fue eliminada)."
           onDismiss={() => setHistoriaNoDisponible(false)}
           duracionMs={3500}
+        />
+      )}
+
+      {camaraBloqueada && (
+        <Toast
+          mensaje="Cámara bloqueada: actívala en ⋮ (arriba a la derecha) → Información del sitio → Permisos → Cámara → Permitir, y vuelve a intentar."
+          onDismiss={() => setCamaraBloqueada(false)}
+          duracionMs={6000}
         />
       )}
     </>
