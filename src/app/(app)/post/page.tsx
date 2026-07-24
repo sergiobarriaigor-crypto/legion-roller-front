@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { IconMapPin, IconShare, IconUsers, IconVideo, IconHeart, IconHeartFilled } from "@tabler/icons-react";
+import { IconMapPin, IconShare, IconUsers, IconVideo, IconHeart, IconHeartFilled, IconCrop } from "@tabler/icons-react";
+import { AjustarEncuadreFoto } from "@/components/AjustarEncuadreFoto";
 import { useSession } from "@/context/SessionContext";
 import { apiGet, apiPost, apiDelete, apiUpload, ApiError } from "@/lib/api";
 import type { Post } from "@/lib/posts";
@@ -116,6 +117,7 @@ export default function PostPage() {
   const [mostrarSelectorUbicacion, setMostrarSelectorUbicacion] = useState(false);
   const [tipoMedia, setTipoMedia] = useState<"foto" | "video" | null>(null);
   const [fotos, setFotos] = useState<string[]>([]);
+  const [encuadrando, setEncuadrando] = useState<{ index: number; url: string } | null>(null);
   const [videoUrl, setVideoUrl] = useState("");
   const [subiendoVideo, setSubiendoVideo] = useState(false);
   const [subiendoFotos, setSubiendoFotos] = useState(false);
@@ -452,6 +454,14 @@ export default function PostPage() {
                           >
                             ✕
                           </button>
+                          <button
+                            type="button"
+                            onClick={() => setEncuadrando({ index: i, url })}
+                            aria-label="Ajustar encuadre"
+                            className="absolute -bottom-1 -left-1 flex h-5 w-5 items-center justify-center rounded-full bg-page-bg text-text-secondary"
+                          >
+                            <IconCrop size={12} />
+                          </button>
                         </div>
                       ))}
                     </div>
@@ -544,6 +554,18 @@ export default function PostPage() {
             setVideoParaRecortar(null);
             if (videoInputRef.current) videoInputRef.current.value = "";
           }}
+        />
+      )}
+
+      {encuadrando && (
+        <AjustarEncuadreFoto
+          url={encuadrando.url}
+          token={token}
+          onAjustado={(nuevaUrl) => {
+            setFotos((prev) => prev.map((u, idx) => (idx === encuadrando.index ? nuevaUrl : u)));
+            setEncuadrando(null);
+          }}
+          onCerrar={() => setEncuadrando(null)}
         />
       )}
 

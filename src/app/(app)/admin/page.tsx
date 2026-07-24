@@ -17,7 +17,9 @@ import {
   type AsistenciaEventoDetalle,
 } from "@/lib/publicaciones";
 import type { Emprendedor } from "@/lib/emprendedores";
+import { IconCrop } from "@tabler/icons-react";
 import { Avatar } from "@/components/Avatar";
+import { AjustarEncuadreFoto } from "@/components/AjustarEncuadreFoto";
 import { BarraFormatoTexto } from "@/components/BarraFormatoTexto";
 import { renderizarTextoFormateado } from "@/lib/textoFormateado";
 
@@ -108,6 +110,7 @@ export default function AdminPage() {
   const [form, setForm] = useState(FORM_VACIO);
   const [fotos, setFotos] = useState<string[]>([]);
   const [subiendoFotos, setSubiendoFotos] = useState(false);
+  const [encuadrando, setEncuadrando] = useState<{ index: number; url: string } | null>(null);
   const fotoInputRef = useRef<HTMLInputElement>(null);
   const textoRef = useRef<HTMLTextAreaElement>(null);
   const [editandoId, setEditandoId] = useState<number | null>(null);
@@ -760,6 +763,14 @@ export default function AdminPage() {
                   >
                     ×
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setEncuadrando({ index: i, url })}
+                    aria-label="Ajustar encuadre"
+                    className="absolute -bottom-1 -left-1 flex h-5 w-5 items-center justify-center rounded-full bg-page-bg text-text-secondary"
+                  >
+                    <IconCrop size={12} />
+                  </button>
                 </div>
               ))}
             </div>
@@ -1104,6 +1115,18 @@ export default function AdminPage() {
             )}
           </div>
         </>
+      )}
+
+      {encuadrando && (
+        <AjustarEncuadreFoto
+          url={encuadrando.url}
+          token={token}
+          onAjustado={(nuevaUrl) => {
+            setFotos((prev) => prev.map((u, idx) => (idx === encuadrando.index ? nuevaUrl : u)));
+            setEncuadrando(null);
+          }}
+          onCerrar={() => setEncuadrando(null)}
+        />
       )}
 
       {emprendedorAEliminar && (

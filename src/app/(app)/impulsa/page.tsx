@@ -11,6 +11,7 @@ import {
   IconBrandTiktok,
   IconHeart,
   IconHeartFilled,
+  IconCrop,
 } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
 import { apiGet, apiPost, apiDelete, apiUpload, ApiError } from "@/lib/api";
@@ -19,6 +20,7 @@ import { listarMisReaccionesEmprendedores } from "@/lib/emprendedores";
 import { salaIndividual } from "@/lib/chat";
 import { ComentariosEmprendedor } from "@/components/Impulsa/ComentariosEmprendedor";
 import { CarruselFotos } from "@/components/CarruselFotos";
+import { AjustarEncuadreFoto } from "@/components/AjustarEncuadreFoto";
 import { SelectorCompartirEmprendedor } from "@/components/Impulsa/SelectorCompartirEmprendedor";
 import { generarTarjetaCompartirEmprendedor } from "@/lib/tarjetaEmprendedor";
 import { BarraFormatoTexto } from "@/components/BarraFormatoTexto";
@@ -96,6 +98,7 @@ export default function ImpulsaPage() {
   const [form, setForm] = useState(FICHA_VACIA);
   const [fotos, setFotos] = useState<string[]>([]);
   const [subiendoFotos, setSubiendoFotos] = useState(false);
+  const [encuadrando, setEncuadrando] = useState<{ index: number; url: string } | null>(null);
   const fotoInputRef = useRef<HTMLInputElement>(null);
   const descripcionRef = useRef<HTMLTextAreaElement>(null);
   const [nuevoAnuncio, setNuevoAnuncio] = useState("");
@@ -614,6 +617,14 @@ export default function ImpulsaPage() {
                     >
                       ✕
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => setEncuadrando({ index: i, url })}
+                      aria-label="Ajustar encuadre"
+                      className="absolute -bottom-1 -left-1 flex h-5 w-5 items-center justify-center rounded-full bg-page-bg text-text-secondary"
+                    >
+                      <IconCrop size={12} />
+                    </button>
                   </div>
                 ))}
               </div>
@@ -702,6 +713,18 @@ export default function ImpulsaPage() {
             </div>
           )}
         </div>
+      )}
+
+      {encuadrando && (
+        <AjustarEncuadreFoto
+          url={encuadrando.url}
+          token={token}
+          onAjustado={(nuevaUrl) => {
+            setFotos((prev) => prev.map((u, idx) => (idx === encuadrando.index ? nuevaUrl : u)));
+            setEncuadrando(null);
+          }}
+          onCerrar={() => setEncuadrando(null)}
+        />
       )}
 
       {emprendedorACompartir && (

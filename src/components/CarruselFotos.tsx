@@ -10,8 +10,8 @@ import { IconX } from "@tabler/icons-react";
 // rango sin recorte. La proporción la define la PRIMERA foto; el resto del
 // mismo carrusel comparte ese marco (con object-cover si su proporción real
 // es distinta) para que el alto no salte al deslizar entre fotos.
-const RATIO_MIN = 4 / 5;
-const RATIO_MAX = 1.91;
+export const RATIO_MIN = 4 / 5;
+export const RATIO_MAX = 1.91;
 
 // Carrusel deslizable de hasta 3 fotos, sin librería externa: scroll-snap
 // nativo (gesto de swipe real en móvil) + puntos indicadores calculados a
