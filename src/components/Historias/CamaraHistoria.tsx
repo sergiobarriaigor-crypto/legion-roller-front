@@ -89,20 +89,32 @@ export function CamaraHistoria({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Gira entre trasera/frontal pidiendo el nuevo stream ANTES de soltar el
-  // actual: si el equipo no tiene segunda cámara (o falla por lo que sea),
-  // la vista en curso sigue funcionando en vez de romperse por completo.
+  // Gira entre trasera/frontal soltando la cámara actual ANTES de pedir la
+  // otra: casi ningún celular puede tener dos cámaras activas a la vez (un
+  // solo chip de cámara), así que pedir la nueva con la vieja todavía
+  // abierta falla siempre, aunque el equipo sí tenga ambas cámaras. Si la
+  // nueva falla igual, se intenta recuperar la que estaba andando para no
+  // dejar la vista sin cámara.
   async function girarCamara() {
     if (!listo || grabando) return;
+    const anteriorFrontal = camaraFrontal;
     const nuevaFrontal = !camaraFrontal;
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
     try {
       const stream = await obtenerStreamCamara(nuevaFrontal);
-      streamRef.current?.getTracks().forEach((t) => t.stop());
       streamRef.current = stream;
       if (videoRef.current) videoRef.current.srcObject = stream;
       setCamaraFrontal(nuevaFrontal);
     } catch {
       setSinCamaraAlterna(true);
+      try {
+        const streamAnterior = await obtenerStreamCamara(anteriorFrontal);
+        streamRef.current = streamAnterior;
+        if (videoRef.current) videoRef.current.srcObject = streamAnterior;
+      } catch {
+        setError("No se pudo acceder a la cámara de este dispositivo.");
+      }
     }
   }
 
