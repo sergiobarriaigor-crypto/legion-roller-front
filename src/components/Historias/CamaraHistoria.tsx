@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { IconX } from "@tabler/icons-react";
+import { IconCameraRotate, IconX } from "@tabler/icons-react";
 import { DURACION_MAXIMA_VIDEO_HISTORIA_SEG } from "@/lib/historias";
+import { Toast } from "@/components/Toast";
 
 export function soportaCamaraEnVivo(): boolean {
   return (
@@ -13,6 +14,18 @@ export function soportaCamaraEnVivo(): boolean {
 }
 
 const TIPOS_VIDEO_CANDIDATOS = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
+
+async function obtenerStreamCamara(frontal: boolean): Promise<MediaStream> {
+  const facingMode = frontal ? "user" : "environment";
+  try {
+    return await navigator.mediaDevices.getUserMedia({ video: { facingMode }, audio: true });
+  } catch {
+    // Varios navegadores rechazan todo el pedido si el micrófono no se puede
+    // conceder — se reintenta solo con video (queda sin audio, pero la
+    // cámara sigue siendo utilizable para foto y video mudo).
+    return await navigator.mediaDevices.getUserMedia({ video: { facingMode } });
+  }
+}
 
 // Cámara propia dentro de la página (getUserMedia + MediaRecorder) en vez de
 // delegar a la app de cámara nativa del celular: la nativa no deja imponer un
@@ -40,26 +53,15 @@ export function CamaraHistoria({
   const [error, setError] = useState("");
   const [grabando, setGrabando] = useState(false);
   const [segundos, setSegundos] = useState(0);
+  const [camaraFrontal, setCamaraFrontal] = useState(false);
+  const [sinCamaraAlterna, setSinCamaraAlterna] = useState(false);
 
   useEffect(() => {
     let cancelado = false;
 
-    async function iniciar() {
+    (async () => {
       try {
-        let stream: MediaStream;
-        try {
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: "environment" },
-            audio: true,
-          });
-        } catch {
-          // Varios navegadores rechazan todo el pedido si el micrófono no se
-          // puede conceder — se reintenta solo con video (queda sin audio,
-          // pero la cámara sigue siendo utilizable para foto y video mudo).
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: "environment" },
-          });
-        }
+        const stream = await obtenerStreamCamara(false);
         if (cancelado) {
           stream.getTracks().forEach((t) => t.stop());
           return;
@@ -76,9 +78,8 @@ export function CamaraHistoria({
           setError("No se pudo acceder a la cámara de este dispositivo.");
         }
       }
-    }
+    })();
 
-    iniciar();
     return () => {
       cancelado = true;
       streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -87,6 +88,23 @@ export function CamaraHistoria({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Gira entre trasera/frontal pidiendo el nuevo stream ANTES de soltar el
+  // actual: si el equipo no tiene segunda cámara (o falla por lo que sea),
+  // la vista en curso sigue funcionando en vez de romperse por completo.
+  async function girarCamara() {
+    if (!listo || grabando) return;
+    const nuevaFrontal = !camaraFrontal;
+    try {
+      const stream = await obtenerStreamCamara(nuevaFrontal);
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = stream;
+      if (videoRef.current) videoRef.current.srcObject = stream;
+      setCamaraFrontal(nuevaFrontal);
+    } catch {
+      setSinCamaraAlterna(true);
+    }
+  }
 
   function cerrar() {
     streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -167,7 +185,19 @@ export function CamaraHistoria({
             {segundos}s / {DURACION_MAXIMA_VIDEO_HISTORIA_SEG}s
           </span>
         )}
-        <div className="w-[22px]" />
+        {!error ? (
+          <button
+            type="button"
+            onClick={girarCamara}
+            disabled={!listo || grabando}
+            aria-label="Girar cámara"
+            className="text-white disabled:opacity-40"
+          >
+            <IconCameraRotate size={22} />
+          </button>
+        ) : (
+          <div className="w-[22px]" />
+        )}
       </div>
 
       <div className="relative flex flex-1 items-center justify-center overflow-hidden">
@@ -183,7 +213,18 @@ export function CamaraHistoria({
             </button>
           </div>
         ) : (
-          <video ref={videoRef} autoPlay muted playsInline className="h-full w-full object-cover" />
+          // La cámara frontal se ve reflejada como espejo (igual que la
+          // vista previa nativa de cualquier celular) — la foto/video que se
+          // guarda no queda espejado, porque canvas/MediaRecorder leen el
+          // cuadro real de la cámara, no el CSS aplicado acá.
+          <video
+            ref={videoRef}
+            autoPlay
+            muted
+            playsInline
+            className="h-full w-full object-cover"
+            style={camaraFrontal ? { transform: "scaleX(-1)" } : undefined}
+          />
         )}
       </div>
 
@@ -240,6 +281,14 @@ export function CamaraHistoria({
             )}
           </button>
         </div>
+      )}
+
+      {sinCamaraAlterna && (
+        <Toast
+          mensaje="Este dispositivo no tiene otra cámara disponible."
+          onDismiss={() => setSinCamaraAlterna(false)}
+          duracionMs={2500}
+        />
       )}
     </div>
   );
