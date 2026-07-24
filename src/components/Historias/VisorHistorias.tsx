@@ -452,14 +452,14 @@ export function VisorHistorias({
   }
 
   return (
-    // El contenedor exterior sigue siendo "fixed inset-0" (cubre TODA la
-    // ventana), pero adentro se centra una columna del mismo ancho tipo-
-    // teléfono que usa el resto de la app (mismo truco que ya usa
-    // MisRutasPanel) — así en pantallas grandes la historia no se estira de
-    // punta a punta, se ve como el resto de la app con los costados oscuros.
-    <div className="fixed inset-0 z-50 flex justify-center bg-black">
+    // Ocupa el 100% del viewport sin ningún max-width: un límite de ancho acá
+    // dejaba franjas negras en los costados en celulares donde el ancho real
+    // de pantalla supera ese límite (p. ej. con "pantalla completa" activado
+    // en Android) — el visor debe verse igual que en Instagram/TikTok, de
+    // punta a punta, sin importar la resolución o relación de aspecto.
+    <div className="fixed inset-0 z-50 bg-black">
       <div
-        className="relative h-full w-full max-w-md bg-black"
+        className="relative h-full w-full bg-black"
         data-no-swipe
         onPointerDown={iniciarPausa}
         onPointerUp={detenerPausa}
@@ -585,7 +585,7 @@ export function VisorHistorias({
                 ref={videoRef}
                 key={historia.id}
                 src={historia.mediaUrl}
-                className="h-full w-full object-contain"
+                className="h-full w-full object-cover"
                 autoPlay
                 playsInline
                 onLoadedMetadata={(e) => setDuracionVideoMs(e.currentTarget.duration * 1000)}
@@ -593,7 +593,7 @@ export function VisorHistorias({
               />
             ) : (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={historia.mediaUrl} alt="" className="h-full w-full object-contain" />
+              <img src={historia.mediaUrl} alt="" className="h-full w-full object-cover" />
             )}
 
             {historia.ubicacion && (
