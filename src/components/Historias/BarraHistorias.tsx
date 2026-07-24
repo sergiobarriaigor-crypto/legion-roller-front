@@ -8,6 +8,7 @@ import { apiGet } from "@/lib/api";
 import { listarHistorias, type GrupoHistorias } from "@/lib/historias";
 import { Avatar } from "@/components/Avatar";
 import { EditorHistoria } from "@/components/Historias/EditorHistoria";
+import { CamaraHistoria, soportaCamaraEnVivo } from "@/components/Historias/CamaraHistoria";
 import { VisorHistorias } from "@/components/Historias/VisorHistorias";
 import { Toast } from "@/components/Toast";
 
@@ -38,6 +39,7 @@ export function BarraHistorias() {
   const [historiaNoDisponible, setHistoriaNoDisponible] = useState(false);
   const [mostrarOpcionesOrigen, setMostrarOpcionesOrigen] = useState(false);
   const [camaraBloqueada, setCamaraBloqueada] = useState(false);
+  const [mostrarCamaraEnVivo, setMostrarCamaraEnVivo] = useState(false);
 
   async function cargar() {
     if (!token) return null;
@@ -141,13 +143,22 @@ export function BarraHistorias() {
     setMostrarOpcionesOrigen(false);
   }
 
-  // No hay forma de que una página reactive un permiso ya bloqueado por el
-  // usuario (restricción del navegador) — lo único práctico es detectar el
-  // bloqueo con la API de Permisos y explicar cómo reactivarlo, en vez de que
-  // el botón "Cámara" no haga nada sin dar ninguna pista. Si el navegador no
-  // soporta esta consulta (Safari/WebViews viejos), simplemente se abre la
-  // cámara igual y, si está bloqueada, el propio sistema no mostrará nada.
+  // Con getUserMedia+MediaRecorder disponibles, se usa la cámara propia
+  // dentro de la página (CamaraHistoria) en vez de la app de cámara nativa:
+  // solo así se puede cortar la grabación de video sola a los 30s exactos —
+  // la nativa no deja imponer un límite mientras graba. Si el navegador no
+  // soporta esas APIs (fallback), se cae al input nativo de siempre.
   async function intentarAbrirCamara() {
+    if (soportaCamaraEnVivo()) {
+      setMostrarOpcionesOrigen(false);
+      setMostrarCamaraEnVivo(true);
+      return;
+    }
+    // No hay forma de que una página reactive un permiso ya bloqueado por el
+    // usuario (restricción del navegador) — lo único práctico es detectar el
+    // bloqueo con la API de Permisos y explicar cómo reactivarlo, en vez de
+    // que el botón "Cámara" no haga nada sin dar ninguna pista. Si el
+    // navegador no soporta esta consulta, se abre la cámara igual.
     try {
       const estado = await navigator.permissions.query({
         name: "camera" as PermissionName,
@@ -294,6 +305,17 @@ export function BarraHistorias() {
             </button>
           </div>
         </div>
+      )}
+
+      {mostrarCamaraEnVivo && (
+        <CamaraHistoria
+          onCapturado={(archivo) => {
+            setArchivoElegido(archivo);
+            setMostrarCamaraEnVivo(false);
+          }}
+          onCerrar={() => setMostrarCamaraEnVivo(false)}
+          onPermisoBloqueado={() => setCamaraBloqueada(true)}
+        />
       )}
 
       {archivoElegido && (

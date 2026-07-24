@@ -7,6 +7,7 @@ import {
   crearHistoria,
   serializarEstiloTexto,
   MAX_MENCIONES_POR_HISTORIA,
+  DURACION_MAXIMA_VIDEO_HISTORIA_SEG,
   type EstiloTextoHistoria,
 } from "@/lib/historias";
 import { sectorMasCercano } from "@/lib/sectores";
@@ -17,8 +18,6 @@ import { FILTROS_FOTO, FiltrosFoto, prepararFotoHistoria, type FiltroFoto } from
 import { MencionSobreImagen } from "@/components/Historias/MencionSobreImagen";
 import { SelectorMencion } from "@/components/Historias/SelectorMencion";
 import { VideoTrimmer } from "@/components/VideoTrimmer";
-
-const DURACION_MAXIMA_VIDEO_SEG = 30;
 
 const ESTILO_TEXTO_DEFECTO: Omit<EstiloTextoHistoria, "contenido"> = {
   x: 0.5,
@@ -100,7 +99,7 @@ export function EditorHistoria({
     const video = document.createElement("video");
     video.preload = "metadata";
     video.onloadedmetadata = () => {
-      if (video.duration > DURACION_MAXIMA_VIDEO_SEG) {
+      if (video.duration > DURACION_MAXIMA_VIDEO_HISTORIA_SEG) {
         setMostrarRecorte(true);
         return;
       }
@@ -357,7 +356,7 @@ export function EditorHistoria({
       {mostrarRecorte && (
         <VideoTrimmer
           archivo={archivoInicial}
-          duracionMaxima={DURACION_MAXIMA_VIDEO_SEG}
+          duracionMaxima={DURACION_MAXIMA_VIDEO_HISTORIA_SEG}
           onConfirmar={(blob) => {
             setPreviewUrl(URL.createObjectURL(blob));
             setVideoRecortadoBlob(blob);

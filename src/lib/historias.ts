@@ -15,6 +15,12 @@ export interface MencionEnHistoria {
 
 export const MAX_MENCIONES_POR_HISTORIA = 5;
 
+// Duración máxima de un video de historia — compartida entre EditorHistoria
+// (valida archivos elegidos desde Galería) y CamaraHistoria (corta la
+// grabación en vivo apenas la alcanza), para que ambos caminos usen siempre
+// el mismo límite.
+export const DURACION_MAXIMA_VIDEO_HISTORIA_SEG = 30;
+
 // Distinto de un comentario: un Eco queda FIJO sobre la imagen para
 // cualquiera que abra la historia (no solo quien la vea en vivo), sin hilo
 // de respuestas ni reacciones propias.
