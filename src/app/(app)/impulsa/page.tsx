@@ -21,6 +21,7 @@ import { salaIndividual } from "@/lib/chat";
 import { ComentariosEmprendedor } from "@/components/Impulsa/ComentariosEmprendedor";
 import { CarruselFotos } from "@/components/CarruselFotos";
 import { AjustarEncuadreFoto } from "@/components/AjustarEncuadreFoto";
+import { Toast } from "@/components/Toast";
 import { SelectorCompartirEmprendedor } from "@/components/Impulsa/SelectorCompartirEmprendedor";
 import { generarTarjetaCompartirEmprendedor } from "@/lib/tarjetaEmprendedor";
 import { BarraFormatoTexto } from "@/components/BarraFormatoTexto";
@@ -111,6 +112,7 @@ export default function ImpulsaPage() {
   const [eliminandoFicha, setEliminandoFicha] = useState(false);
   const [error, setError] = useState("");
   const [enviando, setEnviando] = useState(false);
+  const [mostrarGuardado, setMostrarGuardado] = useState(false);
 
   async function cargarDirectorio() {
     try {
@@ -229,6 +231,7 @@ export default function ImpulsaPage() {
       );
       cargarMiFicha();
       cargarDirectorio();
+      setMostrarGuardado(true);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "No se pudo guardar tu ficha.");
     } finally {
@@ -713,6 +716,10 @@ export default function ImpulsaPage() {
             </div>
           )}
         </div>
+      )}
+
+      {mostrarGuardado && (
+        <Toast mensaje="Cambios guardados" onDismiss={() => setMostrarGuardado(false)} />
       )}
 
       {encuadrando && (
