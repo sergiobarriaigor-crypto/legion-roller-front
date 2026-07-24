@@ -164,6 +164,7 @@ export function BarraHistorias() {
             <Avatar
               fotoUrl={miFotoUrl}
               nombre={sesion?.nombre ?? "Yo"}
+              tamano={64}
               anillo={misHistorias && !misHistorias.vistoCompleto ? "dorado" : "ninguno"}
             >
               <button
@@ -198,6 +199,7 @@ export function BarraHistorias() {
             <Avatar
               fotoUrl={g.autorFotoUrl}
               nombre={g.autorNombre}
+              tamano={64}
               anillo={g.vistoCompleto ? "ninguno" : "dorado"}
             >
               {/* Te mencionaron en una historia de esta persona y todavía no la viste. */}
