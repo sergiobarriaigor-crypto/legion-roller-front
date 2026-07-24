@@ -309,13 +309,13 @@ export default function ConversacionPage() {
           <IconChevronLeft size={20} />
         </Link>
         {otro ? (
-          <Avatar fotoUrl={otro.fotoUrl} nombre={otro.nombre} tamano={36}>
+          <Avatar fotoUrl={otro.fotoUrl} nombre={otro.nombre} tamano={44}>
             {estado?.enLinea && (
               <span className="absolute bottom-0 right-0 h-2 w-2 rounded-full border-2 border-surface-1 bg-fill-success" />
             )}
           </Avatar>
         ) : (
-          sala === "grupal" && <Avatar fotoUrl={IMAGEN_CHAT_GRUPAL} nombre="Legión" tamano={36} />
+          sala === "grupal" && <Avatar fotoUrl={IMAGEN_CHAT_GRUPAL} nombre="Legión" tamano={44} />
         )}
         <div className="min-w-0 flex-1">
           <h1 className="text-sm font-semibold text-text-accent">{titulo}</h1>

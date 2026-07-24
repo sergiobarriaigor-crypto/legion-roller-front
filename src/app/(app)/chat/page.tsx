@@ -107,7 +107,7 @@ export default function ChatListaPage() {
       {error && <p className="text-xs text-fill-warning">{error}</p>}
 
       <Link href="/chat/grupal" className="card -mx-4 flex items-center gap-3 px-3 py-4">
-        <Avatar fotoUrl="/avatar-chat-grupal.png" nombre="Legión" tamano={44} />
+        <Avatar fotoUrl="/avatar-chat-grupal.png" nombre="Legión" tamano={52} />
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold text-text-primary">Chat grupal</p>
           {conversaciones.grupal.ultimoMensaje && (
@@ -133,7 +133,7 @@ export default function ChatListaPage() {
 
       {conversaciones.individuales.map((c) => (
         <Link key={c.sala} href={`/chat/${c.sala}`} className="card -mx-4 flex items-center gap-3 px-3 py-4">
-          <Avatar fotoUrl={c.otroFotoUrl} nombre={c.otroNombre} tamano={44}>
+          <Avatar fotoUrl={c.otroFotoUrl} nombre={c.otroNombre} tamano={52}>
             {(enLinea[c.otroMiembroId] ?? c.otroEnLinea) && (
               <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-page-bg bg-fill-success" />
             )}
