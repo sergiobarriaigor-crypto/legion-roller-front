@@ -60,6 +60,7 @@ export function CamaraHistoria({
   const fragmentosRef = useRef<Blob[]>([]);
   const idIntervaloRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const idLimiteRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const idCuadroRef = useRef<number | null>(null);
 
   const [modo, setModo] = useState<"foto" | "video">("foto");
   const [listo, setListo] = useState(false);
@@ -98,6 +99,7 @@ export function CamaraHistoria({
       streamRef.current?.getTracks().forEach((t) => t.stop());
       if (idIntervaloRef.current) clearInterval(idIntervaloRef.current);
       if (idLimiteRef.current) clearTimeout(idLimiteRef.current);
+      if (idCuadroRef.current) cancelAnimationFrame(idCuadroRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -158,15 +160,49 @@ export function CamaraHistoria({
   function detenerGrabacion() {
     if (idIntervaloRef.current) clearInterval(idIntervaloRef.current);
     if (idLimiteRef.current) clearTimeout(idLimiteRef.current);
+    if (idCuadroRef.current) cancelAnimationFrame(idCuadroRef.current);
     grabadoraRef.current?.stop();
     setGrabando(false);
   }
 
+  // Graba desde un canvas 1080x1920 que va dibujando cada cuadro de la
+  // cámara ya encajado (contain-fit, con relleno negro) en vez de grabar
+  // directo el stream crudo: la cámara casi nunca entrega justo 9:16 pese al
+  // "ideal" pedido en obtenerStreamCamara, y sin este paso el video queda
+  // como una franja angosta rodeada de negro (igual que ya se resuelve para
+  // la foto en FiltrosFoto.tsx, pero acá en vivo cuadro por cuadro).
   function iniciarGrabacion() {
     const stream = streamRef.current;
-    if (!stream) return;
+    const video = videoRef.current;
+    if (!stream || !video) return;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = ANCHO_HISTORIA;
+    canvas.height = ALTO_HISTORIA;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    function dibujarCuadro() {
+      if (!ctx) return;
+      ctx.fillStyle = "#000000";
+      ctx.fillRect(0, 0, ANCHO_HISTORIA, ALTO_HISTORIA);
+      if (video && video.videoWidth) {
+        const escala = Math.min(ANCHO_HISTORIA / video.videoWidth, ALTO_HISTORIA / video.videoHeight);
+        const anchoDestino = video.videoWidth * escala;
+        const altoDestino = video.videoHeight * escala;
+        const x = (ANCHO_HISTORIA - anchoDestino) / 2;
+        const y = (ALTO_HISTORIA - altoDestino) / 2;
+        ctx.drawImage(video, x, y, anchoDestino, altoDestino);
+      }
+      idCuadroRef.current = requestAnimationFrame(dibujarCuadro);
+    }
+
+    const canvasConStream = canvas as HTMLCanvasElement & { captureStream: (fps?: number) => MediaStream };
+    const streamCanvas = canvasConStream.captureStream(30);
+    const streamGrabacion = new MediaStream([...streamCanvas.getVideoTracks(), ...stream.getAudioTracks()]);
+
     const mimeType = TIPOS_VIDEO_CANDIDATOS.find((t) => MediaRecorder.isTypeSupported(t)) ?? "video/webm";
-    const grabadora = new MediaRecorder(stream, { mimeType });
+    const grabadora = new MediaRecorder(streamGrabacion, { mimeType });
     fragmentosRef.current = [];
     grabadora.ondataavailable = (ev) => {
       if (ev.data.size > 0) fragmentosRef.current.push(ev.data);
@@ -176,6 +212,7 @@ export function CamaraHistoria({
       onCapturado(new File([blob], `historia-video-${Date.now()}.webm`, { type: "video/webm" }));
     };
     grabadoraRef.current = grabadora;
+    dibujarCuadro();
     grabadora.start();
     setGrabando(true);
     setSegundos(0);
