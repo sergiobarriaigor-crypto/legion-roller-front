@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { IconMapPin, IconShare, IconUsers, IconVideo } from "@tabler/icons-react";
+import { IconMapPin, IconShare, IconUsers, IconVideo, IconHeart, IconHeartFilled } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
 import { apiGet, apiPost, apiDelete, apiUpload, ApiError } from "@/lib/api";
 import type { Post } from "@/lib/posts";
@@ -601,15 +601,19 @@ export default function PostPage() {
 
             <div className="flex items-center gap-4 border-t border-border pt-2 text-sm text-text-secondary">
               {puedeInteractuar ? (
-                <button
-                  type="button"
-                  onClick={() => reaccionar(p.id)}
-                  className={yaReaccione ? "text-text-accent" : ""}
-                >
-                  {yaReaccione ? "★ Me gusta" : "☆ Me gusta"} ({p.reaccionesCount})
+                <button type="button" onClick={() => reaccionar(p.id)} className="flex items-center gap-1.5">
+                  {yaReaccione ? (
+                    <IconHeartFilled size={18} className="text-text-accent transition" />
+                  ) : (
+                    <IconHeart size={18} className="text-text-accent transition" />
+                  )}
+                  {p.reaccionesCount}
                 </button>
               ) : (
-                <span>{p.reaccionesCount} me gusta</span>
+                <span className="flex items-center gap-1.5">
+                  <IconHeart size={18} className="text-text-accent" />
+                  {p.reaccionesCount}
+                </span>
               )}
               <button
                 type="button"

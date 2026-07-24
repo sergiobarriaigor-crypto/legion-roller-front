@@ -9,6 +9,8 @@ import {
   IconBrandInstagram,
   IconBrandFacebook,
   IconBrandTiktok,
+  IconHeart,
+  IconHeartFilled,
 } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
 import { apiGet, apiPost, apiDelete, apiUpload, ApiError } from "@/lib/api";
@@ -451,15 +453,19 @@ export default function ImpulsaPage() {
 
                 <div className="flex items-center gap-4 border-t border-border pt-2 text-sm text-text-secondary">
                   {puedeInteractuar ? (
-                    <button
-                      type="button"
-                      onClick={() => reaccionar(e.id)}
-                      className={yaReaccione ? "text-text-accent" : ""}
-                    >
-                      {yaReaccione ? "★ Me gusta" : "☆ Me gusta"} ({e.reaccionesCount})
+                    <button type="button" onClick={() => reaccionar(e.id)} className="flex items-center gap-1.5">
+                      {yaReaccione ? (
+                        <IconHeartFilled size={18} className="text-text-accent transition" />
+                      ) : (
+                        <IconHeart size={18} className="text-text-accent transition" />
+                      )}
+                      {e.reaccionesCount}
                     </button>
                   ) : (
-                    <span>{e.reaccionesCount} me gusta</span>
+                    <span className="flex items-center gap-1.5">
+                      <IconHeart size={18} className="text-text-accent" />
+                      {e.reaccionesCount}
+                    </span>
                   )}
                   <button
                     type="button"
