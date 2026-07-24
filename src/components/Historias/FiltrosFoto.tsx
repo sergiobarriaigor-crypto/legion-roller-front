@@ -8,7 +8,7 @@ export interface FiltroFoto {
 
 // Filtros preestablecidos tipo Instagram, aplicados con CSS `filter` (mismo
 // valor usado en vivo sobre la vista previa y luego "horneado" en la imagen
-// final vía canvas antes de subirla, con aplicarFiltroABlob).
+// final vía canvas antes de subirla, con prepararFotoHistoria).
 export const FILTROS_FOTO: FiltroFoto[] = [
   { id: "normal", nombre: "Normal", css: "none" },
   { id: "bn", nombre: "B&N", css: "grayscale(1)" },
@@ -18,25 +18,42 @@ export const FILTROS_FOTO: FiltroFoto[] = [
   { id: "vintage", nombre: "Vintage", css: "sepia(0.4) contrast(0.9) brightness(1.1) saturate(0.85)" },
 ];
 
-// Dibuja la imagen en un canvas con el filtro CSS aplicado y devuelve el
-// resultado como Blob JPEG — así el filtro queda "quemado" en la foto que se
-// sube, no depende de que quien la vea también renderice CSS.
-export function aplicarFiltroABlob(url: string, filtroCss: string): Promise<Blob> {
+// Resolución/relación de aspecto recomendada para historias (igual que
+// Instagram): 1080x1920, 9:16, pantalla completa vertical.
+const ANCHO_HISTORIA = 1080;
+const ALTO_HISTORIA = 1920;
+
+// Dibuja la imagen en un lienzo 1080x1920 con el filtro CSS "quemado" y
+// devuelve el resultado como Blob JPEG. La foto se dibuja completa y centrada
+// (nunca se recorta ningún borde); si su relación de aspecto no es
+// exactamente 9:16, el espacio sobrante queda relleno en negro, igual que el
+// fondo del visor — así todas las historias exportan al mismo tamaño de
+// pantalla completa sin perder nada de la imagen original.
+export function prepararFotoHistoria(url: string, filtroCss: string): Promise<Blob> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
       const canvas = document.createElement("canvas");
-      canvas.width = img.naturalWidth;
-      canvas.height = img.naturalHeight;
+      canvas.width = ANCHO_HISTORIA;
+      canvas.height = ALTO_HISTORIA;
       const ctx = canvas.getContext("2d");
       if (!ctx) {
         reject(new Error("No se pudo procesar la imagen"));
         return;
       }
+      ctx.fillStyle = "#000000";
+      ctx.fillRect(0, 0, ANCHO_HISTORIA, ALTO_HISTORIA);
+
+      const escala = Math.min(ANCHO_HISTORIA / img.naturalWidth, ALTO_HISTORIA / img.naturalHeight);
+      const anchoDestino = img.naturalWidth * escala;
+      const altoDestino = img.naturalHeight * escala;
+      const x = (ANCHO_HISTORIA - anchoDestino) / 2;
+      const y = (ALTO_HISTORIA - altoDestino) / 2;
+
       ctx.filter = filtroCss;
-      ctx.drawImage(img, 0, 0);
+      ctx.drawImage(img, x, y, anchoDestino, altoDestino);
       canvas.toBlob(
-        (blob) => (blob ? resolve(blob) : reject(new Error("No se pudo generar la imagen filtrada"))),
+        (blob) => (blob ? resolve(blob) : reject(new Error("No se pudo generar la imagen"))),
         "image/jpeg",
         0.9,
       );

@@ -13,7 +13,7 @@ import { sectorMasCercano } from "@/lib/sectores";
 import { useSession } from "@/context/SessionContext";
 import { TextoSobreImagen } from "@/components/Historias/TextoSobreImagen";
 import { BarraTextoHistoria } from "@/components/Historias/BarraTextoHistoria";
-import { FILTROS_FOTO, FiltrosFoto, aplicarFiltroABlob, type FiltroFoto } from "@/components/Historias/FiltrosFoto";
+import { FILTROS_FOTO, FiltrosFoto, prepararFotoHistoria, type FiltroFoto } from "@/components/Historias/FiltrosFoto";
 import { MencionSobreImagen } from "@/components/Historias/MencionSobreImagen";
 import { SelectorMencion } from "@/components/Historias/SelectorMencion";
 import { VideoTrimmer } from "@/components/VideoTrimmer";
@@ -136,8 +136,8 @@ export function EditorHistoria({
       const archivoASubir: Blob =
         tipo === "video" && videoRecortadoBlob
           ? videoRecortadoBlob
-          : tipo === "foto" && filtro.css !== "none" && previewUrl
-            ? await aplicarFiltroABlob(previewUrl, filtro.css)
+          : tipo === "foto" && previewUrl
+            ? await prepararFotoHistoria(previewUrl, filtro.css)
             : archivoInicial;
       const nombreArchivo = videoRecortadoBlob && archivoASubir === videoRecortadoBlob
         ? "recorte.webm"

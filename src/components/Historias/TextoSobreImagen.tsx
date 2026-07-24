@@ -6,6 +6,14 @@ import type { EstiloTextoHistoria } from "@/lib/historias";
 const ESCALA_MINIMA = 0.4;
 const ESCALA_MAXIMA = 3;
 
+// Zona segura tipo Instagram (sobre un lienzo de referencia 1080x1920): no
+// dejar arrastrar el texto tan arriba/abajo/a los lados que quede tapado por
+// la barra superior (progreso, cerrar) o la de abajo ("Enviar mensaje"/
+// "Escribir un eco"). ~250px de 1920 arriba/abajo, ~60px de 1080 a los lados.
+const MARGEN_SUPERIOR = 250 / 1920;
+const MARGEN_INFERIOR = 250 / 1920;
+const MARGEN_LATERAL = 60 / 1080;
+
 // Estilo visual (posición, tamaño, rotación, tipografía, color, alineación,
 // fondo/sombra) — se usa igual en el editor (interactivo) y en el visor
 // (solo lectura), así ambos se ven idénticos.
@@ -121,7 +129,11 @@ export function TextoSobreImagen({
       const p = [...punterosRef.current.values()][0];
       const nuevoX = p.x / rect.width - gestoRef.current.offsetX;
       const nuevoY = p.y / rect.height - gestoRef.current.offsetY;
-      onChange({ ...estilo, x: Math.min(1, Math.max(0, nuevoX)), y: Math.min(1, Math.max(0, nuevoY)) });
+      onChange({
+        ...estilo,
+        x: Math.min(1 - MARGEN_LATERAL, Math.max(MARGEN_LATERAL, nuevoX)),
+        y: Math.min(1 - MARGEN_INFERIOR, Math.max(MARGEN_SUPERIOR, nuevoY)),
+      });
     } else if (gestoRef.current.modo === "pellizcar" && punterosRef.current.size === 2) {
       const [p1, p2] = [...punterosRef.current.values()];
       const { distancia, angulo } = distanciaYAngulo(p1, p2);
