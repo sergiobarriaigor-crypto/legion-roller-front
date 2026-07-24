@@ -751,6 +751,7 @@ export function VisorHistorias({
               <button
                 type="button"
                 onClick={abrirComentarios}
+                aria-label="Ver comentarios"
                 className="flex items-center gap-1.5 text-sm font-semibold text-white"
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -759,7 +760,7 @@ export function VisorHistorias({
                   alt=""
                   className="h-4 w-4 drop-shadow-[0_0_6px_rgba(231,193,104,0.8)]"
                 />
-                {historia.comentariosCount} comentarios
+                {historia.comentariosCount}
               </button>
               {ecos.length > 0 && (
                 <>
@@ -767,10 +768,11 @@ export function VisorHistorias({
                   <button
                     type="button"
                     onClick={() => setPanelEcosAbierto(true)}
+                    aria-label="Ver ecos"
                     className="flex items-center gap-1.5 text-sm font-semibold text-white"
                   >
                     <IconVolume size={16} />
-                    {ecos.length} {ecos.length === 1 ? "eco" : "ecos"}
+                    {ecos.length}
                   </button>
                 </>
               )}
