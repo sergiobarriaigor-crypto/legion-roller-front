@@ -187,10 +187,47 @@ export function CamaraHistoria({
   const progreso = Math.min(1, segundos / DURACION_MAXIMA_VIDEO_HISTORIA_SEG);
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-black" data-no-swipe>
-      <div className="relative z-10 flex items-center justify-between p-3">
-        <button type="button" onClick={cerrar} className="text-white" aria-label="Cerrar cámara">
-          <IconX size={22} />
+    <div className="fixed inset-0 z-50 bg-black" data-no-swipe>
+      {error ? (
+        <div className="flex h-full flex-col items-center justify-center gap-4 px-6">
+          <p className="text-center text-sm text-fill-warning">{error}</p>
+          <button
+            type="button"
+            onClick={cerrar}
+            className="rounded-app border border-white/30 px-4 py-2 text-sm text-white"
+          >
+            Cerrar
+          </button>
+        </div>
+      ) : (
+        // La cámara frontal se ve reflejada como espejo (igual que la vista
+        // previa nativa de cualquier celular) — la foto/video que se guarda
+        // no queda espejado, porque canvas/MediaRecorder leen el cuadro real
+        // de la cámara, no el CSS aplicado acá.
+        <video
+          ref={videoRef}
+          autoPlay
+          muted
+          playsInline
+          className="absolute inset-0 z-0 h-full w-full object-cover"
+          style={camaraFrontal ? { transform: "scaleX(-1)" } : undefined}
+        />
+      )}
+
+      {/*
+        Controles flotando directo sobre la cámara (fondo circular
+        semitransparente por ícono), estilo cámara nativa, en vez de barras
+        negras sólidas arriba/abajo — mismo patrón que la app de cámara del
+        celular.
+      */}
+      <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between p-3">
+        <button
+          type="button"
+          onClick={cerrar}
+          aria-label="Cerrar cámara"
+          className="flex h-9 w-9 items-center justify-center rounded-full bg-black/40 text-white"
+        >
+          <IconX size={20} />
         </button>
         {grabando && (
           <span className="rounded-full bg-black/50 px-3 py-1 text-xs text-white">
@@ -203,47 +240,19 @@ export function CamaraHistoria({
             onClick={girarCamara}
             disabled={!listo || grabando}
             aria-label="Girar cámara"
-            className="text-white disabled:opacity-40"
+            className="flex h-9 w-9 items-center justify-center rounded-full bg-black/40 text-white disabled:opacity-40"
           >
-            <IconRefresh size={22} />
+            <IconRefresh size={20} />
           </button>
         ) : (
-          <div className="w-[22px]" />
-        )}
-      </div>
-
-      <div className="relative flex flex-1 items-center justify-center overflow-hidden">
-        {error ? (
-          <div className="flex flex-col items-center gap-4 px-6">
-            <p className="text-center text-sm text-fill-warning">{error}</p>
-            <button
-              type="button"
-              onClick={cerrar}
-              className="rounded-app border border-white/30 px-4 py-2 text-sm text-white"
-            >
-              Cerrar
-            </button>
-          </div>
-        ) : (
-          // La cámara frontal se ve reflejada como espejo (igual que la
-          // vista previa nativa de cualquier celular) — la foto/video que se
-          // guarda no queda espejado, porque canvas/MediaRecorder leen el
-          // cuadro real de la cámara, no el CSS aplicado acá.
-          <video
-            ref={videoRef}
-            autoPlay
-            muted
-            playsInline
-            className="relative z-0 h-full w-full object-cover"
-            style={camaraFrontal ? { transform: "scaleX(-1)" } : undefined}
-          />
+          <div className="w-9" />
         )}
       </div>
 
       {!error && (
-        <div className="relative z-10 flex flex-col items-center gap-4 p-4">
+        <div className="absolute inset-x-0 bottom-0 z-10 flex flex-col items-center gap-4 p-4 pb-6">
           {!grabando && (
-            <div className="flex gap-1 rounded-full bg-white/10 p-1">
+            <div className="flex gap-1 rounded-full bg-black/40 p-1">
               <button
                 type="button"
                 onClick={() => setModo("foto")}
