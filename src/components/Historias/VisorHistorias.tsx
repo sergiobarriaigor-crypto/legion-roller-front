@@ -302,7 +302,13 @@ export function VisorHistorias({
       socket.off("historia:mensaje", alRecibirMensaje);
       socket.off("historia:reaccion", alRecibirReaccion);
       socket.off("historia:eco", alRecibirEco);
-      socket.disconnect();
+      // Sin socket.disconnect() acá: obtenerSocket() da un socket compartido
+      // para toda la sesión del navegador (Chat lo usa también). Si este
+      // efecto lo desconecta al cerrar el visor, socket.io NO reconecta solo
+      // tras un disconnect() manual — la próxima vez que se abre una
+      // historia (o el chat) se reutiliza ese mismo socket ya muerto para
+      // siempre, y los eco/comentarios se emiten pero nunca llegan al
+      // servidor (sin quedar registrados, aunque la UI muestre "enviado ✓").
     };
   }, [token]);
 
