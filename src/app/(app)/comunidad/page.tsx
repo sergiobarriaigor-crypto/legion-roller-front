@@ -9,7 +9,7 @@ import {
   confirmarAsistenciaEvento,
   type Publicacion,
 } from "@/lib/publicaciones";
-import { CarruselFotosPublicacion } from "@/components/Admin/CarruselFotosPublicacion";
+import { CarruselFotos } from "@/components/CarruselFotos";
 import { renderizarTextoFormateado } from "@/lib/textoFormateado";
 
 function textoVencimiento(p: Publicacion): string | null {
@@ -143,7 +143,7 @@ export default function ComunidadPage() {
               {renderizarTextoFormateado(p.texto)}
             </p>
 
-            <CarruselFotosPublicacion fotos={p.fotos} alt={p.titulo} />
+            <CarruselFotos fotos={p.fotos} alt={p.titulo} />
 
             {(p.fecha || p.hora || p.puntoEncuentro) && (
               <p className="text-xs text-text-muted">

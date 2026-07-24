@@ -18,7 +18,7 @@ import type { Emprendedor } from "@/lib/emprendedores";
 import { listarMisReaccionesEmprendedores } from "@/lib/emprendedores";
 import { salaIndividual } from "@/lib/chat";
 import { ComentariosEmprendedor } from "@/components/Impulsa/ComentariosEmprendedor";
-import { CarruselFotosEmprendedor } from "@/components/Impulsa/CarruselFotosEmprendedor";
+import { CarruselFotos } from "@/components/CarruselFotos";
 import { SelectorCompartirEmprendedor } from "@/components/Impulsa/SelectorCompartirEmprendedor";
 import { generarTarjetaCompartirEmprendedor } from "@/lib/tarjetaEmprendedor";
 import { BarraFormatoTexto } from "@/components/BarraFormatoTexto";
@@ -395,7 +395,7 @@ export default function ImpulsaPage() {
                     </button>
                   )}
                 </div>
-                <CarruselFotosEmprendedor fotos={e.fotos} alt={e.nombreNegocio} />
+                <CarruselFotos fotos={e.fotos} alt={e.nombreNegocio} />
                 <p className="whitespace-pre-wrap text-sm text-text-secondary">
                   {renderizarTextoFormateado(e.descripcion)}
                 </p>

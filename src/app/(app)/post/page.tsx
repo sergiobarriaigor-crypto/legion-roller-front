@@ -6,7 +6,7 @@ import { IconMapPin, IconShare, IconUsers, IconVideo, IconHeart, IconHeartFilled
 import { useSession } from "@/context/SessionContext";
 import { apiGet, apiPost, apiDelete, apiUpload, ApiError } from "@/lib/api";
 import type { Post } from "@/lib/posts";
-import { CarruselFotos } from "@/components/Posts/CarruselFotos";
+import { CarruselFotos } from "@/components/CarruselFotos";
 import { SelectorUbicacion } from "@/components/Posts/SelectorUbicacion";
 import { ComentariosPost } from "@/components/Posts/ComentariosPost";
 import { SelectorCompartirPost } from "@/components/Posts/SelectorCompartirPost";
