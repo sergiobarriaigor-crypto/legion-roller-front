@@ -182,17 +182,22 @@ export function CamaraHistoria({
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
+    // Escala para CUBRIR el lienzo completo (recorta lo que sobre) en vez de
+    // encajar con relleno negro — mismo criterio que prepararFotoHistoria en
+    // FiltrosFoto.tsx, así el video nunca queda con bordes negros horneados
+    // en la imagen, sin importar la proporción real que entregue la cámara.
     function dibujarCuadro() {
       if (!ctx) return;
-      ctx.fillStyle = "#000000";
-      ctx.fillRect(0, 0, ANCHO_HISTORIA, ALTO_HISTORIA);
       if (video && video.videoWidth) {
-        const escala = Math.min(ANCHO_HISTORIA / video.videoWidth, ALTO_HISTORIA / video.videoHeight);
+        const escala = Math.max(ANCHO_HISTORIA / video.videoWidth, ALTO_HISTORIA / video.videoHeight);
         const anchoDestino = video.videoWidth * escala;
         const altoDestino = video.videoHeight * escala;
         const x = (ANCHO_HISTORIA - anchoDestino) / 2;
         const y = (ALTO_HISTORIA - altoDestino) / 2;
         ctx.drawImage(video, x, y, anchoDestino, altoDestino);
+      } else {
+        ctx.fillStyle = "#000000";
+        ctx.fillRect(0, 0, ANCHO_HISTORIA, ALTO_HISTORIA);
       }
       idCuadroRef.current = requestAnimationFrame(dibujarCuadro);
     }

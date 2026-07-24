@@ -25,11 +25,11 @@ export const ANCHO_HISTORIA = 1080;
 export const ALTO_HISTORIA = 1920;
 
 // Dibuja la imagen en un lienzo 1080x1920 con el filtro CSS "quemado" y
-// devuelve el resultado como Blob JPEG. La foto se dibuja completa y centrada
-// (nunca se recorta ningún borde); si su relación de aspecto no es
-// exactamente 9:16, el espacio sobrante queda relleno en negro, igual que el
-// fondo del visor — así todas las historias exportan al mismo tamaño de
-// pantalla completa sin perder nada de la imagen original.
+// devuelve el resultado como Blob JPEG. La foto se escala para CUBRIR todo
+// el lienzo (recortando lo que sobre por los costados o arriba/abajo según
+// corresponda) en vez de dejar franjas negras cuando la relación de aspecto
+// original no es exactamente 9:16 — mismo criterio que Instagram/TikTok:
+// nunca queda con bordes negros, aunque signifique perder un poco de borde.
 export function prepararFotoHistoria(url: string, filtroCss: string): Promise<Blob> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -42,10 +42,8 @@ export function prepararFotoHistoria(url: string, filtroCss: string): Promise<Bl
         reject(new Error("No se pudo procesar la imagen"));
         return;
       }
-      ctx.fillStyle = "#000000";
-      ctx.fillRect(0, 0, ANCHO_HISTORIA, ALTO_HISTORIA);
 
-      const escala = Math.min(ANCHO_HISTORIA / img.naturalWidth, ALTO_HISTORIA / img.naturalHeight);
+      const escala = Math.max(ANCHO_HISTORIA / img.naturalWidth, ALTO_HISTORIA / img.naturalHeight);
       const anchoDestino = img.naturalWidth * escala;
       const altoDestino = img.naturalHeight * escala;
       const x = (ANCHO_HISTORIA - anchoDestino) / 2;
