@@ -30,6 +30,28 @@ const ESTILO_TEXTO_DEFECTO: Omit<EstiloTextoHistoria, "contenido"> = {
   fondo: "ninguno",
 };
 
+// Los .webm que graba MediaRecorder desde un canvas.captureStream() (Captura
+// Express) suelen quedar con la duración del contenedor rota (Infinity/NaN)
+// y el video se ve congelado en el primer cuadro hasta que se hace una
+// búsqueda — bug conocido de Chrome/Android con este tipo de grabación en
+// streaming. El arreglo estándar: forzar un seek al final y volver a 0, lo
+// que obliga al navegador a indexar bien el archivo.
+function repararVideoStreameado(video: HTMLVideoElement): Promise<void> {
+  return new Promise((resolve) => {
+    if (Number.isFinite(video.duration) && video.duration > 0) {
+      resolve();
+      return;
+    }
+    function alActualizarTiempo() {
+      video.currentTime = 0;
+      video.removeEventListener("timeupdate", alActualizarTiempo);
+      resolve();
+    }
+    video.addEventListener("timeupdate", alActualizarTiempo);
+    video.currentTime = 1e101;
+  });
+}
+
 // El archivo ya llega elegido (BarraHistorias dispara el selector nativo de
 // cámara/galería directamente al tocar "+"); este editor solo se encarga de
 // validar, previsualizar, agregar texto sobre la imagen y publicar.
@@ -98,7 +120,9 @@ export function EditorHistoria({
     // para que el usuario elija el fragmento a publicar, sin salir de la app.
     const video = document.createElement("video");
     video.preload = "metadata";
-    video.onloadedmetadata = () => {
+    video.muted = true;
+    video.onloadedmetadata = async () => {
+      await repararVideoStreameado(video);
       if (video.duration > DURACION_MAXIMA_VIDEO_HISTORIA_SEG) {
         setMostrarRecorte(true);
         return;
@@ -207,6 +231,10 @@ export function EditorHistoria({
                 muted
                 loop
                 playsInline
+                onLoadedMetadata={(e) => {
+                  const v = e.currentTarget;
+                  repararVideoStreameado(v).then(() => v.play().catch(() => {}));
+                }}
               />
             ) : (
               // eslint-disable-next-line @next/next/no-img-element
