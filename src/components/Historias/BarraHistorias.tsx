@@ -165,13 +165,20 @@ export function BarraHistorias() {
 
   return (
     <>
+      {/*
+        El input de cámara va con "image/*" solo (no image+video juntos) y
+        oculto vía posición fuera de pantalla en vez de display:none: en
+        varios Android/Chrome, un accept mixto o un input con display:none
+        hacen que "capture" se ignore y caiga al selector de archivos común
+        en lugar de abrir la cámara directo.
+      */}
       <input
         ref={inputCamaraRef}
         type="file"
-        accept="image/*,video/*"
+        accept="image/*"
         capture="environment"
         onChange={onArchivoElegido}
-        className="hidden"
+        style={{ position: "fixed", top: 0, left: 0, width: 1, height: 1, opacity: 0, pointerEvents: "none" }}
       />
       <input
         ref={inputGaleriaRef}
