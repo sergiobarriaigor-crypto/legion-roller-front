@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { IconAt, IconPlus } from "@tabler/icons-react";
+import { IconAt, IconCamera, IconPhoto, IconPlus } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
 import { apiGet } from "@/lib/api";
 import { listarHistorias, type GrupoHistorias } from "@/lib/historias";
@@ -17,7 +17,8 @@ import { Toast } from "@/components/Toast";
 export function BarraHistorias() {
   const { sesion } = useSession();
   const token = sesion?.token ?? null;
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputCamaraRef = useRef<HTMLInputElement>(null);
+  const inputGaleriaRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
   const searchParams = useSearchParams();
   // Guarda "historiaId:comentarioId" del último deep-link ya procesado (no
@@ -35,6 +36,7 @@ export function BarraHistorias() {
   const [comentarioDestacadoVisor, setComentarioDestacadoVisor] = useState<number | undefined>(undefined);
   const [abrirReaccionesVisor, setAbrirReaccionesVisor] = useState(false);
   const [historiaNoDisponible, setHistoriaNoDisponible] = useState(false);
+  const [mostrarOpcionesOrigen, setMostrarOpcionesOrigen] = useState(false);
 
   async function cargar() {
     if (!token) return null;
@@ -115,7 +117,7 @@ export function BarraHistorias() {
       setIndiceHistoriaVisor(0);
       setIndiceVisor(grupos.indexOf(misHistorias));
     } else {
-      inputRef.current?.click();
+      setMostrarOpcionesOrigen(true);
     }
   }
 
@@ -128,21 +130,30 @@ export function BarraHistorias() {
     setIndiceVisor(grupos.indexOf(g));
   }
 
-  // El "+" abre directo la cámara/galería nativa del teléfono — el editor a
-  // pantalla completa (con vista previa, texto, ubicación) solo aparece una
-  // vez que ya se eligió un archivo, sin una pantalla intermedia de más.
+  // El "+" primero pregunta Cámara o Galería (antes se abría directo la
+  // cámara vía `capture`, pero en varios Android eso salta la elección y a
+  // veces la cámara nativa falla sin dejar caer a Galería); recién elegido el
+  // archivo aparece el editor a pantalla completa, sin pantalla intermedia.
   function onArchivoElegido(e: React.ChangeEvent<HTMLInputElement>) {
     const archivo = e.target.files?.[0];
     if (archivo) setArchivoElegido(archivo);
+    setMostrarOpcionesOrigen(false);
   }
 
   return (
     <>
       <input
-        ref={inputRef}
+        ref={inputCamaraRef}
         type="file"
         accept="image/*,video/*"
         capture="environment"
+        onChange={onArchivoElegido}
+        className="hidden"
+      />
+      <input
+        ref={inputGaleriaRef}
+        type="file"
+        accept="image/*,video/*"
         onChange={onArchivoElegido}
         className="hidden"
       />
@@ -171,7 +182,7 @@ export function BarraHistorias() {
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  inputRef.current?.click();
+                  setMostrarOpcionesOrigen(true);
                 }}
                 aria-label="Agregar historia"
                 className="absolute bottom-0 right-0 flex h-5 w-5 items-center justify-center rounded-full border-2 border-page-bg bg-fill-primary text-on-primary"
@@ -216,17 +227,58 @@ export function BarraHistorias() {
         ))}
       </div>
 
+      {mostrarOpcionesOrigen && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/50"
+          onClick={() => setMostrarOpcionesOrigen(false)}
+        >
+          <div
+            className="flex w-full max-w-md flex-col gap-2 rounded-t-app bg-surface-1 p-4 pb-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="pb-1 text-center text-sm font-semibold text-text-primary">
+              Nueva historia
+            </p>
+            <button
+              type="button"
+              onClick={() => inputCamaraRef.current?.click()}
+              className="flex items-center gap-3 rounded-app px-3 py-3 text-sm text-text-primary hover:bg-surface-2"
+            >
+              <IconCamera size={20} className="text-text-accent" />
+              Cámara
+            </button>
+            <button
+              type="button"
+              onClick={() => inputGaleriaRef.current?.click()}
+              className="flex items-center gap-3 rounded-app px-3 py-3 text-sm text-text-primary hover:bg-surface-2"
+            >
+              <IconPhoto size={20} className="text-text-accent" />
+              Galería
+            </button>
+            <button
+              type="button"
+              onClick={() => setMostrarOpcionesOrigen(false)}
+              className="mt-1 rounded-app px-3 py-2 text-center text-sm text-text-secondary"
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+
       {archivoElegido && (
         <EditorHistoria
           archivoInicial={archivoElegido}
           token={token}
           onClose={() => {
             setArchivoElegido(null);
-            if (inputRef.current) inputRef.current.value = "";
+            if (inputCamaraRef.current) inputCamaraRef.current.value = "";
+            if (inputGaleriaRef.current) inputGaleriaRef.current.value = "";
           }}
           onPublicado={() => {
             setArchivoElegido(null);
-            if (inputRef.current) inputRef.current.value = "";
+            if (inputCamaraRef.current) inputCamaraRef.current.value = "";
+            if (inputGaleriaRef.current) inputGaleriaRef.current.value = "";
             cargar();
           }}
         />
