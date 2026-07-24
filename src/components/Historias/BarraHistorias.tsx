@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { IconAt, IconCamera, IconPhoto, IconPlus } from "@tabler/icons-react";
+import { IconAt, IconBolt, IconCamera, IconPhoto, IconPlus } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
 import { apiGet } from "@/lib/api";
 import { listarHistorias, type GrupoHistorias } from "@/lib/historias";
@@ -143,22 +143,25 @@ export function BarraHistorias() {
     setMostrarOpcionesOrigen(false);
   }
 
-  // Con getUserMedia+MediaRecorder disponibles, se usa la cámara propia
-  // dentro de la página (CamaraHistoria) en vez de la app de cámara nativa:
-  // solo así se puede cortar la grabación de video sola a los 30s exactos —
-  // la nativa no deja imponer un límite mientras graba. Si el navegador no
-  // soporta esas APIs (fallback), se cae al input nativo de siempre.
-  async function intentarAbrirCamara() {
-    if (soportaCamaraEnVivo()) {
-      setMostrarOpcionesOrigen(false);
-      setMostrarCamaraEnVivo(true);
-      return;
-    }
-    // No hay forma de que una página reactive un permiso ya bloqueado por el
-    // usuario (restricción del navegador) — lo único práctico es detectar el
-    // bloqueo con la API de Permisos y explicar cómo reactivarlo, en vez de
-    // que el botón "Cámara" no haga nada sin dar ninguna pista. Si el
-    // navegador no soporta esta consulta, se abre la cámara igual.
+  // "Captura Express": cámara propia dentro de la página (CamaraHistoria,
+  // getUserMedia+MediaRecorder) — la única forma de cortar la grabación de
+  // video sola a los 30s exactos, algo que la app de cámara nativa no
+  // permite. Solo se ofrece cuando el navegador soporta esas APIs.
+  function abrirCapturaExpress() {
+    setMostrarOpcionesOrigen(false);
+    setMostrarCamaraEnVivo(true);
+  }
+
+  // "Cámara del Dispositivo": la app de cámara nativa del celular, de
+  // respaldo por si Captura Express falla en algún equipo puntual (o el
+  // único camino cuando el navegador no soporta getUserMedia/MediaRecorder).
+  //
+  // No hay forma de que una página reactive un permiso ya bloqueado por el
+  // usuario (restricción del navegador) — lo único práctico es detectar el
+  // bloqueo con la API de Permisos y explicar cómo reactivarlo, en vez de
+  // que el botón no haga nada sin dar ninguna pista. Si el navegador no
+  // soporta esta consulta, se abre la cámara igual.
+  async function abrirCamaraDelDispositivo() {
     try {
       const estado = await navigator.permissions.query({
         name: "camera" as PermissionName,
@@ -280,13 +283,23 @@ export function BarraHistorias() {
             <p className="pb-1 text-center text-sm font-semibold text-text-primary">
               Nueva historia
             </p>
+            {soportaCamaraEnVivo() && (
+              <button
+                type="button"
+                onClick={abrirCapturaExpress}
+                className="flex items-center gap-3 rounded-app px-3 py-3 text-sm text-text-primary hover:bg-surface-2"
+              >
+                <IconBolt size={20} className="text-text-accent" />
+                Captura Express
+              </button>
+            )}
             <button
               type="button"
-              onClick={intentarAbrirCamara}
+              onClick={abrirCamaraDelDispositivo}
               className="flex items-center gap-3 rounded-app px-3 py-3 text-sm text-text-primary hover:bg-surface-2"
             >
               <IconCamera size={20} className="text-text-accent" />
-              Cámara
+              {soportaCamaraEnVivo() ? "Cámara del Dispositivo" : "Cámara"}
             </button>
             <button
               type="button"
