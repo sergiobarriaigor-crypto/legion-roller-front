@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { IconRefresh, IconX } from "@tabler/icons-react";
 import { DURACION_MAXIMA_VIDEO_HISTORIA_SEG } from "@/lib/historias";
-import { ANCHO_HISTORIA, ALTO_HISTORIA } from "@/components/Historias/FiltrosFoto";
+import { ANCHO_HISTORIA, ALTO_HISTORIA, FILTROS_FOTO, type FiltroFoto } from "@/components/Historias/FiltrosFoto";
 import { Toast } from "@/components/Toast";
 
 export function soportaCamaraEnVivo(): boolean {
@@ -65,6 +65,7 @@ export function CamaraHistoria({
   const [segundos, setSegundos] = useState(0);
   const [camaraFrontal, setCamaraFrontal] = useState(false);
   const [sinCamaraAlterna, setSinCamaraAlterna] = useState(false);
+  const [filtro, setFiltro] = useState<FiltroFoto>(FILTROS_FOTO[0]);
 
   useEffect(() => {
     let cancelado = false;
@@ -142,6 +143,7 @@ export function CamaraHistoria({
     canvas.height = video.videoHeight;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+    ctx.filter = filtro.css;
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     canvas.toBlob(
       (blob) => {
@@ -190,6 +192,7 @@ export function CamaraHistoria({
         const altoDestino = video.videoHeight * escala;
         const x = (ANCHO_HISTORIA - anchoDestino) / 2;
         const y = (ALTO_HISTORIA - altoDestino) / 2;
+        ctx.filter = filtro.css;
         ctx.drawImage(video, x, y, anchoDestino, altoDestino);
       } else {
         ctx.fillStyle = "#000000";
@@ -261,7 +264,10 @@ export function CamaraHistoria({
           muted
           playsInline
           className="absolute inset-0 z-0 h-full w-full object-cover"
-          style={camaraFrontal ? { transform: "scaleX(-1)" } : undefined}
+          style={{
+            ...(camaraFrontal ? { transform: "scaleX(-1)" } : null),
+            filter: filtro.css,
+          }}
         />
       )}
 
@@ -302,6 +308,28 @@ export function CamaraHistoria({
 
       {!error && (
         <div className="absolute inset-x-0 bottom-0 z-10 flex flex-col items-center gap-4 p-4 pb-6">
+          {/* El filtro se aplica en vivo (CSS acá + ctx.filter al dibujar en
+              tomarFoto/dibujarCuadro), así que lo que se ve en el encuadre es
+              exactamente lo que queda grabado — a diferencia del editor
+              posterior (EditorHistoria/FiltrosFoto), donde el filtro de video
+              hoy solo es vista previa y no queda horneado en el archivo. */}
+          {!grabando && (
+            <div className="flex w-full gap-2 overflow-x-auto rounded-full bg-black/40 px-2 py-1.5" data-no-swipe>
+              {FILTROS_FOTO.map((f) => (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => setFiltro(f)}
+                  className={`shrink-0 rounded-full px-3 py-1 text-xs ${
+                    filtro.id === f.id ? "bg-fill-primary text-on-primary" : "text-white"
+                  }`}
+                >
+                  {f.nombre}
+                </button>
+              ))}
+            </div>
+          )}
+
           {!grabando && (
             <div className="flex gap-1 rounded-full bg-black/40 p-1">
               <button
