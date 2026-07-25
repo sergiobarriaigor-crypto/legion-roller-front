@@ -11,6 +11,7 @@ import {
   type EstiloTextoHistoria,
 } from "@/lib/historias";
 import { sectorMasCercano } from "@/lib/sectores";
+import { SelectorUbicacion } from "@/components/SelectorUbicacion";
 import { useSession } from "@/context/SessionContext";
 import { TextoSobreImagen } from "@/components/Historias/TextoSobreImagen";
 import { BarraTextoHistoria } from "@/components/Historias/BarraTextoHistoria";
@@ -80,6 +81,7 @@ export function EditorHistoria({
   const [mostrarInputTexto, setMostrarInputTexto] = useState(false);
   const [borradorTexto, setBorradorTexto] = useState("");
   const [ubicacion, setUbicacion] = useState<string | undefined>(undefined);
+  const [mostrarSelectorUbicacion, setMostrarSelectorUbicacion] = useState(false);
   const [error, setError] = useState("");
   const [publicando, setPublicando] = useState(false);
   const [publicado, setPublicado] = useState(false);
@@ -246,18 +248,34 @@ export function EditorHistoria({
               />
             )}
 
-            {ubicacion && (
+            {ubicacion ? (
               <div className="absolute left-3 top-3 flex items-center gap-1 rounded-full bg-black/50 px-3 py-1 text-xs text-white">
                 <IconMapPin size={14} />
                 {ubicacion}
                 <button
                   type="button"
+                  onClick={() => setMostrarSelectorUbicacion(true)}
+                  className="ml-1 underline"
+                >
+                  Cambiar
+                </button>
+                <button
+                  type="button"
                   onClick={() => setUbicacion(undefined)}
-                  className="ml-1 text-text-secondary underline"
+                  className="text-text-secondary underline"
                 >
                   Quitar
                 </button>
               </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setMostrarSelectorUbicacion(true)}
+                className="absolute left-3 top-3 flex items-center gap-1 rounded-full bg-black/50 px-3 py-1 text-xs text-white"
+              >
+                <IconMapPin size={14} />
+                Agregar ubicación
+              </button>
             )}
 
             {/* Botón "Aa": único punto de entrada para escribir o reescribir el
@@ -331,6 +349,16 @@ export function EditorHistoria({
                   const y = Math.min(0.85, 0.5 + menciones.length * 0.1);
                   setMenciones((prev) => [...prev, { miembroId: m.id, nombre: m.nombre, x: 0.5, y, escala: 1 }]);
                   setMostrarSelectorMencion(false);
+                }}
+              />
+            )}
+
+            {mostrarSelectorUbicacion && (
+              <SelectorUbicacion
+                onCerrar={() => setMostrarSelectorUbicacion(false)}
+                onSeleccionar={(nombre) => {
+                  setUbicacion(nombre);
+                  setMostrarSelectorUbicacion(false);
                 }}
               />
             )}

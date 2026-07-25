@@ -55,11 +55,3 @@ export function sectoresPorCercania(lat: number, lon: number): SectorConDistanci
     ),
   })).sort((a, b) => a.distanciaKm - b.distanciaKm);
 }
-
-// Búsqueda manual por nombre: sin geocoding externo, filtra sobre la misma
-// lista conocida de sectores (igual criterio que el resto de la app).
-export function buscarSectoresPorNombre(consulta: string): string[] {
-  const q = consulta.trim().toLowerCase();
-  if (!q) return SECTORES.map((s) => s.nombre);
-  return SECTORES.filter((s) => s.nombre.toLowerCase().includes(q)).map((s) => s.nombre);
-}

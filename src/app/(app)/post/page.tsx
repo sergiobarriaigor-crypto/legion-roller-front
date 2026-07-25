@@ -9,7 +9,7 @@ import { useBorradorPost } from "@/context/BorradorPostContext";
 import { apiGet, apiPost, apiDelete, apiUpload, ApiError } from "@/lib/api";
 import type { Post } from "@/lib/posts";
 import { CarruselFotos } from "@/components/CarruselFotos";
-import { SelectorUbicacion } from "@/components/Posts/SelectorUbicacion";
+import { SelectorUbicacion } from "@/components/SelectorUbicacion";
 import { ComentariosPost } from "@/components/Posts/ComentariosPost";
 import { SelectorCompartirPost } from "@/components/Posts/SelectorCompartirPost";
 import { VideoTrimmer } from "@/components/VideoTrimmer";

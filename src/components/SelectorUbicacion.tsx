@@ -2,13 +2,16 @@
 
 import { useEffect, useState } from "react";
 import { IconMapPin, IconSearch, IconX } from "@tabler/icons-react";
-import { sectoresPorCercania, buscarSectoresPorNombre, type SectorConDistancia } from "@/lib/sectores";
+import { sectoresPorCercania, type SectorConDistancia } from "@/lib/sectores";
+import { buscarLugares } from "@/lib/geocodificacion";
 
-// Selector de ubicación estilo Instagram para el compositor de Post: al abrir,
-// detecta la posición actual y muestra los lugares conocidos ordenados por
-// cercanía (no asigna uno solo en silencio, como sí hace el editor de
-// Historias); el usuario también puede buscar manualmente por nombre. Nunca
-// se publica la posición exacta — solo el nombre del lugar que se elija acá.
+// Selector de ubicación estilo Instagram, compartido por Post e Historias: al
+// abrir, detecta la posición actual y muestra los sectores conocidos
+// ordenados por cercanía (no asigna uno solo en silencio); si el usuario
+// escribe, busca de verdad en Nominatim/OpenStreetMap (acotado a Chile) en
+// vez de filtrar sobre la lista fija de sectores — así "Valdivia" o cualquier
+// otro lugar del país aparece, no solo los alrededores conocidos. Nunca se
+// publica la posición exacta — solo el nombre del lugar que se elija acá.
 export function SelectorUbicacion({
   onSeleccionar,
   onCerrar,
@@ -19,6 +22,8 @@ export function SelectorUbicacion({
   const [busqueda, setBusqueda] = useState("");
   const [cercanos, setCercanos] = useState<SectorConDistancia[] | null>(null);
   const [errorGps, setErrorGps] = useState<string | null>(null);
+  const [resultadosBusqueda, setResultadosBusqueda] = useState<string[]>([]);
+  const [buscando, setBuscando] = useState(false);
 
   function detectarUbicacion() {
     if (!navigator.geolocation) {
@@ -50,9 +55,28 @@ export function SelectorUbicacion({
     detectarUbicacion();
   }, []);
 
-  const lista = busqueda.trim()
-    ? buscarSectoresPorNombre(busqueda)
-    : (cercanos ?? []).map((s) => s.nombre);
+  // Búsqueda real con debounce: se espera a que el usuario deje de escribir
+  // antes de golpear la API de Nominatim (respeta su uso justo de la API
+  // pública y evita una consulta por cada tecla).
+  useEffect(() => {
+    const q = busqueda.trim();
+    if (!q) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setResultadosBusqueda([]);
+      setBuscando(false);
+      return;
+    }
+    setBuscando(true);
+    const timeout = setTimeout(() => {
+      buscarLugares(q).then((lugares) => {
+        setResultadosBusqueda(lugares.map((l) => l.nombre));
+        setBuscando(false);
+      });
+    }, 400);
+    return () => clearTimeout(timeout);
+  }, [busqueda]);
+
+  const lista = busqueda.trim() ? resultadosBusqueda : (cercanos ?? []).map((s) => s.nombre);
 
   function distanciaDe(nombre: string) {
     return cercanos?.find((s) => s.nombre === nombre)?.distanciaKm;
@@ -74,7 +98,7 @@ export function SelectorUbicacion({
             autoFocus
             value={busqueda}
             onChange={(e) => setBusqueda(e.target.value)}
-            placeholder="Buscar un lugar..."
+            placeholder="Buscar cualquier lugar de Chile..."
             className="w-full bg-transparent text-sm text-text-primary outline-none placeholder:text-text-muted"
           />
         </div>
@@ -95,14 +119,20 @@ export function SelectorUbicacion({
               </button>
             </div>
           )}
-          {lista.length === 0 && (busqueda || cercanos !== null) && (
+          {busqueda && buscando && (
+            <p className="px-2 py-3 text-center text-xs text-text-secondary">Buscando...</p>
+          )}
+          {busqueda && !buscando && lista.length === 0 && (
             <p className="px-2 py-3 text-center text-xs text-text-secondary">Sin resultados.</p>
           )}
-          {lista.map((nombre) => {
+          {!busqueda && lista.length === 0 && cercanos !== null && (
+            <p className="px-2 py-3 text-center text-xs text-text-secondary">Sin resultados.</p>
+          )}
+          {lista.map((nombre, i) => {
             const distancia = distanciaDe(nombre);
             return (
               <button
-                key={nombre}
+                key={`${nombre}-${i}`}
                 type="button"
                 onClick={() => onSeleccionar(nombre)}
                 className="flex w-full items-center gap-2 rounded-app px-3 py-2 text-left text-sm text-text-primary hover:bg-bg-accent"
