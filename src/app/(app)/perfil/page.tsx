@@ -189,7 +189,7 @@ export default function PerfilPage() {
 
         <div className="flex flex-col items-center gap-1">
           <h1 className="text-lg font-semibold text-text-accent">{perfil.nombre}</h1>
-          <p className="text-xs text-text-secondary">
+          <p className="text-sm text-text-secondary">
             {perfil.ciudad ?? "Sin ciudad"} · {perfil.rol}
           </p>
         </div>
@@ -208,11 +208,11 @@ export default function PerfilPage() {
         </div>
       </div>
 
-      {error && <p className="text-xs text-fill-warning">{error}</p>}
+      {error && <p className="text-sm text-fill-warning">{error}</p>}
 
       {miEmergencia && (
         <div className="card -mx-4 flex items-center justify-between border-fill-warning bg-red-700/10 px-3 py-4">
-          <p className="text-xs text-fill-warning">
+          <p className="text-sm text-fill-warning">
             🚨 Tienes una emergencia activa —{" "}
             {ETIQUETA_MOTIVO[miEmergencia.motivo as keyof typeof ETIQUETA_MOTIVO] ??
               miEmergencia.motivo}
@@ -237,7 +237,7 @@ export default function PerfilPage() {
             </button>
           </div>
         ) : (
-          <p className="text-xs text-text-muted">No tienes un estado activo (dura 8h).</p>
+          <p className="text-sm text-text-muted">No tienes un estado activo (dura 8h).</p>
         )}
         <form onSubmit={publicarEstado} className="flex gap-2">
           <input
@@ -258,27 +258,27 @@ export default function PerfilPage() {
       <div className="card -mx-4 grid grid-cols-3 gap-3 px-3 py-4 text-center">
         <div>
           <p className="text-lg font-semibold text-text-accent">{perfil.stats.kmTotales}</p>
-          <p className="text-xs text-text-muted">km totales</p>
+          <p className="text-sm text-text-muted">km totales</p>
         </div>
         <div>
           <p className="text-lg font-semibold text-text-accent">{perfil.stats.kmOficiales}</p>
-          <p className="text-xs text-text-muted">km oficiales</p>
+          <p className="text-sm text-text-muted">km oficiales</p>
         </div>
         <div>
           <p className="text-lg font-semibold text-text-accent">{perfil.stats.numRutas}</p>
-          <p className="text-xs text-text-muted">rutas</p>
+          <p className="text-sm text-text-muted">rutas</p>
         </div>
         <div>
           <p className="text-lg font-semibold text-text-accent">{perfil.stats.asistencias}</p>
-          <p className="text-xs text-text-muted">asistencias</p>
+          <p className="text-sm text-text-muted">asistencias</p>
         </div>
         <div>
           <p className="text-lg font-semibold text-text-accent">{perfil.stats.eventos}</p>
-          <p className="text-xs text-text-muted">eventos</p>
+          <p className="text-sm text-text-muted">eventos</p>
         </div>
         <div>
           <p className="text-lg font-semibold text-text-accent">{perfil.stats.horasPatinadas}</p>
-          <p className="text-xs text-text-muted">horas</p>
+          <p className="text-sm text-text-muted">horas</p>
         </div>
       </div>
 
@@ -286,14 +286,14 @@ export default function PerfilPage() {
         <h2 className="text-sm font-semibold text-text-primary">Técnicas dominadas</h2>
         {CATALOGO_TECNICAS.map((cat) => (
           <div key={cat.categoria} className="flex flex-col gap-1.5">
-            <h3 className="text-xs font-semibold text-text-secondary">{cat.categoria}</h3>
+            <h3 className="text-sm font-semibold text-text-secondary">{cat.categoria}</h3>
             <div className="flex flex-wrap gap-2">
               {cat.tecnicas.map((t) => (
                 <button
                   key={t.clave}
                   type="button"
                   onClick={() => onClickTecnica(t.clave, t.etiqueta)}
-                  className={`rounded-app px-3 py-1 text-xs ${
+                  className={`rounded-app px-3 py-1 text-sm ${
                     perfil.tecnicas.includes(t.clave)
                       ? "btn-hero"
                       : "border border-border text-text-secondary"
@@ -309,7 +309,7 @@ export default function PerfilPage() {
 
       <div className="card -mx-4 flex flex-col gap-3 px-3 py-4">
         <h2 className="text-sm font-semibold text-text-primary">Distancias Alcanzadas</h2>
-        <p className="text-xs text-text-secondary">
+        <p className="text-sm text-text-secondary">
           Cada hito se desbloquea al completar esa distancia en una sola ruta — no se suman
           varias sesiones.
         </p>
@@ -324,7 +324,7 @@ export default function PerfilPage() {
               return (
                 <div
                   key={km}
-                  className={`flex items-center gap-1.5 rounded-app px-3 py-1 text-xs ${
+                  className={`flex items-center gap-1.5 rounded-app px-3 py-1 text-sm ${
                     desbloqueado
                       ? "btn-hero"
                       : disponible
@@ -352,7 +352,7 @@ export default function PerfilPage() {
       <div className="card -mx-4 flex flex-col gap-2 px-3 py-4">
         <h2 className="text-sm font-semibold text-text-primary">Reconocimientos recibidos</h2>
         {perfil.reconocimientos.length === 0 && (
-          <p className="text-xs text-text-secondary">Todavía no tienes reconocimientos.</p>
+          <p className="text-sm text-text-secondary">Todavía no tienes reconocimientos.</p>
         )}
         {(mostrarTodosReconocimientos
           ? perfil.reconocimientos
@@ -360,7 +360,7 @@ export default function PerfilPage() {
         ).map((r) => (
           <div key={r.id} className="flex items-start gap-2">
             <Avatar fotoUrl={r.deFotoUrl} nombre={r.deNombre} tamano={32} />
-            <p className="text-xs text-text-secondary">
+            <p className="text-sm text-text-secondary">
               <span className="font-semibold text-text-primary">{r.deNombre}:</span> {r.texto}
               <span className="mt-0.5 block text-[10px] text-text-secondary/70">
                 {tiempoTranscurrido(r.createdAt)}
@@ -413,7 +413,7 @@ export default function PerfilPage() {
               )}
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium text-text-primary">{p.titulo}</p>
-                <p className="truncate text-xs text-text-secondary">{p.resena}</p>
+                <p className="truncate text-sm text-text-secondary">{p.resena}</p>
                 <p className="mt-1 text-[11px] text-text-muted">
                   {tiempoTranscurrido(p.createdAt)} · {p.reaccionesCount} me gusta
                 </p>
@@ -472,7 +472,7 @@ export default function PerfilPage() {
             </div>
 
             {recorridosFiltrados.length === 0 && (
-              <p className="text-xs text-text-secondary">
+              <p className="text-sm text-text-secondary">
                 No hay recorridos que coincidan con el filtro.
               </p>
             )}
@@ -484,21 +484,21 @@ export default function PerfilPage() {
                   className="grid grid-cols-4 gap-1.5 rounded-app border border-border bg-surface-2 px-2 py-2 text-center"
                 >
                   <div>
-                    <p className="text-xs text-text-primary">
+                    <p className="text-sm text-text-primary">
                       {new Date(r.createdAt).toLocaleDateString("es-CL")}
                     </p>
                     <p className="text-[10px] text-text-muted">fecha</p>
                   </div>
                   <div>
-                    <p className="text-xs text-text-primary">{r.distanciaKm.toFixed(2)} km</p>
+                    <p className="text-sm text-text-primary">{r.distanciaKm.toFixed(2)} km</p>
                     <p className="text-[10px] text-text-muted">distancia</p>
                   </div>
                   <div>
-                    <p className="text-xs text-text-primary">{Math.round(r.duracionSeg / 60)} min</p>
+                    <p className="text-sm text-text-primary">{Math.round(r.duracionSeg / 60)} min</p>
                     <p className="text-[10px] text-text-muted">tiempo</p>
                   </div>
                   <div>
-                    <p className={r.tipo === "ruta" ? "text-xs text-text-accent" : "text-xs text-text-primary"}>
+                    <p className={r.tipo === "ruta" ? "text-sm text-text-accent" : "text-sm text-text-primary"}>
                       {r.tipo === "ruta" ? "Ruta" : "Libre"}
                     </p>
                     <p className="text-[10px] text-text-muted">tipo</p>
