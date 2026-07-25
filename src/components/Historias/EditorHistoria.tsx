@@ -10,7 +10,7 @@ import {
   DURACION_MAXIMA_VIDEO_HISTORIA_SEG,
   type EstiloTextoHistoria,
 } from "@/lib/historias";
-import { sectorMasCercano } from "@/lib/sectores";
+import { reverseGeocodificar } from "@/lib/geocodificacion";
 import { SelectorUbicacion } from "@/components/SelectorUbicacion";
 import { useNoAutofill } from "@/lib/useNoAutofill";
 import { useSession } from "@/context/SessionContext";
@@ -90,13 +90,17 @@ export function EditorHistoria({
   const [mostrarRecorte, setMostrarRecorte] = useState(false);
   const [videoRecortadoBlob, setVideoRecortadoBlob] = useState<Blob | null>(null);
 
-  // Ubicación opcional: se autodetecta una vez al abrir el editor (mismo patrón
-  // ya usado en "Patinadores activos"/"Mis rutas" — sin geocoding externo, solo
-  // el sector conocido más cercano). El usuario puede quitarla si no la quiere.
+  // Ubicación opcional: se autodetecta una vez al abrir el editor, geocodificando
+  // la posición GPS real (Nominatim) en vez de un sector fijo — el usuario puede
+  // quitarla o cambiarla si no la quiere.
   useEffect(() => {
     if (!navigator.geolocation) return;
     navigator.geolocation.getCurrentPosition(
-      (pos) => setUbicacion(sectorMasCercano(pos.coords.latitude, pos.coords.longitude)),
+      (pos) => {
+        reverseGeocodificar(pos.coords.latitude, pos.coords.longitude).then((lugar) => {
+          if (lugar) setUbicacion(lugar.nombre);
+        });
+      },
       () => {
         // sin permiso o sin GPS: simplemente no se sugiere ubicación
       },
