@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { IconRefresh, IconX } from "@tabler/icons-react";
+import { IconRefresh, IconSparkles, IconX } from "@tabler/icons-react";
 import { DURACION_MAXIMA_VIDEO_HISTORIA_SEG } from "@/lib/historias";
 import { ANCHO_HISTORIA, ALTO_HISTORIA, FILTROS_FOTO, type FiltroFoto } from "@/components/Historias/FiltrosFoto";
 import { Toast } from "@/components/Toast";
@@ -15,6 +15,23 @@ export function soportaCamaraEnVivo(): boolean {
 }
 
 const TIPOS_VIDEO_CANDIDATOS = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
+
+interface Embellecimiento {
+  id: string;
+  nombre: string;
+  css: string;
+}
+
+// Separado de FILTROS_FOTO (color) a propósito: son dos decisiones distintas
+// para quien graba — "qué tono" vs. "cuánto suavizar la piel" — así que
+// viven en controles distintos (fila abajo vs. botón aparte a la derecha)
+// en vez de mezclarse en una sola lista larga.
+const EMBELLECIMIENTOS: Embellecimiento[] = [
+  { id: "ninguno", nombre: "Ninguno", css: "none" },
+  { id: "ligero", nombre: "Ligero", css: "blur(0.4px) brightness(1.05) contrast(0.95) saturate(1.05)" },
+  { id: "medio", nombre: "Medio", css: "blur(0.8px) brightness(1.08) contrast(0.9) saturate(1.08)" },
+  { id: "glow", nombre: "Glow", css: "blur(0.5px) brightness(1.12) contrast(0.88) sepia(0.1) saturate(1.15)" },
+];
 
 // Solo se pide facingMode — sin width/height/aspectRatio "ideal": pedir una
 // proporción angosta (9:16) hace que varios celulares apliquen un recorte de
@@ -66,6 +83,17 @@ export function CamaraHistoria({
   const [camaraFrontal, setCamaraFrontal] = useState(false);
   const [sinCamaraAlterna, setSinCamaraAlterna] = useState(false);
   const [filtro, setFiltro] = useState<FiltroFoto>(FILTROS_FOTO[0]);
+  const [embellecimiento, setEmbellecimiento] = useState<Embellecimiento>(EMBELLECIMIENTOS[0]);
+  const [mostrarEmbellecimiento, setMostrarEmbellecimiento] = useState(false);
+
+  // El filtro de color y el embellecimiento son dos funciones CSS `filter`
+  // independientes — se combinan en un solo string para dibujar (ctx.filter
+  // solo acepta un valor). "none" se descarta de la combinación porque mezclado
+  // con otras funciones ya no es válido como "sin filtro".
+  function filtroCombinado(): string {
+    const partes = [filtro.css, embellecimiento.css].filter((c) => c !== "none");
+    return partes.length > 0 ? partes.join(" ") : "none";
+  }
 
   useEffect(() => {
     let cancelado = false;
@@ -143,7 +171,7 @@ export function CamaraHistoria({
     canvas.height = video.videoHeight;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    ctx.filter = filtro.css;
+    ctx.filter = filtroCombinado();
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     canvas.toBlob(
       (blob) => {
@@ -192,7 +220,7 @@ export function CamaraHistoria({
         const altoDestino = video.videoHeight * escala;
         const x = (ANCHO_HISTORIA - anchoDestino) / 2;
         const y = (ALTO_HISTORIA - altoDestino) / 2;
-        ctx.filter = filtro.css;
+        ctx.filter = filtroCombinado();
         ctx.drawImage(video, x, y, anchoDestino, altoDestino);
       } else {
         ctx.fillStyle = "#000000";
@@ -266,7 +294,7 @@ export function CamaraHistoria({
           className="absolute inset-0 z-0 h-full w-full object-cover"
           style={{
             ...(camaraFrontal ? { transform: "scaleX(-1)" } : null),
-            filter: filtro.css,
+            filter: filtroCombinado(),
           }}
         />
       )}
@@ -305,6 +333,40 @@ export function CamaraHistoria({
           <div className="w-9" />
         )}
       </div>
+
+      {!error && !grabando && (
+        <div className="absolute right-3 top-16 z-10 flex items-center gap-2">
+          {mostrarEmbellecimiento && (
+            <div className="flex flex-col gap-1 rounded-app bg-black/55 p-1" data-no-swipe>
+              {EMBELLECIMIENTOS.map((e) => (
+                <button
+                  key={e.id}
+                  type="button"
+                  onClick={() => {
+                    setEmbellecimiento(e);
+                    setMostrarEmbellecimiento(false);
+                  }}
+                  className={`whitespace-nowrap rounded-app px-2.5 py-1 text-[11px] ${
+                    embellecimiento.id === e.id ? "bg-fill-primary text-on-primary" : "text-white"
+                  }`}
+                >
+                  {e.nombre}
+                </button>
+              ))}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => setMostrarEmbellecimiento((v) => !v)}
+            aria-label="Embellecimiento"
+            className={`flex h-9 w-9 items-center justify-center rounded-full text-white ${
+              embellecimiento.id !== "ninguno" ? "bg-fill-primary" : "bg-black/40"
+            }`}
+          >
+            <IconSparkles size={18} />
+          </button>
+        </div>
+      )}
 
       {!error && (
         <div className="absolute inset-x-0 bottom-0 z-10 flex flex-col items-center gap-4 p-4 pb-6">
