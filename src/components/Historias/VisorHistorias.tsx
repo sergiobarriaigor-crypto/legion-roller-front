@@ -26,6 +26,7 @@ import { estiloVisualTexto } from "@/components/Historias/TextoSobreImagen";
 import { estiloVisualMencion } from "@/components/Historias/MencionSobreImagen";
 import { PanelSocialHistoria } from "@/components/Historias/PanelSocialHistoria";
 import { PanelEcosHistoria } from "@/components/Historias/PanelEcosHistoria";
+import { useNoAutofill } from "@/lib/useNoAutofill";
 
 const DURACION_FOTO_MS = 5000;
 const UMBRAL_SWIPE_CIERRE_PX = 80;
@@ -152,6 +153,7 @@ export function VisorHistorias({
   // cancelando justo la pausa que el foco acababa de activar.
   const [escribiendoMensaje, setEscribiendoMensaje] = useState(false);
   const [mensaje, setMensaje] = useState("");
+  const noAutofillMensaje = useNoAutofill();
   const [mensajeEnviado, setMensajeEnviado] = useState(false);
   const [burbujas, setBurbujas] = useState<BurbujaFlotante[]>([]);
   // Cuántos comentarios en vivo se quedaron sin lugar en la pila (más de
@@ -821,9 +823,13 @@ export function VisorHistorias({
               ) : (
                 <input
                   autoComplete="off"
+                  readOnly={noAutofillMensaje.readOnly}
                   value={mensaje}
                   onChange={(e) => setMensaje(e.target.value)}
-                  onFocus={() => setEscribiendoMensaje(true)}
+                  onFocus={() => {
+                    noAutofillMensaje.onFocus();
+                    setEscribiendoMensaje(true);
+                  }}
                   onBlur={() => setEscribiendoMensaje(false)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") enviarMensajeHistoria();

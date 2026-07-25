@@ -17,6 +17,7 @@ import {
   OPCIONES_FILTRO_FECHA,
   type FiltroFecha,
 } from "@/lib/tiempo";
+import { useNoAutofill } from "@/lib/useNoAutofill";
 
 interface RecorridoResumen {
   id: number;
@@ -36,6 +37,7 @@ export default function PerfilPage() {
   const [misRecorridos, setMisRecorridos] = useState<RecorridoResumen[]>([]);
   const [miEmergencia, setMiEmergencia] = useState<MiEmergencia | null>(null);
   const [nuevoEstado, setNuevoEstado] = useState("");
+  const noAutofillEstado = useNoAutofill();
   const [error, setError] = useState("");
   const [mostrarTodosReconocimientos, setMostrarTodosReconocimientos] = useState(false);
   const [mostrarTodosRecorridos, setMostrarTodosRecorridos] = useState(false);
@@ -241,6 +243,7 @@ export default function PerfilPage() {
           <input
             type="text"
             autoComplete="off"
+            {...noAutofillEstado}
             placeholder="¿Qué estás haciendo?"
             value={nuevoEstado}
             onChange={(e) => setNuevoEstado(e.target.value)}

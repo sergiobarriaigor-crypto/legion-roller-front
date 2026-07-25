@@ -6,6 +6,7 @@ import { IconX, IconChevronLeft } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
 import { useConversacion } from "@/hooks/useConversacion";
 import { BurbujaMensaje } from "@/components/Chat/BurbujaMensaje";
+import { useNoAutofill } from "@/lib/useNoAutofill";
 
 const MS_PAUSA_ESCRIBIENDO = 2000;
 
@@ -38,6 +39,7 @@ export function ChatFlotante({
   const pausaEscribiendoRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [texto, setTexto] = useState("");
+  const noAutofillMensaje = useNoAutofill();
 
   const { mensajes, error, enviando, escribiendo, enviar, notificarEscribiendo, estadoEnvio } =
     useConversacion({ sala, token, propioId });
@@ -145,6 +147,7 @@ export function ChatFlotante({
             <input
               type="text"
               autoComplete="off"
+              {...noAutofillMensaje}
               placeholder="Escribe un mensaje..."
               value={texto}
               onChange={(e) => onCambioTexto(e.target.value)}

@@ -13,6 +13,7 @@ import { tiempoTranscurrido } from "@/lib/tiempo";
 import { primerNombre, separarMencion } from "@/lib/texto";
 import { useSession } from "@/context/SessionContext";
 import { Avatar } from "@/components/Avatar";
+import { useNoAutofill } from "@/lib/useNoAutofill";
 
 // Reseñas de una ficha de emprendedor — mismo comportamiento que
 // ComentariosPost.tsx: visible para cualquiera (no es un inbox privado del
@@ -36,6 +37,7 @@ export function ComentariosEmprendedor({
   const { sesion } = useSession();
   const [resenas, setResenas] = useState<ResenaEmprendedorDetalle[] | null>(null);
   const [texto, setTexto] = useState("");
+  const noAutofill = useNoAutofill();
   // `id` siempre es la raíz del hilo (no la reseña que se está respondiendo)
   // — mismo patrón que ComentariosPost.tsx.
   const [respondiendoA, setRespondiendoA] = useState<{ id: number; nombre: string; mencion: boolean } | null>(
@@ -193,6 +195,7 @@ export function ComentariosEmprendedor({
           <input
             type="text"
             autoComplete="off"
+            {...noAutofill}
             placeholder={respondiendoA ? "Escribe una respuesta..." : "Escribe una reseña..."}
             value={texto}
             onChange={(e) => setTexto(e.target.value)}

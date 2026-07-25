@@ -36,6 +36,7 @@ import { SelectorUbicacionChat } from "@/components/Chat/SelectorUbicacionChat";
 import { SelectorRutaMensaje } from "@/components/Chat/SelectorRutaMensaje";
 import { PopoverClima } from "@/components/Chat/PopoverClima";
 import { Avatar } from "@/components/Avatar";
+import { useNoAutofill } from "@/lib/useNoAutofill";
 
 const MS_PAUSA_ESCRIBIENDO = 2000;
 const IMAGEN_CHAT_GRUPAL = "/avatar-chat-grupal.png";
@@ -67,6 +68,7 @@ export default function ConversacionPage() {
   const [otro, setOtro] = useState<OtroParticipante | null>(null);
   const [estado, setEstado] = useState<EstadoMiembro | null>(null);
   const [texto, setTexto] = useState("");
+  const noAutofillMensaje = useNoAutofill();
   const [mensajeMenu, setMensajeMenu] = useState<MensajeChat | null>(null);
   const [menuRect, setMenuRect] = useState<DOMRect | null>(null);
   const [posicionMenu, setPosicionMenu] = useState<{ left: number; barTop: number; subTop: number } | null>(
@@ -396,6 +398,7 @@ export default function ConversacionPage() {
         <input
           type="text"
           autoComplete="off"
+          {...noAutofillMensaje}
           placeholder="Escribe un mensaje..."
           value={texto}
           onChange={(e) => onCambioTexto(e.target.value)}

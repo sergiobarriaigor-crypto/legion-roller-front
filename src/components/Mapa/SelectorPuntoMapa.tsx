@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { MapContainer, TileLayer, Marker, useMap, useMapEvents } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+import { useNoAutofill } from "@/lib/useNoAutofill";
 
 const CENTRO_DEFECTO: [number, number] = [-41.4, -72.96];
 
@@ -61,6 +62,7 @@ export function SelectorPuntoMapa({
   const [busqueda, setBusqueda] = useState("");
   const [resultados, setResultados] = useState<ResultadoBusqueda[]>([]);
   const [buscando, setBuscando] = useState(false);
+  const noAutofill = useNoAutofill();
 
   const centro: [number, number] = lat !== null && lon !== null ? [lat, lon] : CENTRO_DEFECTO;
 
@@ -92,6 +94,7 @@ export function SelectorPuntoMapa({
         <input
           type="text"
           autoComplete="off"
+          {...noAutofill}
           placeholder="Buscar dirección o lugar..."
           value={busqueda}
           onChange={(e) => setBusqueda(e.target.value)}

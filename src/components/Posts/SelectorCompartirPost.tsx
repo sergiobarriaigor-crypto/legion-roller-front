@@ -6,6 +6,7 @@ import { apiGet } from "@/lib/api";
 import { compartirPostAUsuarios, type Post } from "@/lib/posts";
 import type { MiembroSimple } from "@/lib/chat";
 import { Avatar } from "@/components/Avatar";
+import { useNoAutofill } from "@/lib/useNoAutofill";
 
 const MAX_DESTINATARIOS_COMPARTIR = 5;
 
@@ -32,6 +33,7 @@ export function SelectorCompartirPost({
 }) {
   const [miembros, setMiembros] = useState<MiembroSimple[]>([]);
   const [busqueda, setBusqueda] = useState("");
+  const noAutofill = useNoAutofill();
   const [seleccionados, setSeleccionados] = useState<number[]>([]);
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState("");
@@ -133,6 +135,7 @@ export function SelectorCompartirPost({
           <IconSearch size={16} className="text-white/60" />
           <input
             autoComplete="off"
+            {...noAutofill}
             value={busqueda}
             onChange={(e) => setBusqueda(e.target.value)}
             placeholder="Buscar integrante..."

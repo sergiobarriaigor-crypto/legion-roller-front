@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { IconMapPin, IconSearch, IconX } from "@tabler/icons-react";
 import { sectoresPorCercania, type SectorConDistancia } from "@/lib/sectores";
 import { buscarLugares } from "@/lib/geocodificacion";
+import { useNoAutofill } from "@/lib/useNoAutofill";
 
 // Selector de ubicación estilo Instagram, compartido por Post e Historias: al
 // abrir, detecta la posición actual y muestra los sectores conocidos
@@ -24,6 +25,7 @@ export function SelectorUbicacion({
   const [errorGps, setErrorGps] = useState<string | null>(null);
   const [resultadosBusqueda, setResultadosBusqueda] = useState<string[]>([]);
   const [buscando, setBuscando] = useState(false);
+  const noAutofill = useNoAutofill();
 
   function detectarUbicacion() {
     if (!navigator.geolocation) {
@@ -97,6 +99,7 @@ export function SelectorUbicacion({
           <input
             autoFocus
             autoComplete="off"
+            {...noAutofill}
             value={busqueda}
             onChange={(e) => setBusqueda(e.target.value)}
             placeholder="Buscar cualquier lugar de Chile..."

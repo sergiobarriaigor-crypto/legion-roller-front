@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { apiPost, ApiError } from "@/lib/api";
 import { ImageUploadCrop } from "@/components/ImageUploadCrop";
+import { useNoAutofill } from "@/lib/useNoAutofill";
 
 interface Props {
   onVolver: () => void;
@@ -34,6 +35,7 @@ function claveTieneMayuscula(v: string) {
 
 export function FormularioRegistro({ onVolver }: Props) {
   const [nombre, setNombre] = useState("");
+  const noAutofillNombre = useNoAutofill();
   const [correo, setCorreo] = useState("");
   const [fechaNacimiento, setFechaNacimiento] = useState("");
   const [clave, setClave] = useState("");
@@ -44,6 +46,7 @@ export function FormularioRegistro({ onVolver }: Props) {
   const [tocado, setTocado] = useState<Record<string, boolean>>({});
 
   const [codigo, setCodigo] = useState("");
+  const noAutofillCodigo = useNoAutofill();
   const [codigoEnviado, setCodigoEnviado] = useState(false);
   const [codigoDevHint, setCodigoDevHint] = useState("");
   const [correoVerificado, setCorreoVerificado] = useState(false);
@@ -192,6 +195,7 @@ export function FormularioRegistro({ onVolver }: Props) {
             <input
               type="text"
               autoComplete="off"
+              {...noAutofillNombre}
               placeholder="Nombre o apodo"
               value={nombre}
               onChange={(e) => setNombre(e.target.value)}
@@ -247,6 +251,7 @@ export function FormularioRegistro({ onVolver }: Props) {
                       type="text"
                       inputMode="numeric"
                       autoComplete="off"
+                      {...noAutofillCodigo}
                       maxLength={6}
                       placeholder="123456"
                       value={codigo}

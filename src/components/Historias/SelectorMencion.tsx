@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { IconSearch, IconX } from "@tabler/icons-react";
 import { apiGet } from "@/lib/api";
+import { useNoAutofill } from "@/lib/useNoAutofill";
 
 interface MiembroSimple {
   id: number;
@@ -24,6 +25,7 @@ export function SelectorMencion({
 }) {
   const [miembros, setMiembros] = useState<MiembroSimple[]>([]);
   const [busqueda, setBusqueda] = useState("");
+  const noAutofill = useNoAutofill();
 
   useEffect(() => {
     apiGet<MiembroSimple[]>("/chat/miembros", token)
@@ -49,6 +51,7 @@ export function SelectorMencion({
         <input
           autoFocus
           autoComplete="off"
+          {...noAutofill}
           value={busqueda}
           onChange={(e) => setBusqueda(e.target.value)}
           placeholder="Buscar integrante..."

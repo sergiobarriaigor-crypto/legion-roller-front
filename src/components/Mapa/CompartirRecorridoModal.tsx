@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { IconShare, IconUpload } from "@tabler/icons-react";
 import { apiUpload, apiPost, ApiError } from "@/lib/api";
 import { generarTarjetaRecorrido, type DatosTarjetaRecorrido } from "@/lib/tarjetaRecorrido";
+import { useNoAutofill } from "@/lib/useNoAutofill";
 
 type Estado = "editando" | "publicando";
 
@@ -20,6 +21,8 @@ export function CompartirRecorridoModal({
 }) {
   const [titulo, setTitulo] = useState("");
   const [comentario, setComentario] = useState("");
+  const noAutofillTitulo = useNoAutofill();
+  const noAutofillComentario = useNoAutofill();
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [blob, setBlob] = useState<Blob | null>(null);
   const [cargandoInicial, setCargandoInicial] = useState(true);
@@ -145,6 +148,7 @@ export function CompartirRecorridoModal({
         <input
           type="text"
           autoComplete="off"
+          {...noAutofillTitulo}
           placeholder="Título (opcional)"
           value={titulo}
           maxLength={60}
@@ -153,6 +157,7 @@ export function CompartirRecorridoModal({
         />
         <textarea
           autoComplete="off"
+          {...noAutofillComentario}
           placeholder="Un breve comentario (opcional)"
           value={comentario}
           maxLength={140}

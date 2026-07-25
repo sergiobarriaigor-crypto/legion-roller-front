@@ -5,6 +5,7 @@ import { IconCheck, IconSearch, IconX } from "@tabler/icons-react";
 import { apiGet } from "@/lib/api";
 import type { MiembroSimple } from "@/lib/chat";
 import { Avatar } from "@/components/Avatar";
+import { useNoAutofill } from "@/lib/useNoAutofill";
 
 const MAX_DESTINATARIOS_REENVIO = 5;
 
@@ -24,6 +25,7 @@ export function SelectorReenviarMensaje({
 }) {
   const [miembros, setMiembros] = useState<MiembroSimple[]>([]);
   const [busqueda, setBusqueda] = useState("");
+  const noAutofill = useNoAutofill();
   const [seleccionados, setSeleccionados] = useState<number[]>([]);
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState("");
@@ -82,6 +84,7 @@ export function SelectorReenviarMensaje({
           <IconSearch size={16} className="text-text-muted" />
           <input
             autoComplete="off"
+            {...noAutofill}
             value={busqueda}
             onChange={(e) => setBusqueda(e.target.value)}
             placeholder="Buscar integrante..."

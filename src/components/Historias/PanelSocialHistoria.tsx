@@ -14,6 +14,7 @@ import { tiempoTranscurrido } from "@/lib/tiempo";
 import { primerNombre, separarMencion } from "@/lib/texto";
 import { useSession } from "@/context/SessionContext";
 import { Avatar } from "@/components/Avatar";
+import { useNoAutofill } from "@/lib/useNoAutofill";
 
 type Vista = "reacciones" | "comentarios";
 
@@ -44,6 +45,7 @@ export function PanelSocialHistoria({
   const [reacciones, setReacciones] = useState<ReaccionHistoriaDetalle[] | null>(null);
   const [comentarios, setComentarios] = useState<ComentarioHistoriaDetalle[] | null>(null);
   const [texto, setTexto] = useState("");
+  const noAutofill = useNoAutofill();
   // `id` siempre es la raíz del hilo (no el comentario que se está
   // respondiendo): un hilo de respuestas se guarda plano, todas apuntando al
   // mismo comentario raíz vía `respuestaAId`, sin importar a cuál respuesta
@@ -252,6 +254,7 @@ export function PanelSocialHistoria({
           <div className="flex items-center gap-2">
             <input
               autoComplete="off"
+              {...noAutofill}
               value={texto}
               onChange={(e) => setTexto(e.target.value)}
               onKeyDown={(e) => {

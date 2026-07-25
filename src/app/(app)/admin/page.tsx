@@ -22,6 +22,7 @@ import { Avatar } from "@/components/Avatar";
 import { AjustarEncuadreFoto } from "@/components/AjustarEncuadreFoto";
 import { BarraFormatoTexto } from "@/components/BarraFormatoTexto";
 import { renderizarTextoFormateado } from "@/lib/textoFormateado";
+import { useNoAutofill } from "@/lib/useNoAutofill";
 
 const SelectorPuntoMapa = dynamic(
   () => import("@/components/Mapa/SelectorPuntoMapa").then((m) => m.SelectorPuntoMapa),
@@ -108,6 +109,10 @@ export default function AdminPage() {
   const [subTab, setSubTab] = useState<SubTab>("publicaciones");
   const [publicaciones, setPublicaciones] = useState<Publicacion[]>([]);
   const [form, setForm] = useState(FORM_VACIO);
+  const noAutofillTitulo = useNoAutofill();
+  const noAutofillTexto = useNoAutofill();
+  const noAutofillPuntoEncuentro = useNoAutofill();
+  const noAutofillCodigoAsistencia = useNoAutofill();
   const [fotos, setFotos] = useState<string[]>([]);
   const [subiendoFotos, setSubiendoFotos] = useState(false);
   const [encuadrando, setEncuadrando] = useState<{ index: number; url: string } | null>(null);
@@ -119,11 +124,13 @@ export default function AdminPage() {
   const [solicitudesEmprendedor, setSolicitudesEmprendedor] = useState<Emprendedor[]>([]);
   const [directorioImpulsa, setDirectorioImpulsa] = useState<Emprendedor[]>([]);
   const [filtroDirectorio, setFiltroDirectorio] = useState("");
+  const noAutofillFiltroDirectorio = useNoAutofill();
   const [emprendedorAEliminar, setEmprendedorAEliminar] = useState<Emprendedor | null>(null);
   const [eliminandoEmprendedor, setEliminandoEmprendedor] = useState(false);
   const [solicitudesRegistro, setSolicitudesRegistro] = useState<SolicitudRegistro[]>([]);
   const [miembros, setMiembros] = useState<Miembro[]>([]);
   const [filtroMiembros, setFiltroMiembros] = useState("");
+  const noAutofillFiltroMiembros = useNoAutofill();
   // Colapsada por defecto: con 50+ integrantes, mostrar la lista completa de
   // entrada hace carreta el panel entero. Buscar (filtroMiembros) la
   // despliega sola, sin necesidad de tocar "Mostrar" primero.
@@ -528,6 +535,7 @@ export default function AdminPage() {
             <input
               type="text"
               autoComplete="off"
+              {...noAutofillTitulo}
               placeholder="Título"
               value={form.titulo}
               onChange={(e) => setForm({ ...form, titulo: e.target.value })}
@@ -541,6 +549,7 @@ export default function AdminPage() {
             <textarea
               ref={textoRef}
               autoComplete="off"
+              {...noAutofillTexto}
               placeholder="Texto"
               value={form.texto}
               onChange={(e) => setForm({ ...form, texto: e.target.value })}
@@ -573,6 +582,7 @@ export default function AdminPage() {
                 <input
                   type="text"
                   autoComplete="off"
+                  {...noAutofillPuntoEncuentro}
                   placeholder="Punto de encuentro"
                   value={form.puntoEncuentro}
                   onChange={(e) => setForm({ ...form, puntoEncuentro: e.target.value })}
@@ -699,6 +709,7 @@ export default function AdminPage() {
                       <input
                         type="text"
                         autoComplete="off"
+                        {...noAutofillCodigoAsistencia}
                         placeholder="Código de asistencia"
                         value={form.codigoAsistencia}
                         onChange={(e) => setForm({ ...form, codigoAsistencia: e.target.value })}
@@ -1013,6 +1024,7 @@ export default function AdminPage() {
               <input
                 type="text"
                 autoComplete="off"
+                {...noAutofillFiltroDirectorio}
                 placeholder="Buscar por negocio o dueño..."
                 value={filtroDirectorio}
                 onChange={(e) => setFiltroDirectorio(e.target.value)}
@@ -1071,6 +1083,7 @@ export default function AdminPage() {
               <input
                 type="text"
                 autoComplete="off"
+                {...noAutofillFiltroMiembros}
                 placeholder="Buscar por nombre o teléfono..."
                 value={filtroMiembros}
                 onChange={(e) => setFiltroMiembros(e.target.value)}

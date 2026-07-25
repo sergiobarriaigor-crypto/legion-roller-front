@@ -11,6 +11,31 @@ import {
 } from "@/lib/publicaciones";
 import { CarruselFotos } from "@/components/CarruselFotos";
 import { renderizarTextoFormateado } from "@/lib/textoFormateado";
+import { useNoAutofill } from "@/lib/useNoAutofill";
+
+// Componente propio (no un input inline dentro del .map de publicaciones)
+// para que cada casilla tenga su propia instancia de useNoAutofill — un hook
+// no puede llamarse dentro de un .map directamente.
+function CampoCodigoAsistencia({
+  valor,
+  onCambiar,
+}: {
+  valor: string;
+  onCambiar: (valor: string) => void;
+}) {
+  const noAutofill = useNoAutofill();
+  return (
+    <input
+      type="text"
+      autoComplete="off"
+      {...noAutofill}
+      placeholder="Código de asistencia"
+      value={valor}
+      onChange={(e) => onCambiar(e.target.value)}
+      className="flex-1 rounded-app border border-border bg-surface-2 px-2 py-1 text-xs text-text-primary outline-none"
+    />
+  );
+}
 
 function textoVencimiento(p: Publicacion): string | null {
   if (!p.duracionHoras) return null;
@@ -210,15 +235,11 @@ export default function ComunidadPage() {
                         </button>
                       ) : (
                         <div className="flex gap-2">
-                          <input
-                            type="text"
-                            autoComplete="off"
-                            placeholder="Código de asistencia"
-                            value={codigosIngresados[p.id] ?? ""}
-                            onChange={(e) =>
-                              setCodigosIngresados((prev) => ({ ...prev, [p.id]: e.target.value }))
+                          <CampoCodigoAsistencia
+                            valor={codigosIngresados[p.id] ?? ""}
+                            onCambiar={(valor) =>
+                              setCodigosIngresados((prev) => ({ ...prev, [p.id]: valor }))
                             }
-                            className="flex-1 rounded-app border border-border bg-surface-2 px-2 py-1 text-xs text-text-primary outline-none"
                           />
                           <button
                             type="button"

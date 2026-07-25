@@ -6,6 +6,7 @@ import { IconMapPin, IconShare, IconUsers, IconVideo, IconHeart, IconHeartFilled
 import { AjustarEncuadreFoto } from "@/components/AjustarEncuadreFoto";
 import { useSession } from "@/context/SessionContext";
 import { useBorradorPost } from "@/context/BorradorPostContext";
+import { useNoAutofill } from "@/lib/useNoAutofill";
 import { apiGet, apiPost, apiDelete, apiUpload, ApiError } from "@/lib/api";
 import type { Post } from "@/lib/posts";
 import { CarruselFotos } from "@/components/CarruselFotos";
@@ -117,6 +118,8 @@ export default function PostPage() {
   // cambio de pestaña con swipe y vuelta — de lo contrario Next.js desmonta
   // esta página al navegar y el borrador se perdía apenas se salía de Post.
   const { borrador, setBorrador, limpiarBorrador } = useBorradorPost();
+  const noAutofillTitulo = useNoAutofill();
+  const noAutofillResena = useNoAutofill();
   const { titulo, resena } = borrador;
   const resenaRef = useRef<HTMLTextAreaElement>(null);
   function setTitulo(valor: string) {
@@ -404,6 +407,7 @@ export default function PostPage() {
               <input
                 type="text"
                 autoComplete="off"
+                {...noAutofillTitulo}
                 placeholder="Título"
                 value={titulo}
                 onChange={(e) => setTitulo(e.target.value)}
@@ -412,6 +416,7 @@ export default function PostPage() {
               <textarea
                 ref={resenaRef}
                 autoComplete="off"
+                {...noAutofillResena}
                 placeholder="Cuéntanos tu experiencia..."
                 value={resena}
                 onChange={(e) => setResena(e.target.value)}

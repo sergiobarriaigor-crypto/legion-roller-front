@@ -15,6 +15,7 @@ import { tiempoTranscurrido } from "@/lib/tiempo";
 import { primerNombre, separarMencion } from "@/lib/texto";
 import { useSession } from "@/context/SessionContext";
 import { Avatar } from "@/components/Avatar";
+import { useNoAutofill } from "@/lib/useNoAutofill";
 
 type Vista = "reacciones" | "comentarios";
 
@@ -45,6 +46,7 @@ export function ComentariosPost({
   const [reacciones, setReacciones] = useState<ReaccionPostDetalle[] | null>(null);
   const [comentarios, setComentarios] = useState<ComentarioPostDetalle[] | null>(null);
   const [texto, setTexto] = useState("");
+  const noAutofill = useNoAutofill();
   // `id` siempre es la raíz del hilo (no el comentario que se está
   // respondiendo) — mismo patrón que PanelSocialHistoria.tsx: un hilo de
   // respuestas se guarda plano bajo el comentario raíz, y "mencion" marca si
@@ -242,6 +244,7 @@ export function ComentariosPost({
             <input
               type="text"
               autoComplete="off"
+              {...noAutofill}
               placeholder={respondiendoA ? "Escribe una respuesta..." : "Escribe un comentario..."}
               value={texto}
               onChange={(e) => setTexto(e.target.value)}

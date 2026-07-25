@@ -23,6 +23,7 @@ import { notificarme } from "@/lib/push";
 import { PatinadoresActivosPanel } from "@/components/Mapa/PatinadoresActivosPanel";
 import { MisRutasPanel } from "@/components/Mapa/MisRutasPanel";
 import { ChatFlotante } from "@/components/Mapa/ChatFlotante";
+import { useNoAutofill } from "@/lib/useNoAutofill";
 
 const MAX_CARACTERES_RECONOCIMIENTO = 100;
 
@@ -336,6 +337,7 @@ export function MapaView() {
   const [miEstadoTexto, setMiEstadoTexto] = useState<string | null>(null);
   const [mostrarEditorEstado, setMostrarEditorEstado] = useState(false);
   const [textoEstadoForm, setTextoEstadoForm] = useState("");
+  const noAutofillEstado = useNoAutofill();
   const [guardandoEstado, setGuardandoEstado] = useState(false);
 
   const [avisoInactividad, setAvisoInactividad] = useState(false);
@@ -350,6 +352,7 @@ export function MapaView() {
   const [reconocerA, setReconocerA] = useState<OtroMiembro | null>(null);
   const [clusterAbierto, setClusterAbierto] = useState<OtroMiembro[] | null>(null);
   const [textoReconocimiento, setTextoReconocimiento] = useState("");
+  const noAutofillReconocimiento = useNoAutofill();
   const [enviandoReconocimiento, setEnviandoReconocimiento] = useState(false);
   const [reconocimientoEnviado, setReconocimientoEnviado] = useState(false);
 
@@ -1313,6 +1316,7 @@ export function MapaView() {
             <h2 className="text-sm font-semibold text-text-accent">Tu estado en el mapa</h2>
             <textarea
               autoComplete="off"
+              {...noAutofillEstado}
               value={textoEstadoForm}
               onChange={(e) => setTextoEstadoForm(e.target.value.slice(0, 50))}
               maxLength={50}
@@ -1372,6 +1376,7 @@ export function MapaView() {
                   type="text"
                   autoFocus
                   autoComplete="off"
+                  {...noAutofillReconocimiento}
                   placeholder="Ej: Tremendo avance 💪"
                   value={textoReconocimiento}
                   maxLength={MAX_CARACTERES_RECONOCIMIENTO}

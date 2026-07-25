@@ -27,6 +27,7 @@ import { SelectorCompartirEmprendedor } from "@/components/Impulsa/SelectorCompa
 import { generarTarjetaCompartirEmprendedor } from "@/lib/tarjetaEmprendedor";
 import { BarraFormatoTexto } from "@/components/BarraFormatoTexto";
 import { renderizarTextoFormateado } from "@/lib/textoFormateado";
+import { useNoAutofill } from "@/lib/useNoAutofill";
 
 type SubTab = "directorio" | "ficha";
 
@@ -98,6 +99,15 @@ export default function ImpulsaPage() {
   const [misReacciones, setMisReacciones] = useState<number[]>([]);
   const [miFicha, setMiFicha] = useState<Emprendedor | null>(null);
   const [form, setForm] = useState(FICHA_VACIA);
+  const noAutofillNombreNegocio = useNoAutofill();
+  const noAutofillRubro = useNoAutofill();
+  const noAutofillDescripcion = useNoAutofill();
+  const noAutofillContacto = useNoAutofill();
+  const noAutofillUbicacion = useNoAutofill();
+  const noAutofillInstagram = useNoAutofill();
+  const noAutofillFacebook = useNoAutofill();
+  const noAutofillTiktok = useNoAutofill();
+  const noAutofillAnuncio = useNoAutofill();
   const [fotos, setFotos] = useState<string[]>([]);
   const [subiendoFotos, setSubiendoFotos] = useState(false);
   const [encuadrando, setEncuadrando] = useState<{ index: number; url: string } | null>(null);
@@ -549,6 +559,7 @@ export default function ImpulsaPage() {
             <input
               type="text"
               autoComplete="off"
+              {...noAutofillNombreNegocio}
               placeholder="Nombre del negocio"
               value={form.nombreNegocio}
               onChange={(e) => setForm({ ...form, nombreNegocio: e.target.value })}
@@ -557,6 +568,7 @@ export default function ImpulsaPage() {
             <input
               type="text"
               autoComplete="off"
+              {...noAutofillRubro}
               placeholder="Rubro"
               value={form.rubro}
               onChange={(e) => setForm({ ...form, rubro: e.target.value })}
@@ -570,6 +582,7 @@ export default function ImpulsaPage() {
             <textarea
               ref={descripcionRef}
               autoComplete="off"
+              {...noAutofillDescripcion}
               placeholder="Descripción"
               value={form.descripcion}
               onChange={(e) => setForm({ ...form, descripcion: e.target.value })}
@@ -579,6 +592,7 @@ export default function ImpulsaPage() {
             <input
               type="text"
               autoComplete="off"
+              {...noAutofillContacto}
               placeholder="Contacto (teléfono, whatsapp, etc) (opcional)"
               value={form.contacto}
               onChange={(e) => setForm({ ...form, contacto: e.target.value })}
@@ -587,6 +601,7 @@ export default function ImpulsaPage() {
             <input
               type="text"
               autoComplete="off"
+              {...noAutofillUbicacion}
               placeholder="Ubicación (opcional)"
               value={form.ubicacion}
               onChange={(e) => setForm({ ...form, ubicacion: e.target.value })}
@@ -595,6 +610,7 @@ export default function ImpulsaPage() {
             <input
               type="text"
               autoComplete="off"
+              {...noAutofillInstagram}
               placeholder="Instagram"
               value={form.instagram}
               onChange={(e) => setForm({ ...form, instagram: e.target.value })}
@@ -603,6 +619,7 @@ export default function ImpulsaPage() {
             <input
               type="text"
               autoComplete="off"
+              {...noAutofillFacebook}
               placeholder="Facebook (opcional)"
               value={form.facebook}
               onChange={(e) => setForm({ ...form, facebook: e.target.value })}
@@ -611,6 +628,7 @@ export default function ImpulsaPage() {
             <input
               type="text"
               autoComplete="off"
+              {...noAutofillTiktok}
               placeholder="TikTok (opcional)"
               value={form.tiktok}
               onChange={(e) => setForm({ ...form, tiktok: e.target.value })}
@@ -707,6 +725,7 @@ export default function ImpulsaPage() {
                   <input
                     type="text"
                     autoComplete="off"
+                    {...noAutofillAnuncio}
                     placeholder="Nuevo anuncio o promo corta"
                     value={nuevoAnuncio}
                     onChange={(e) => setNuevoAnuncio(e.target.value)}

@@ -12,6 +12,7 @@ import {
 } from "@/lib/historias";
 import { sectorMasCercano } from "@/lib/sectores";
 import { SelectorUbicacion } from "@/components/SelectorUbicacion";
+import { useNoAutofill } from "@/lib/useNoAutofill";
 import { useSession } from "@/context/SessionContext";
 import { TextoSobreImagen } from "@/components/Historias/TextoSobreImagen";
 import { BarraTextoHistoria } from "@/components/Historias/BarraTextoHistoria";
@@ -80,6 +81,7 @@ export function EditorHistoria({
   const [mostrarSelectorMencion, setMostrarSelectorMencion] = useState(false);
   const [mostrarInputTexto, setMostrarInputTexto] = useState(false);
   const [borradorTexto, setBorradorTexto] = useState("");
+  const noAutofillTexto = useNoAutofill();
   const [ubicacion, setUbicacion] = useState<string | undefined>(undefined);
   const [mostrarSelectorUbicacion, setMostrarSelectorUbicacion] = useState(false);
   const [error, setError] = useState("");
@@ -368,6 +370,7 @@ export function EditorHistoria({
                 <textarea
                   autoFocus
                   autoComplete="off"
+                  {...noAutofillTexto}
                   value={borradorTexto}
                   onChange={(e) => setBorradorTexto(e.target.value.slice(0, 200))}
                   placeholder="Escribe algo..."
