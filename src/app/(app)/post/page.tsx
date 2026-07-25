@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { IconMapPin, IconShare, IconUsers, IconVideo, IconHeart, IconHeartFilled, IconCrop } from "@tabler/icons-react";
 import { AjustarEncuadreFoto } from "@/components/AjustarEncuadreFoto";
 import { useSession } from "@/context/SessionContext";
+import { useBorradorPost } from "@/context/BorradorPostContext";
 import { apiGet, apiPost, apiDelete, apiUpload, ApiError } from "@/lib/api";
 import type { Post } from "@/lib/posts";
 import { CarruselFotos } from "@/components/CarruselFotos";
@@ -111,8 +112,30 @@ export default function PostPage() {
   const [cargando, setCargando] = useState(true);
 
   const [mostrarCompose, setMostrarCompose] = useState(false);
-  const [titulo, setTitulo] = useState("");
-  const [resena, setResena] = useState("");
+  // El título/reseña viven en un contexto por encima de las 5 pestañas (ver
+  // BorradorPostContext) en vez de useState local, para que sobrevivan un
+  // cambio de pestaña con swipe y vuelta — de lo contrario Next.js desmonta
+  // esta página al navegar y el borrador se perdía apenas se salía de Post.
+  const { borrador, setBorrador, limpiarBorrador } = useBorradorPost();
+  const { titulo, resena } = borrador;
+  const resenaRef = useRef<HTMLTextAreaElement>(null);
+  function setTitulo(valor: string) {
+    setBorrador({ ...borrador, titulo: valor });
+  }
+  function setResena(valor: string) {
+    setBorrador({ ...borrador, resena: valor });
+  }
+  // Auto-crece el cuadro para que ocupe siempre el alto exacto del texto
+  // escrito (mismo truco que el campo "Descripción" de Impulsa: resetear a
+  // "auto" para poder encogerse, medir scrollHeight y fijarlo) — corre tanto
+  // al escribir como al reabrir el compositor, así que si el borrador viene
+  // restaurado de otra pestaña, el cuadro ya aparece con el tamaño correcto.
+  useEffect(() => {
+    const el = resenaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [resena, mostrarCompose]);
   const [ubicacion, setUbicacion] = useState<string | undefined>(undefined);
   const [mostrarSelectorUbicacion, setMostrarSelectorUbicacion] = useState(false);
   const [tipoMedia, setTipoMedia] = useState<"foto" | "video" | null>(null);
@@ -213,8 +236,7 @@ export default function PostPage() {
   }
 
   function limpiarCompose() {
-    setTitulo("");
-    setResena("");
+    limpiarBorrador();
     setUbicacion(undefined);
     setTipoMedia(null);
     setFotos([]);
@@ -387,11 +409,12 @@ export default function PostPage() {
                 className="rounded-app border border-border bg-surface-2 px-3 py-2 text-text-primary outline-none"
               />
               <textarea
+                ref={resenaRef}
                 placeholder="Cuéntanos tu experiencia..."
                 value={resena}
                 onChange={(e) => setResena(e.target.value)}
                 rows={3}
-                className="rounded-app border border-border bg-surface-2 px-3 py-2 text-text-primary outline-none"
+                className="resize-none overflow-hidden rounded-app border border-border bg-surface-2 px-3 py-2 text-text-primary outline-none"
               />
 
               {ubicacion ? (

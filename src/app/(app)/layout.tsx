@@ -7,6 +7,7 @@ import { BottomNav } from "@/components/BottomNav";
 import { EmergenciaBanner } from "@/components/EmergenciaBanner";
 import { SwipeNavigator } from "@/components/SwipeNavigator";
 import { useSession } from "@/context/SessionContext";
+import { BorradorPostProvider } from "@/context/BorradorPostContext";
 import { RUTAS_RESTRINGIDAS_VISITANTE } from "@/lib/session";
 
 export default function AppGroupLayout({
@@ -68,7 +69,9 @@ export default function AppGroupLayout({
         </div>
       )}
 
-      <SwipeNavigator>{children}</SwipeNavigator>
+      <BorradorPostProvider>
+        <SwipeNavigator>{children}</SwipeNavigator>
+      </BorradorPostProvider>
 
       <BottomNav />
     </div>
