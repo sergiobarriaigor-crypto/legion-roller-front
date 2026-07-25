@@ -514,6 +514,33 @@ export function MapaView() {
     avisoVelocidadRef.current = false;
   }
 
+  // Centrado inicial: apenas se abre el Mapa se pide la posición real UNA
+  // sola vez (getCurrentPosition, no watchPosition) para centrar la cámara
+  // ahí en vez de quedarse en CENTRO_DEFECTO (Puerto Montt/Varas) — así
+  // alguien en Valdivia ve el mapa centrado en Valdivia desde el primer
+  // instante, sin tener que activar "Patinando"/"Estoy en ruta". A
+  // diferencia del efecto de abajo, esto nunca llama a /mapa/patinando ni
+  // guarda nada en el backend: solo mueve la cámara local, así que no hace
+  // visible al usuario para nadie más (eso solo pasa al activar un modo).
+  // Se aborta si para cuando llega la respuesta ya hay un modo activo o una
+  // vista guardada (`ultimaVistaMapa`), para no pelear con esos flujos.
+  useEffect(() => {
+    if (modoRef.current || ultimaVistaMapa || !navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        if (modoRef.current || ultimaVistaMapa || !mapRef.current) return;
+        mapRef.current.flyTo(
+          [pos.coords.latitude, pos.coords.longitude],
+          ZOOM_CENTRADO_AUTOMATICO,
+        );
+      },
+      () => {
+        // sin permiso o sin señal: el mapa se queda en el centro por defecto
+      },
+      { timeout: 8000 },
+    );
+  }, []);
+
   // GPS: solo se activa mientras haya un modo seleccionado (privacidad primero).
   // Al desactivar un modo, la posición se borra de inmediato y el navegador deja
   // de usar el GPS para esta función.
