@@ -8,6 +8,7 @@ import { TarjetaRuta } from "@/components/Chat/TarjetaRuta";
 
 interface Recorrido {
   id: number;
+  mapeado: boolean;
   distanciaKm: number;
   duracionSeg: number;
   puntos: PuntoGps[];
@@ -30,7 +31,9 @@ export function SelectorRutaMensaje({
 
   useEffect(() => {
     apiGet<Recorrido[]>("/mapa/recorridos", token)
-      .then(setRecorridos)
+      // No tiene sentido compartir por chat una ruta sin trazado guardado
+      // ("Patinar sin mapear" — ver MapaView.tsx/mapa.service.ts).
+      .then((lista) => setRecorridos(lista.filter((r) => r.mapeado && r.puntos.length > 0)))
       .catch((err) => setError(err instanceof ApiError ? err.message : "No se pudieron cargar tus rutas."));
   }, [token]);
 

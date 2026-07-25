@@ -19,6 +19,7 @@ import { Toast } from "@/components/Toast";
 interface Recorrido {
   id: number;
   tipo: string;
+  mapeado: boolean;
   distanciaKm: number;
   duracionSeg: number;
   createdAt: string;
@@ -142,6 +143,83 @@ function FichaRecorrido({
   const [mostrarCompartir, setMostrarCompartir] = useState(false);
 
   const puntos = recorrido.puntos;
+  // "Patinar sin mapear": el backend nunca entrega un trazado real para estas
+  // filas (puntos llega vacío) — no hay mapa/miniatura/Compartir que mostrar.
+  const sinTrazado = !recorrido.mapeado || puntos.length === 0;
+
+  const fechaCompleta = new Date(recorrido.createdAt).toLocaleDateString("es-CL", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+
+  async function confirmarEliminar() {
+    setEliminando(true);
+    try {
+      await onEliminar();
+    } finally {
+      setEliminando(false);
+    }
+  }
+
+  if (sinTrazado) {
+    return (
+      <div className="flex flex-col gap-3">
+        <div className="flex items-start justify-between gap-2">
+          <p className="text-xs capitalize text-text-secondary">{fechaCompleta}</p>
+          <BotonFavorito favorito={recorrido.favorito} onClick={onToggleFavorito} size={22} />
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <TarjetaStat etiqueta="Distancia" valor={`${recorrido.distanciaKm.toFixed(2)} km`} destacada />
+          <TarjetaStat etiqueta="Tiempo total" valor={`${Math.round(recorrido.duracionSeg / 60)} min`} />
+        </div>
+
+        <p className="rounded-app border border-white/10 bg-black/40 p-3 text-center text-xs text-text-secondary backdrop-blur-sm">
+          Esta actividad no tiene un trazado guardado — se patinó sin mapear.
+        </p>
+
+        <button
+          type="button"
+          onClick={() => setConfirmandoEliminar(true)}
+          className="flex items-center justify-center gap-1.5 rounded-app border border-border px-3 py-2 text-xs text-text-secondary"
+        >
+          <IconTrash size={14} />
+          Eliminar recorrido
+        </button>
+
+        {confirmandoEliminar && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-6">
+            <div className="card flex w-full max-w-xs flex-col gap-3 p-5">
+              <h2 className="text-sm font-semibold text-text-accent">Eliminar recorrido</h2>
+              <p className="text-xs text-text-secondary">
+                ¿Seguro que quieres eliminar este recorrido? Esta acción no se puede deshacer.
+              </p>
+              <div className="flex flex-col gap-2">
+                <button
+                  type="button"
+                  disabled={eliminando}
+                  onClick={confirmarEliminar}
+                  className="rounded-app bg-red-700 px-4 py-2 text-sm text-white disabled:opacity-50"
+                >
+                  {eliminando ? "Eliminando..." : "Sí, eliminar"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmandoEliminar(false)}
+                  className="text-xs text-text-secondary underline"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   const bounds: [[number, number], [number, number]] = [
     [Math.min(...puntos.map((p) => p.lat)), Math.min(...puntos.map((p) => p.lon))],
     [Math.max(...puntos.map((p) => p.lat)), Math.max(...puntos.map((p) => p.lon))],
@@ -153,12 +231,6 @@ function FichaRecorrido({
   const velocidadPromedio = horas > 0 ? recorrido.distanciaKm / horas : 0;
   const velocidadMaxima = velocidadMaximaKmH(puntos);
 
-  const fechaCompleta = new Date(recorrido.createdAt).toLocaleDateString("es-CL", {
-    weekday: "long",
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  });
   const horaInicio = new Date(inicio.timestamp).toLocaleTimeString("es-CL", {
     hour: "2-digit",
     minute: "2-digit",
@@ -168,15 +240,6 @@ function FichaRecorrido({
     minute: "2-digit",
   });
   const sector = sectorMasCercano(inicio.lat, inicio.lon);
-
-  async function confirmarEliminar() {
-    setEliminando(true);
-    try {
-      await onEliminar();
-    } finally {
-      setEliminando(false);
-    }
-  }
 
   return (
     <div className="flex flex-col gap-3">
@@ -475,7 +538,9 @@ export function MisRutasPanel({
                           {new Date(r.createdAt).toLocaleDateString("es-CL")}
                         </span>
                         <span className="text-xs text-blue-text">
-                          {sectorMasCercano(r.puntos[0].lat, r.puntos[0].lon)}
+                          {r.puntos.length > 0
+                            ? sectorMasCercano(r.puntos[0].lat, r.puntos[0].lon)
+                            : "Sin trazado guardado"}
                         </span>
                         <span className="text-xs text-text-secondary">
                           {r.distanciaKm.toFixed(2)} km — {Math.round(r.duracionSeg / 60)} min

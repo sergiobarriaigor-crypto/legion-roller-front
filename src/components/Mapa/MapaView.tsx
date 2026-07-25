@@ -341,7 +341,12 @@ export function MapaView() {
   const [errorGeo, setErrorGeo] = useState("");
   const [otros, setOtros] = useState<OtroMiembro[]>([]);
   const [modo, setModo] = useState<Modo>(null);
-  const [grabando, setGrabando] = useState(false);
+  // "Patinar sin mapear": la grabación (grabandoRef) queda en true para
+  // cualquier modo activo, mapeado o no (ver activarModo) — `mapeado` es lo
+  // único que decide si el trazado se dibuja en vivo y si el detalle se
+  // muestra después en Mis Rutas/Perfil.
+  const [mapeado, setMapeado] = useState(false);
+  const mapeadoRef = useRef(false);
   const [puntosGrabados, setPuntosGrabados] = useState<PuntoGps[]>([]);
   const [resumen, setResumen] = useState<{ distanciaKm: number; duracionSeg: number } | null>(null);
   const [emergenciasActivas, setEmergenciasActivas] = useState<EmergenciaActiva[]>([]);
@@ -768,6 +773,22 @@ export function MapaView() {
     rodadaUnidaIdRef.current = null;
     setCandidatasRodada([]);
     necesitaRevisarRodadaRef.current = nuevoModo === "ruta";
+
+    // El GPS se graba desde el instante en que se activa el modo, sin
+    // esperar a que el usuario conteste "¿mapear?" — si no, se perderían los
+    // puntos de ese lapso. "Patinar sin mapear" también necesita esta
+    // grabación (para estadísticas y, si corresponde, validar asistencia a
+    // una rodada); lo único que decide `mapeado` es si el trazado se dibuja
+    // y se muestra después (ver confirmarMapeoSi/No).
+    setPuntosGrabados([]);
+    puntosGrabadosRef.current = [];
+    inicioGrabacionRef.current = Date.now();
+    grabandoRef.current = true;
+    mapeadoRef.current = false;
+    setMapeado(false);
+    inicioTramoRapidoRef.current = null;
+    setAvisoVelocidad(false);
+    avisoVelocidadRef.current = false;
   }
 
   function unirseARodada(id: number) {
@@ -794,20 +815,18 @@ export function MapaView() {
   }
 
   // El mapeo de ruta ahora es independiente del modo elegido: se pregunta
-  // apenas se activa cualquiera de los dos, en vez de asumirlo solo con "en ruta".
+  // apenas se activa cualquiera de los dos, en vez de asumirlo solo con "en
+  // ruta". La grabación en sí ya está en curso desde activarModo — acá solo
+  // se decide si el trazado se dibuja/muestra.
   function confirmarMapeoSi() {
-    setPuntosGrabados([]);
-    puntosGrabadosRef.current = [];
-    inicioGrabacionRef.current = Date.now();
-    grabandoRef.current = true;
-    setGrabando(true);
+    mapeadoRef.current = true;
+    setMapeado(true);
     setMostrarPreguntaMapeo(false);
-    inicioTramoRapidoRef.current = null;
-    setAvisoVelocidad(false);
-    avisoVelocidadRef.current = false;
   }
 
   function confirmarMapeoNo() {
+    mapeadoRef.current = false;
+    setMapeado(false);
     setMostrarPreguntaMapeo(false);
   }
 
@@ -832,11 +851,12 @@ export function MapaView() {
     setAvisoVelocidad(false);
     avisoVelocidadRef.current = false;
 
-    const estabaGrabando = grabandoRef.current;
     const tokenActual = tokenRef.current;
     const modoActual = modo;
+    const eraMapeado = mapeadoRef.current;
     setModo(null);
     setMostrarPreguntaMapeo(false);
+    grabandoRef.current = false;
 
     if (tokenActual) {
       try {
@@ -846,35 +866,42 @@ export function MapaView() {
       }
     }
 
-    if (estabaGrabando) {
-      grabandoRef.current = false;
-      setGrabando(false);
+    // Ya no depende de si se eligió mapear: toda actividad "Patinando"/"Estoy
+    // en Ruta" registra km/tiempo, se haya mostrado el trazado o no (ver
+    // activarModo, que graba desde el inicio del modo en ambos casos).
+    const puntos = puntosGrabadosRef.current;
+    const duracionSeg = Math.round((Date.now() - inicioGrabacionRef.current) / 1000);
+    const distanciaKm = distanciaTotalKm(puntos);
 
-      const puntos = puntosGrabadosRef.current;
-      const duracionSeg = Math.round((Date.now() - inicioGrabacionRef.current) / 1000);
-      const distanciaKm = distanciaTotalKm(puntos);
+    if (tokenActual && puntos.length >= 2) {
       setResumen({ distanciaKm, duracionSeg });
-
-      if (tokenActual && puntos.length >= 2) {
-        try {
-          await apiPost(
-            "/mapa/recorridos",
-            {
-              tipo: modoActual === "ruta" ? "ruta" : "libre",
-              distanciaKm,
-              duracionSeg,
-              puntos,
-              publicacionId: rodadaUnidaIdRef.current ?? undefined,
-            },
-            tokenActual,
+      try {
+        const resultado = await apiPost<{ guardadoDetalle?: boolean }>(
+          "/mapa/recorridos",
+          {
+            tipo: modoActual === "ruta" ? "ruta" : "libre",
+            distanciaKm,
+            duracionSeg,
+            puntos,
+            mapeado: eraMapeado,
+            publicacionId: rodadaUnidaIdRef.current ?? undefined,
+          },
+          tokenActual,
+        );
+        if (resultado?.guardadoDetalle === false) {
+          setMensaje(
+            "Tus estadísticas se guardaron, pero no el detalle de esta ruta: alcanzaste el máximo de 10 rutas guardadas.",
           );
-        } catch (err) {
-          setMensaje(err instanceof ApiError ? err.message : "No se pudo guardar el recorrido.");
-          setLimiteRutasAlcanzado(err instanceof ApiError && err.status === 409);
+          setLimiteRutasAlcanzado(true);
         }
+      } catch (err) {
+        setMensaje(err instanceof ApiError ? err.message : "No se pudo guardar el recorrido.");
+        setLimiteRutasAlcanzado(err instanceof ApiError && err.status === 409);
       }
     }
 
+    mapeadoRef.current = false;
+    setMapeado(false);
     rodadaUnidaIdRef.current = null;
     setCandidatasRodada([]);
   }
@@ -1193,7 +1220,7 @@ export function MapaView() {
               </Popup>
             </Marker>
           ))}
-          {puntosGrabados.length > 1 && (
+          {mapeado && puntosGrabados.length > 1 && (
             <Polyline
               positions={puntosGrabados.map((p) => [p.lat, p.lon])}
               pathOptions={{ color: "#C99A3D", weight: 4 }}
@@ -1377,9 +1404,9 @@ export function MapaView() {
             ) : (
               <>
                 <p className="text-xs text-fill-success">
-                  {grabando
+                  {mapeado
                     ? `Grabando tu ruta... ${puntosGrabados.length} puntos registrados.`
-                    : "Estás compartiendo tu ubicación con la comunidad."}
+                    : "Patinando sin mapear el trazado. Tu distancia y tiempo se están registrando igual."}
                 </p>
                 {!posicion && (
                   <p className="text-xs text-text-secondary">Obteniendo tu ubicación por GPS...</p>
@@ -1389,7 +1416,7 @@ export function MapaView() {
                   onClick={finalizarModo}
                   className="card rounded-app px-4 py-2 text-sm text-fill-warning"
                 >
-                  {grabando ? "Finalizar recorrido" : "Terminar de patinar"}
+                  {mapeado ? "Finalizar recorrido" : "Terminar de patinar"}
                 </button>
               </>
             )}

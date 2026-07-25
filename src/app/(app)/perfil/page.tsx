@@ -22,6 +22,7 @@ import { useNoAutofill } from "@/lib/useNoAutofill";
 interface RecorridoResumen {
   id: number;
   tipo: string;
+  mapeado: boolean;
   distanciaKm: number;
   duracionSeg: number;
   createdAt: string;
@@ -500,6 +501,7 @@ export default function PerfilPage() {
                   <div>
                     <p className={r.tipo === "ruta" ? "text-sm text-text-accent" : "text-sm text-text-primary"}>
                       {r.tipo === "ruta" ? "Ruta" : "Libre"}
+                      {!r.mapeado && " · sin mapeo"}
                     </p>
                     <p className="text-[10px] text-text-muted">tipo</p>
                   </div>
