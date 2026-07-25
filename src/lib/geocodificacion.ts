@@ -30,3 +30,23 @@ export async function buscarLugares(consulta: string): Promise<LugarBuscado[]> {
     return [];
   }
 }
+
+// Geocodificación inversa: dado un lat/lon real (el GPS del dispositivo),
+// devuelve el nombre real del lugar en el que está parado el usuario —
+// reemplaza a la vieja lista fija de 6 sectores conocidos, que solo ordenaba
+// esos mismos 6 por cercanía en vez de decir de verdad dónde está.
+// zoom=16 pide un nivel de detalle de barrio/sector (ni la casa exacta ni
+// solo la ciudad).
+export async function reverseGeocodificar(lat: number, lon: number): Promise<LugarBuscado | null> {
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&accept-language=es&zoom=16`,
+    );
+    if (!res.ok) return null;
+    const data: unknown = await res.json();
+    if (!data || typeof data !== "object" || !("display_name" in data)) return null;
+    return { nombre: acortarNombre((data as { display_name: string }).display_name) };
+  } catch {
+    return null;
+  }
+}

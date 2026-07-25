@@ -36,22 +36,3 @@ export function sectorMasCercano(lat: number, lon: number): string {
 
   return mejor.nombre;
 }
-
-export interface SectorConDistancia {
-  nombre: string;
-  distanciaKm: number;
-}
-
-// Para el selector de ubicación estilo Instagram de Post: en vez de un solo
-// nombre (como sectorMasCercano), la lista completa ordenada de más cerca a
-// más lejos — el usuario elige de una lista de "lugares cercanos", no se le
-// asigna uno solo en silencio.
-export function sectoresPorCercania(lat: number, lon: number): SectorConDistancia[] {
-  return SECTORES.map((sector) => ({
-    nombre: sector.nombre,
-    distanciaKm: distanciaHaversineKm(
-      { lat, lon, timestamp: 0 },
-      { lat: sector.lat, lon: sector.lon, timestamp: 0 },
-    ),
-  })).sort((a, b) => a.distanciaKm - b.distanciaKm);
-}

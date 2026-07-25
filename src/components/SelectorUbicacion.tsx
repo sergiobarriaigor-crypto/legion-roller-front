@@ -2,17 +2,16 @@
 
 import { useEffect, useState } from "react";
 import { IconMapPin, IconSearch, IconX } from "@tabler/icons-react";
-import { sectoresPorCercania, type SectorConDistancia } from "@/lib/sectores";
-import { buscarLugares } from "@/lib/geocodificacion";
+import { buscarLugares, reverseGeocodificar } from "@/lib/geocodificacion";
 import { useNoAutofill } from "@/lib/useNoAutofill";
 
 // Selector de ubicación estilo Instagram, compartido por Post e Historias: al
-// abrir, detecta la posición actual y muestra los sectores conocidos
-// ordenados por cercanía (no asigna uno solo en silencio); si el usuario
-// escribe, busca de verdad en Nominatim/OpenStreetMap (acotado a Chile) en
-// vez de filtrar sobre la lista fija de sectores — así "Valdivia" o cualquier
-// otro lugar del país aparece, no solo los alrededores conocidos. Nunca se
-// publica la posición exacta — solo el nombre del lugar que se elija acá.
+// abrir, geocodifica tu posición GPS real (vía Nominatim) y la muestra como
+// primera sugerencia — el lugar real donde estás, no un ranking de una lista
+// fija de sectores conocidos; si el usuario escribe, busca de verdad en
+// Nominatim/OpenStreetMap (acotado a Chile) — así "Valdivia" o cualquier otro
+// lugar del país aparece, no solo tus alrededores. Nunca se publica la
+// posición exacta — solo el nombre del lugar que se elija acá.
 export function SelectorUbicacion({
   onSeleccionar,
   onCerrar,
@@ -21,7 +20,8 @@ export function SelectorUbicacion({
   onCerrar: () => void;
 }) {
   const [busqueda, setBusqueda] = useState("");
-  const [cercanos, setCercanos] = useState<SectorConDistancia[] | null>(null);
+  const [cercano, setCercano] = useState<string | null>(null);
+  const [detectando, setDetectando] = useState(false);
   const [errorGps, setErrorGps] = useState<string | null>(null);
   const [resultadosBusqueda, setResultadosBusqueda] = useState<string[]>([]);
   const [buscando, setBuscando] = useState(false);
@@ -33,13 +33,23 @@ export function SelectorUbicacion({
       return;
     }
     setErrorGps(null);
-    setCercanos(null);
+    setCercano(null);
+    setDetectando(true);
     navigator.geolocation.getCurrentPosition(
-      (pos) => setCercanos(sectoresPorCercania(pos.coords.latitude, pos.coords.longitude)),
+      (pos) => {
+        reverseGeocodificar(pos.coords.latitude, pos.coords.longitude).then((lugar) => {
+          setCercano(lugar?.nombre ?? null);
+          if (!lugar) {
+            setErrorGps("No se pudo identificar tu ubicación. Podés buscar el lugar manualmente.");
+          }
+          setDetectando(false);
+        });
+      },
       (err) => {
         // Los tres códigos posibles del navegador (permiso negado, posición no
         // disponible, tiempo agotado) — se explican para que el usuario sepa
         // qué revisar, en vez de quedar viendo "Buscando..." sin explicación.
+        setDetectando(false);
         if (err.code === err.PERMISSION_DENIED) {
           setErrorGps(
             "No autorizaste el acceso a tu ubicación. Revisa los permisos de ubicación del navegador o busca el lugar manualmente.",
@@ -78,11 +88,7 @@ export function SelectorUbicacion({
     return () => clearTimeout(timeout);
   }, [busqueda]);
 
-  const lista = busqueda.trim() ? resultadosBusqueda : (cercanos ?? []).map((s) => s.nombre);
-
-  function distanciaDe(nombre: string) {
-    return cercanos?.find((s) => s.nombre === nombre)?.distanciaKm;
-  }
+  const lista = busqueda.trim() ? resultadosBusqueda : cercano ? [cercano] : [];
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 sm:items-center" data-no-swipe>
@@ -107,7 +113,7 @@ export function SelectorUbicacion({
         </div>
 
         <div className="flex-1 overflow-y-auto px-2 pb-3">
-          {!busqueda && cercanos === null && !errorGps && (
+          {!busqueda && detectando && !errorGps && (
             <p className="px-2 py-3 text-center text-xs text-text-secondary">Detectando tu ubicación...</p>
           )}
           {!busqueda && errorGps && (
@@ -128,28 +134,20 @@ export function SelectorUbicacion({
           {busqueda && !buscando && lista.length === 0 && (
             <p className="px-2 py-3 text-center text-xs text-text-secondary">Sin resultados.</p>
           )}
-          {!busqueda && lista.length === 0 && cercanos !== null && (
+          {!busqueda && !detectando && !errorGps && lista.length === 0 && (
             <p className="px-2 py-3 text-center text-xs text-text-secondary">Sin resultados.</p>
           )}
-          {lista.map((nombre, i) => {
-            const distancia = distanciaDe(nombre);
-            return (
-              <button
-                key={`${nombre}-${i}`}
-                type="button"
-                onClick={() => onSeleccionar(nombre)}
-                className="flex w-full items-center gap-2 rounded-app px-3 py-2 text-left text-sm text-text-primary hover:bg-bg-accent"
-              >
-                <IconMapPin size={16} className="shrink-0 text-text-secondary" />
-                <span className="flex-1">{nombre}</span>
-                {distancia !== undefined && (
-                  <span className="text-xs text-text-muted">
-                    {distancia < 1 ? `${Math.round(distancia * 1000)} m` : `${distancia.toFixed(1)} km`}
-                  </span>
-                )}
-              </button>
-            );
-          })}
+          {lista.map((nombre, i) => (
+            <button
+              key={`${nombre}-${i}`}
+              type="button"
+              onClick={() => onSeleccionar(nombre)}
+              className="flex w-full items-center gap-2 rounded-app px-3 py-2 text-left text-sm text-text-primary hover:bg-bg-accent"
+            >
+              <IconMapPin size={16} className="shrink-0 text-text-secondary" />
+              <span className="flex-1">{nombre}</span>
+            </button>
+          ))}
         </div>
       </div>
     </div>
