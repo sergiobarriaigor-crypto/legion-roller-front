@@ -40,6 +40,22 @@ const CENTRO_DEFECTO: [number, number] = [-41.4, -72.96];
 let ultimaVistaMapa: { lat: number; lon: number; zoom: number } | null = null;
 let siguiendoAlRemontar = true;
 
+// También a nivel de módulo, y por el mismo motivo: la última posición GPS
+// real conocida del usuario (no la cámara — su ubicación de verdad), para
+// mostrarla de inmediato al reingresar a Mapa en vez de arrancar siempre del
+// centro por defecto mientras se espera una nueva respuesta del GPS.
+// `exploracionManualActiva` marca que el usuario arrastró el mapa a mano
+// (independiente de si hay un modo activo); mientras esté en `true`, ni el
+// centrado inicial ni la actualización silenciosa en segundo plano deben
+// moverle la cámara — solo "Centrar en mi ubicación" la apaga.
+let ultimaPosicionConocida: { lat: number; lon: number } | null = null;
+let exploracionManualActiva = false;
+
+// Si la nueva posición del GPS difiere de la que ya se muestra en menos de
+// esto, no vale la pena animar la cámara — sería ruido de precisión del GPS,
+// no un movimiento real.
+const UMBRAL_ACTUALIZACION_KM = 0.03;
+
 // Ajuste post-Fase 11: detección de inactividad para cerrar solo el recorrido.
 const KM_MOVIMIENTO_SIGNIFICATIVO = 0.03; // ~30 metros
 const MIN_AVISO_INACTIVIDAD = 25; // dentro del rango pedido (20 a 30 min)
@@ -315,6 +331,13 @@ export function MapaView() {
   const token = sesion?.token ?? null;
 
   const [posicion, setPosicion] = useState<{ lat: number; lon: number } | null>(null);
+  // Solo true en el montaje realmente inicial de toda la sesión (sin vista de
+  // cámara ni posición conocida todavía) — cubre el mapa hasta tener la
+  // primera respuesta real del GPS, para no mostrar nunca el centro por
+  // defecto (ver el efecto de centrado inicial más abajo).
+  const [buscandoUbicacionInicial, setBuscandoUbicacionInicial] = useState(
+    () => !ultimaVistaMapa && !ultimaPosicionConocida,
+  );
   const [errorGeo, setErrorGeo] = useState("");
   const [otros, setOtros] = useState<OtroMiembro[]>([]);
   const [modo, setModo] = useState<Modo>(null);
@@ -514,28 +537,55 @@ export function MapaView() {
     avisoVelocidadRef.current = false;
   }
 
-  // Centrado inicial: apenas se abre el Mapa se pide la posición real UNA
-  // sola vez (getCurrentPosition, no watchPosition) para centrar la cámara
-  // ahí en vez de quedarse en CENTRO_DEFECTO (Puerto Montt/Varas) — así
-  // alguien en Valdivia ve el mapa centrado en Valdivia desde el primer
-  // instante, sin tener que activar "Patinando"/"Estoy en ruta". A
-  // diferencia del efecto de abajo, esto nunca llama a /mapa/patinando ni
-  // guarda nada en el backend: solo mueve la cámara local, así que no hace
-  // visible al usuario para nadie más (eso solo pasa al activar un modo).
-  // Se aborta si para cuando llega la respuesta ya hay un modo activo o una
-  // vista guardada (`ultimaVistaMapa`), para no pelear con esos flujos.
+  // Centrado por GPS (sin modo activo): cada vez que se monta esta pantalla
+  // (primer ingreso, o al volver tras cambiar de pestaña) se pide la
+  // posición real en segundo plano (getCurrentPosition, no watchPosition) y,
+  // si difiere de lo que ya se ve, la cámara se desliza suavemente hasta
+  // ahí — nunca hay un salto al centro por defecto ni una foto vieja
+  // congelada: `centro`/`zoomInicial` (más abajo) ya arrancan mostrando
+  // `ultimaVistaMapa` o `ultimaPosicionConocida` si existen, así que esta
+  // consulta solo confirma/corrige, no es la única fuente de la vista
+  // inicial. Nunca llama a /mapa/patinando ni guarda nada en el backend:
+  // solo mueve la cámara local, así que no hace visible al usuario para
+  // nadie más (eso solo pasa al activar un modo). Se aborta si hay un modo
+  // activo o si el usuario está explorando el mapa a mano
+  // (`exploracionManualActiva`), para no pelearle la cámara.
   useEffect(() => {
-    if (modoRef.current || ultimaVistaMapa || !navigator.geolocation) return;
+    if (modoRef.current || exploracionManualActiva || !navigator.geolocation) {
+      setBuscandoUbicacionInicial(false);
+      return;
+    }
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        if (modoRef.current || ultimaVistaMapa || !mapRef.current) return;
-        mapRef.current.flyTo(
-          [pos.coords.latitude, pos.coords.longitude],
-          ZOOM_CENTRADO_AUTOMATICO,
+        const nueva = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+        const esPrimeraDeEstaSesion = !ultimaPosicionConocida;
+        ultimaPosicionConocida = nueva;
+        setBuscandoUbicacionInicial(false);
+        if (modoRef.current || exploracionManualActiva || !mapRef.current) return;
+
+        if (esPrimeraDeEstaSesion) {
+          // Todavía no había nada visible (mapa cubierto por el indicador de
+          // carga) — se ubica directo, sin animación, no hay nada de qué
+          // "deslizarse" y ya se está ocultando el indicador en este mismo
+          // instante.
+          mapRef.current.setView([nueva.lat, nueva.lon], ZOOM_CENTRADO_AUTOMATICO);
+          return;
+        }
+
+        const actual = mapRef.current.getCenter();
+        const distanciaKm = distanciaHaversineKm(
+          { lat: actual.lat, lon: actual.lng, timestamp: 0 },
+          { lat: nueva.lat, lon: nueva.lon, timestamp: 0 },
         );
+        if (distanciaKm > UMBRAL_ACTUALIZACION_KM) {
+          mapRef.current.flyTo([nueva.lat, nueva.lon], mapRef.current.getZoom());
+        }
       },
       () => {
-        // sin permiso o sin señal: el mapa se queda en el centro por defecto
+        // sin permiso o sin señal: se deja de mostrar el indicador de carga
+        // (si estaba) y el mapa se queda donde ya estaba (última vista
+        // conocida o, si es la sesión recién empezando, el centro por defecto).
+        setBuscandoUbicacionInicial(false);
       },
       { timeout: 8000 },
     );
@@ -562,6 +612,7 @@ export function MapaView() {
         const punto = { lat: pos.coords.latitude, lon: pos.coords.longitude };
         posicionRef.current = punto;
         setPosicion(punto);
+        ultimaPosicionConocida = punto;
         setErrorGeo("");
         registrarMovimiento(punto, pos.coords.accuracy ?? 0);
 
@@ -631,6 +682,7 @@ export function MapaView() {
             setModo(mia.modo as Modo);
             setPosicion({ lat: mia.lat, lon: mia.lon });
             posicionRef.current = { lat: mia.lat, lon: mia.lon };
+            ultimaPosicionConocida = { lat: mia.lat, lon: mia.lon };
             siguiendoRef.current = siguiendoAlRemontar;
             // Solo recentra si el usuario estaba en modo seguimiento antes de
             // cambiar de pestaña. Si estaba explorando el mapa a mano (ej.
@@ -883,16 +935,24 @@ export function MapaView() {
   }, [token]);
 
   // `ultimaVistaMapa` (si existe) manda: es la vista real que el usuario
-  // dejó antes de que SwipeNavigator desmontara esta pantalla, y tiene
-  // prioridad sobre mi propia ubicación para no secuestrar una exploración
-  // en curso. Solo se usa `posicion`/`CENTRO_DEFECTO` en el montaje realmente
-  // inicial de toda la sesión (recién después de una recarga de página).
+  // dejó antes de que SwipeNavigator desmontara esta pantalla (incluye tanto
+  // exploración manual como un centrado automático anterior), y tiene
+  // prioridad para no secuestrar una exploración en curso. Si no hay vista
+  // guardada pero sí una posición GPS conocida de esta sesión, se muestra de
+  // inmediato — así nunca se vuelve a ver el centro por defecto al
+  // reingresar, mientras el efecto de arriba confirma/actualiza en segundo
+  // plano. Solo se cae a `CENTRO_DEFECTO` en el montaje realmente inicial de
+  // toda la sesión, y ese caso queda cubierto por el indicador de carga
+  // (`buscandoUbicacionInicial`) mientras se espera la primera respuesta.
   const centro: [number, number] = ultimaVistaMapa
     ? [ultimaVistaMapa.lat, ultimaVistaMapa.lon]
-    : posicion
-      ? [posicion.lat, posicion.lon]
-      : CENTRO_DEFECTO;
-  const zoomInicial = ultimaVistaMapa?.zoom ?? 13;
+    : ultimaPosicionConocida
+      ? [ultimaPosicionConocida.lat, ultimaPosicionConocida.lon]
+      : posicion
+        ? [posicion.lat, posicion.lon]
+        : CENTRO_DEFECTO;
+  const zoomInicial =
+    ultimaVistaMapa?.zoom ?? (ultimaPosicionConocida ? ZOOM_CENTRADO_AUTOMATICO : 13);
 
   // "Estoy en Ruta" solo se ofrece cuando hay una rodada confirmada ("Voy") y
   // en su ventana horaria — es el único caso donde ese modo tiene sentido
@@ -905,8 +965,14 @@ export function MapaView() {
   const rodadaFaltanMin = rodadaFechaHora ? minutosHasta(rodadaFechaHora) : 0;
 
   function centrarEnMiUbicacion() {
-    if (!posicion || !mapRef.current) return;
-    mapRef.current.flyTo([posicion.lat, posicion.lon], mapRef.current.getZoom());
+    exploracionManualActiva = false;
+    // Sin un modo activo, `posicion` está vacío (privacidad primero); en ese
+    // caso se usa la última posición GPS real que sí se conoce igual (ver
+    // efecto de centrado por GPS más arriba), para que el botón funcione
+    // también cuando el usuario solo está mirando el mapa sin "Patinando".
+    const punto = posicion ?? ultimaPosicionConocida;
+    if (!punto || !mapRef.current) return;
+    mapRef.current.flyTo([punto.lat, punto.lon], mapRef.current.getZoom());
     marcarSiguiendo(true);
   }
 
@@ -922,6 +988,7 @@ export function MapaView() {
     if (!map) return;
     function detenerSeguimiento() {
       marcarSiguiendo(false);
+      exploracionManualActiva = true;
     }
     // Guarda continuamente dónde quedó la cámara (propia o de exploración) en
     // `ultimaVistaMapa`, para que si SwipeNavigator desmonta esta pantalla al
@@ -1152,6 +1219,16 @@ export function MapaView() {
               </Marker>
             ))}
         </MapContainer>
+
+        {/* Cubre el mapa (que por debajo ya está en CENTRO_DEFECTO) mientras se
+            espera la primera respuesta real del GPS de toda la sesión, para
+            que el usuario nunca llegue a ver ese centro por defecto. */}
+        {buscandoUbicacionInicial && (
+          <div className="absolute inset-0 z-[1000] flex flex-col items-center justify-center gap-2 bg-page-bg">
+            <div className="h-7 w-7 animate-spin rounded-full border-2 border-border border-t-fill-primary" />
+            <p className="text-sm text-text-secondary">Buscando tu ubicación...</p>
+          </div>
+        )}
 
         {/* Controles del mapa: sin caja/fondo — íconos dorados flotando
             directo sobre el mapa, con solo una sombra suave para que se
