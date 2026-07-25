@@ -241,6 +241,7 @@ export function ComentariosPost({
           <div className="flex gap-2">
             <input
               type="text"
+              autoComplete="off"
               placeholder={respondiendoA ? "Escribe una respuesta..." : "Escribe un comentario..."}
               value={texto}
               onChange={(e) => setTexto(e.target.value)}

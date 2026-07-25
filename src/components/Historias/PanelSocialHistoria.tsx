@@ -251,6 +251,7 @@ export function PanelSocialHistoria({
           )}
           <div className="flex items-center gap-2">
             <input
+              autoComplete="off"
               value={texto}
               onChange={(e) => setTexto(e.target.value)}
               onKeyDown={(e) => {

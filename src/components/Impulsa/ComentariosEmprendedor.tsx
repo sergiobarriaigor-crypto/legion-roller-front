@@ -192,6 +192,7 @@ export function ComentariosEmprendedor({
         <div className="flex gap-2">
           <input
             type="text"
+            autoComplete="off"
             placeholder={respondiendoA ? "Escribe una respuesta..." : "Escribe una reseña..."}
             value={texto}
             onChange={(e) => setTexto(e.target.value)}

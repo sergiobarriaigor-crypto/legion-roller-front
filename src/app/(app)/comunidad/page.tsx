@@ -212,6 +212,7 @@ export default function ComunidadPage() {
                         <div className="flex gap-2">
                           <input
                             type="text"
+                            autoComplete="off"
                             placeholder="Código de asistencia"
                             value={codigosIngresados[p.id] ?? ""}
                             onChange={(e) =>

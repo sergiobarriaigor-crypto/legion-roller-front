@@ -548,6 +548,7 @@ export default function ImpulsaPage() {
             </h2>
             <input
               type="text"
+              autoComplete="off"
               placeholder="Nombre del negocio"
               value={form.nombreNegocio}
               onChange={(e) => setForm({ ...form, nombreNegocio: e.target.value })}
@@ -555,6 +556,7 @@ export default function ImpulsaPage() {
             />
             <input
               type="text"
+              autoComplete="off"
               placeholder="Rubro"
               value={form.rubro}
               onChange={(e) => setForm({ ...form, rubro: e.target.value })}
@@ -567,6 +569,7 @@ export default function ImpulsaPage() {
             />
             <textarea
               ref={descripcionRef}
+              autoComplete="off"
               placeholder="Descripción"
               value={form.descripcion}
               onChange={(e) => setForm({ ...form, descripcion: e.target.value })}
@@ -575,6 +578,7 @@ export default function ImpulsaPage() {
             />
             <input
               type="text"
+              autoComplete="off"
               placeholder="Contacto (teléfono, whatsapp, etc) (opcional)"
               value={form.contacto}
               onChange={(e) => setForm({ ...form, contacto: e.target.value })}
@@ -582,6 +586,7 @@ export default function ImpulsaPage() {
             />
             <input
               type="text"
+              autoComplete="off"
               placeholder="Ubicación (opcional)"
               value={form.ubicacion}
               onChange={(e) => setForm({ ...form, ubicacion: e.target.value })}
@@ -589,6 +594,7 @@ export default function ImpulsaPage() {
             />
             <input
               type="text"
+              autoComplete="off"
               placeholder="Instagram"
               value={form.instagram}
               onChange={(e) => setForm({ ...form, instagram: e.target.value })}
@@ -596,6 +602,7 @@ export default function ImpulsaPage() {
             />
             <input
               type="text"
+              autoComplete="off"
               placeholder="Facebook (opcional)"
               value={form.facebook}
               onChange={(e) => setForm({ ...form, facebook: e.target.value })}
@@ -603,6 +610,7 @@ export default function ImpulsaPage() {
             />
             <input
               type="text"
+              autoComplete="off"
               placeholder="TikTok (opcional)"
               value={form.tiktok}
               onChange={(e) => setForm({ ...form, tiktok: e.target.value })}
@@ -698,6 +706,7 @@ export default function ImpulsaPage() {
                 <div className="flex gap-2">
                   <input
                     type="text"
+                    autoComplete="off"
                     placeholder="Nuevo anuncio o promo corta"
                     value={nuevoAnuncio}
                     onChange={(e) => setNuevoAnuncio(e.target.value)}

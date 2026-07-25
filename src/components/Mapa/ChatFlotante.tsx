@@ -144,6 +144,7 @@ export function ChatFlotante({
           <form onSubmit={onEnviar} className="flex gap-2">
             <input
               type="text"
+              autoComplete="off"
               placeholder="Escribe un mensaje..."
               value={texto}
               onChange={(e) => onCambioTexto(e.target.value)}

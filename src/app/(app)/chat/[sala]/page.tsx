@@ -395,6 +395,7 @@ export default function ConversacionPage() {
         </button>
         <input
           type="text"
+          autoComplete="off"
           placeholder="Escribe un mensaje..."
           value={texto}
           onChange={(e) => onCambioTexto(e.target.value)}

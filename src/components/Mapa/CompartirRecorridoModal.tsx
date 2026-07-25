@@ -144,6 +144,7 @@ export function CompartirRecorridoModal({
 
         <input
           type="text"
+          autoComplete="off"
           placeholder="Título (opcional)"
           value={titulo}
           maxLength={60}
@@ -151,6 +152,7 @@ export function CompartirRecorridoModal({
           className="rounded-app border border-border bg-surface-2 px-3 py-2 text-sm text-text-primary outline-none"
         />
         <textarea
+          autoComplete="off"
           placeholder="Un breve comentario (opcional)"
           value={comentario}
           maxLength={140}

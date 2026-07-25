@@ -367,6 +367,7 @@ export function EditorHistoria({
               <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-black/70 px-6">
                 <textarea
                   autoFocus
+                  autoComplete="off"
                   value={borradorTexto}
                   onChange={(e) => setBorradorTexto(e.target.value.slice(0, 200))}
                   placeholder="Escribe algo..."

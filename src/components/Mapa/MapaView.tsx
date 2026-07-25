@@ -1312,6 +1312,7 @@ export function MapaView() {
           >
             <h2 className="text-sm font-semibold text-text-accent">Tu estado en el mapa</h2>
             <textarea
+              autoComplete="off"
               value={textoEstadoForm}
               onChange={(e) => setTextoEstadoForm(e.target.value.slice(0, 50))}
               maxLength={50}
@@ -1370,6 +1371,7 @@ export function MapaView() {
                 <input
                   type="text"
                   autoFocus
+                  autoComplete="off"
                   placeholder="Ej: Tremendo avance 💪"
                   value={textoReconocimiento}
                   maxLength={MAX_CARACTERES_RECONOCIMIENTO}

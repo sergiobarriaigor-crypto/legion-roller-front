@@ -48,6 +48,7 @@ export function SelectorMencion({
         <IconSearch size={16} className="text-white/60" />
         <input
           autoFocus
+          autoComplete="off"
           value={busqueda}
           onChange={(e) => setBusqueda(e.target.value)}
           placeholder="Buscar integrante..."

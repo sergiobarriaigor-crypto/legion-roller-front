@@ -240,6 +240,7 @@ export default function PerfilPage() {
         <form onSubmit={publicarEstado} className="flex gap-2">
           <input
             type="text"
+            autoComplete="off"
             placeholder="¿Qué estás haciendo?"
             value={nuevoEstado}
             onChange={(e) => setNuevoEstado(e.target.value)}

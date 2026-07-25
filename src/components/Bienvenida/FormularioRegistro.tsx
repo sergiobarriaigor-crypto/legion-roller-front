@@ -191,6 +191,7 @@ export function FormularioRegistro({ onVolver }: Props) {
           <div className="flex flex-col gap-1">
             <input
               type="text"
+              autoComplete="off"
               placeholder="Nombre o apodo"
               value={nombre}
               onChange={(e) => setNombre(e.target.value)}
@@ -245,6 +246,7 @@ export function FormularioRegistro({ onVolver }: Props) {
                     <input
                       type="text"
                       inputMode="numeric"
+                      autoComplete="off"
                       maxLength={6}
                       placeholder="123456"
                       value={codigo}

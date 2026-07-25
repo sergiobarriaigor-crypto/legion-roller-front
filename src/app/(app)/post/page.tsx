@@ -403,6 +403,7 @@ export default function PostPage() {
             <form onSubmit={publicar} className="flex flex-col gap-2">
               <input
                 type="text"
+                autoComplete="off"
                 placeholder="Título"
                 value={titulo}
                 onChange={(e) => setTitulo(e.target.value)}
@@ -410,6 +411,7 @@ export default function PostPage() {
               />
               <textarea
                 ref={resenaRef}
+                autoComplete="off"
                 placeholder="Cuéntanos tu experiencia..."
                 value={resena}
                 onChange={(e) => setResena(e.target.value)}

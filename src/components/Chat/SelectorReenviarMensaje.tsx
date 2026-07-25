@@ -81,6 +81,7 @@ export function SelectorReenviarMensaje({
         <div className="mx-3 mb-2 flex items-center gap-2 rounded-app border border-border px-3 py-2">
           <IconSearch size={16} className="text-text-muted" />
           <input
+            autoComplete="off"
             value={busqueda}
             onChange={(e) => setBusqueda(e.target.value)}
             placeholder="Buscar integrante..."

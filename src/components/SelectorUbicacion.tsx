@@ -96,6 +96,7 @@ export function SelectorUbicacion({
           <IconSearch size={16} className="text-text-secondary" />
           <input
             autoFocus
+            autoComplete="off"
             value={busqueda}
             onChange={(e) => setBusqueda(e.target.value)}
             placeholder="Buscar cualquier lugar de Chile..."

@@ -527,6 +527,7 @@ export default function AdminPage() {
 
             <input
               type="text"
+              autoComplete="off"
               placeholder="Título"
               value={form.titulo}
               onChange={(e) => setForm({ ...form, titulo: e.target.value })}
@@ -539,6 +540,7 @@ export default function AdminPage() {
             />
             <textarea
               ref={textoRef}
+              autoComplete="off"
               placeholder="Texto"
               value={form.texto}
               onChange={(e) => setForm({ ...form, texto: e.target.value })}
@@ -570,6 +572,7 @@ export default function AdminPage() {
                 />
                 <input
                   type="text"
+                  autoComplete="off"
                   placeholder="Punto de encuentro"
                   value={form.puntoEncuentro}
                   onChange={(e) => setForm({ ...form, puntoEncuentro: e.target.value })}
@@ -695,6 +698,7 @@ export default function AdminPage() {
                     {form.tipoAsistenciaEvento === "codigo" && (
                       <input
                         type="text"
+                        autoComplete="off"
                         placeholder="Código de asistencia"
                         value={form.codigoAsistencia}
                         onChange={(e) => setForm({ ...form, codigoAsistencia: e.target.value })}
@@ -1008,6 +1012,7 @@ export default function AdminPage() {
             {directorioImpulsa.length > 0 && (
               <input
                 type="text"
+                autoComplete="off"
                 placeholder="Buscar por negocio o dueño..."
                 value={filtroDirectorio}
                 onChange={(e) => setFiltroDirectorio(e.target.value)}
@@ -1065,6 +1070,7 @@ export default function AdminPage() {
             {miembros.length > 0 && (
               <input
                 type="text"
+                autoComplete="off"
                 placeholder="Buscar por nombre o teléfono..."
                 value={filtroMiembros}
                 onChange={(e) => setFiltroMiembros(e.target.value)}

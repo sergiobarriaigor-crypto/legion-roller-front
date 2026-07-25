@@ -820,6 +820,7 @@ export function VisorHistorias({
                 </div>
               ) : (
                 <input
+                  autoComplete="off"
                   value={mensaje}
                   onChange={(e) => setMensaje(e.target.value)}
                   onFocus={() => setEscribiendoMensaje(true)}

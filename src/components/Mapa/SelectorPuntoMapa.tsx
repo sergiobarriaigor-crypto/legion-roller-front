@@ -91,6 +91,7 @@ export function SelectorPuntoMapa({
       <div className="flex gap-1">
         <input
           type="text"
+          autoComplete="off"
           placeholder="Buscar dirección o lugar..."
           value={busqueda}
           onChange={(e) => setBusqueda(e.target.value)}
