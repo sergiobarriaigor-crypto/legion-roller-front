@@ -27,6 +27,7 @@ import { estiloVisualMencion } from "@/components/Historias/MencionSobreImagen";
 import { PanelSocialHistoria } from "@/components/Historias/PanelSocialHistoria";
 import { PanelEcosHistoria } from "@/components/Historias/PanelEcosHistoria";
 import { useNoAutofill } from "@/lib/useNoAutofill";
+import { compartirConLink } from "@/lib/compartir";
 
 const DURACION_FOTO_MS = 5000;
 const UMBRAL_SWIPE_CIERRE_PX = 80;
@@ -399,35 +400,24 @@ export function VisorHistorias({
     }
   }
 
-  // Comparte la foto/video real (no un link) con el selector nativo del
-  // sistema — mismo patrón ya usado en CompartirRecorridoModal. Si el
-  // navegador no soporta compartir archivos (ej. escritorio), se descarga
-  // en su lugar para que el usuario la comparta a mano.
+  // Comparte la foto/video real con el selector nativo del sistema,
+  // agregando siempre el link de vuelta a la historia — mismo patrón que
+  // compartirPost()/compartirEmprendedor(). Si el navegador no soporta
+  // compartir archivos (ej. escritorio), se descarga en su lugar para que el
+  // usuario la comparta a mano.
   async function compartirHistoria() {
+    const link = `${window.location.origin}/post?historia=${historia.id}`;
     try {
       const respuesta = await fetch(historia.mediaUrl);
       const blob = await respuesta.blob();
       const extension = historia.tipo === "video" ? "mp4" : "jpg";
       const archivo = new File([blob], `historia-legion-roller.${extension}`, { type: blob.type });
-
-      if (
-        typeof navigator.share === "function" &&
-        typeof navigator.canShare === "function" &&
-        navigator.canShare({ files: [archivo] })
-      ) {
-        await navigator.share({
-          files: [archivo],
-          title: "Legión Roller",
-          text: historia.texto || "Mira esta historia en Legión Roller",
-        });
-        return;
-      }
-
-      const enlace = document.createElement("a");
-      enlace.href = URL.createObjectURL(blob);
-      enlace.download = `historia-legion-roller.${extension}`;
-      enlace.click();
-      URL.revokeObjectURL(enlace.href);
+      await compartirConLink(
+        "Legión Roller",
+        historia.texto || "Mira esta historia en Legión Roller",
+        link,
+        archivo,
+      );
     } catch {
       // el usuario canceló el panel de compartir, o el navegador lo rechazó
     }

@@ -18,6 +18,7 @@ import { Avatar } from "@/components/Avatar";
 import { BarraHistorias } from "@/components/Historias/BarraHistorias";
 import { generarTarjetaCompartirPost } from "@/lib/tarjetaPost";
 import { forzarHttps } from "@/lib/imagenDataUrl";
+import { compartirConLink } from "@/lib/compartir";
 
 const MAX_FOTOS_POR_POST = 3;
 const DURACION_MAXIMA_VIDEO_SEG = 50;
@@ -39,44 +40,27 @@ function mensajeVencimiento(diasRestantes: number): string {
   return "Vence hoy";
 }
 
-async function compartirArchivo(archivo: File, titulo: string, resena: string) {
-  if (
-    typeof navigator.share === "function" &&
-    typeof navigator.canShare === "function" &&
-    navigator.canShare({ files: [archivo] })
-  ) {
-    await navigator.share({ files: [archivo], title: titulo, text: resena });
-    return;
-  }
-  const enlace = document.createElement("a");
-  enlace.href = URL.createObjectURL(archivo);
-  enlace.download = archivo.name;
-  enlace.click();
-  URL.revokeObjectURL(enlace.href);
-}
-
-// Comparte la publicación como un archivo real (no un link) con el selector
-// nativo del sistema — mismo patrón que compartirHistoria() en
-// VisorHistorias.tsx. Para fotos, en vez de compartir la imagen pelada se
-// arma una vista previa (imagen + título + descripción + logo) con
-// generarTarjetaCompartirPost — así se ve de qué trata la publicación aunque
-// la red social (WhatsApp, Discord, etc.) no muestre el texto del share por
-// separado. El video se sigue compartiendo tal cual: componer texto sobre un
-// video pedía extraer un frame y recodificar, un alcance mucho mayor que no
-// se pidió.
+// Comparte la publicación con el selector nativo del sistema, agregando
+// siempre el link de vuelta al post (así quien lo recibe por WhatsApp/redes
+// puede tocarlo y entrar directo, en vez de solo ver una imagen suelta). Para
+// fotos, en vez de compartir la imagen pelada se arma una vista previa
+// (imagen + título + descripción + logo) con generarTarjetaCompartirPost —
+// así se ve de qué trata la publicación aunque la red social (WhatsApp,
+// Discord, etc.) no muestre el texto del share por separado. El video se
+// sigue compartiendo tal cual: componer texto sobre un video pedía extraer
+// un frame y recodificar, un alcance mucho mayor que no se pidió.
 async function compartirPost(p: Post) {
+  const link = `${window.location.origin}/post?post=${p.id}`;
   try {
     if (p.tipo === "video" && p.videoUrl) {
       const blob = await (await fetch(forzarHttps(p.videoUrl))).blob();
       const archivo = new File([blob], "post-legion-roller.mp4", { type: blob.type });
-      await compartirArchivo(archivo, p.titulo, p.resena);
+      await compartirConLink(p.titulo, p.resena, link, archivo);
       return;
     }
 
     if (p.fotos.length === 0) {
-      if (typeof navigator.share === "function") {
-        await navigator.share({ title: p.titulo, text: p.resena });
-      }
+      await compartirConLink(p.titulo, p.resena, link);
       return;
     }
 
@@ -86,7 +70,7 @@ async function compartirPost(p: Post) {
       resena: p.resena,
     });
     const archivo = new File([blobTarjeta], "post-legion-roller.jpg", { type: blobTarjeta.type });
-    await compartirArchivo(archivo, p.titulo, p.resena);
+    await compartirConLink(p.titulo, p.resena, link, archivo);
   } catch {
     // el usuario canceló el panel de compartir, la vista previa no se pudo
     // generar, o el navegador rechazó el share

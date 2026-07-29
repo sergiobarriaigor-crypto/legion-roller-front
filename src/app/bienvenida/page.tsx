@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "@/context/SessionContext";
 import { rutaInicialParaRol, type Rol } from "@/lib/session";
 import { apiPost, ApiError } from "@/lib/api";
@@ -18,9 +18,20 @@ interface LoginResponse {
   rol: Rol;
 }
 
+// Solo se acepta como destino una ruta interna propia (evita que un link
+// armado a mano con ?next=https://sitio-malicioso.com termine mandando al
+// usuario fuera de la app justo después de iniciar sesión).
+function destinoSeguro(next: string | null): string | null {
+  if (!next) return null;
+  if (!next.startsWith("/") || next.startsWith("//")) return null;
+  return next;
+}
+
 export default function BienvenidaPage() {
   const { sesion, cargando, login } = useSession();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const next = destinoSeguro(searchParams.get("next"));
   const [panel, setPanel] = useState<Panel>("roles");
   const [correo, setCorreo] = useState("");
   const [clave, setClave] = useState("");
@@ -30,9 +41,9 @@ export default function BienvenidaPage() {
 
   useEffect(() => {
     if (!cargando && sesion) {
-      router.replace(rutaInicialParaRol(sesion.rol));
+      router.replace(next ?? rutaInicialParaRol(sesion.rol));
     }
-  }, [cargando, sesion, router]);
+  }, [cargando, sesion, router, next]);
 
   async function entrarConClave(e: React.FormEvent) {
     e.preventDefault();
@@ -45,7 +56,7 @@ export default function BienvenidaPage() {
     try {
       const res = await apiPost<LoginResponse>("/auth/login", { correo, clave });
       login({ id: res.id, nombre: res.nombre, rol: res.rol, token: res.accessToken });
-      router.replace(rutaInicialParaRol(res.rol));
+      router.replace(next ?? rutaInicialParaRol(res.rol));
     } catch (err) {
       setErrorLogin(err instanceof ApiError ? err.message : "No se pudo conectar con el servidor.");
     } finally {
@@ -55,7 +66,7 @@ export default function BienvenidaPage() {
 
   function entrarComoVisitante() {
     login({ id: null, nombre: "Visitante", rol: "visitante", token: null });
-    router.replace(rutaInicialParaRol("visitante"));
+    router.replace(next ?? rutaInicialParaRol("visitante"));
   }
 
   if (cargando || sesion) {

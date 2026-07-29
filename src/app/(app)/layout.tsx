@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, type ReactNode } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { AppHeader } from "@/components/AppHeader";
 import { BottomNav } from "@/components/BottomNav";
 import { EmergenciaBanner } from "@/components/EmergenciaBanner";
@@ -18,12 +18,15 @@ export default function AppGroupLayout({
   const { sesion, cargando, logout } = useSession();
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
 
   useEffect(() => {
     if (cargando) return;
 
     if (!sesion) {
-      router.replace("/bienvenida");
+      const query = searchParams.toString();
+      const destino = pathname + (query ? `?${query}` : "");
+      router.replace(`/bienvenida?next=${encodeURIComponent(destino)}`);
       return;
     }
 
@@ -33,7 +36,7 @@ export default function AppGroupLayout({
     ) {
       router.replace("/post");
     }
-  }, [cargando, sesion, pathname, router]);
+  }, [cargando, sesion, pathname, router, searchParams]);
 
   const rutaRestringida =
     sesion?.rol === "visitante" &&

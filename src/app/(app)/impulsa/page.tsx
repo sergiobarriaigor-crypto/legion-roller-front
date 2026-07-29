@@ -28,6 +28,7 @@ import { generarTarjetaCompartirEmprendedor } from "@/lib/tarjetaEmprendedor";
 import { BarraFormatoTexto } from "@/components/BarraFormatoTexto";
 import { renderizarTextoFormateado } from "@/lib/textoFormateado";
 import { useNoAutofill } from "@/lib/useNoAutofill";
+import { compartirConLink } from "@/lib/compartir";
 
 type SubTab = "directorio" | "ficha";
 
@@ -44,32 +45,16 @@ const FICHA_VACIA = {
   tiktok: "",
 };
 
-async function compartirArchivo(archivo: File, titulo: string, resena: string) {
-  if (
-    typeof navigator.share === "function" &&
-    typeof navigator.canShare === "function" &&
-    navigator.canShare({ files: [archivo] })
-  ) {
-    await navigator.share({ files: [archivo], title: titulo, text: resena });
-    return;
-  }
-  const enlace = document.createElement("a");
-  enlace.href = URL.createObjectURL(archivo);
-  enlace.download = archivo.name;
-  enlace.click();
-  URL.revokeObjectURL(enlace.href);
-}
-
-// Comparte la ficha como un archivo real (no un link) con el selector nativo
-// del sistema — mismo patrón que compartirPost() en post/page.tsx: en vez de
-// compartir la foto pelada se arma una vista previa (imagen + nombre del
-// negocio + descripción + logo) con generarTarjetaCompartirEmprendedor.
+// Comparte la ficha con el selector nativo del sistema, agregando siempre el
+// link de vuelta a la ficha — mismo patrón que compartirPost() en
+// post/page.tsx: en vez de compartir la foto pelada se arma una vista previa
+// (imagen + nombre del negocio + descripción + logo) con
+// generarTarjetaCompartirEmprendedor.
 async function compartirEmprendedor(e: Emprendedor) {
+  const link = `${window.location.origin}/impulsa?emprendedor=${e.id}`;
   try {
     if (e.fotos.length === 0) {
-      if (typeof navigator.share === "function") {
-        await navigator.share({ title: e.nombreNegocio, text: e.descripcion });
-      }
+      await compartirConLink(e.nombreNegocio, e.descripcion, link);
       return;
     }
 
@@ -79,7 +64,7 @@ async function compartirEmprendedor(e: Emprendedor) {
       descripcion: e.descripcion,
     });
     const archivo = new File([blobTarjeta], "emprendedor-legion-roller.jpg", { type: blobTarjeta.type });
-    await compartirArchivo(archivo, e.nombreNegocio, e.descripcion);
+    await compartirConLink(e.nombreNegocio, e.descripcion, link, archivo);
   } catch {
     // el usuario canceló el panel de compartir, la vista previa no se pudo
     // generar, o el navegador rechazó el share
