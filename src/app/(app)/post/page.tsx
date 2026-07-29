@@ -608,6 +608,7 @@ export default function PostPage() {
       {posts.map((p) => {
         const yaReaccione = misReacciones.includes(p.id);
         const puedeEliminar = sesion?.id === p.autorId || sesion?.rol === "admin";
+        const esAutor = sesion?.id === p.autorId;
 
         return (
           <div
@@ -677,24 +678,28 @@ export default function PostPage() {
               >
                 {p.comentariosCount} comentarios
               </button>
-              <button
-                type="button"
-                onClick={() => compartirPost(p)}
-                className="ml-auto flex items-center gap-1"
-              >
-                <IconShare size={16} />
-                Compartir
-              </button>
-              {puedeInteractuar && (
-                <button
-                  type="button"
-                  onClick={() => setPostACompartir(p)}
-                  aria-label="Compartir a un usuario"
-                  className="flex items-center gap-1"
-                >
-                  <IconUsers size={16} />
-                </button>
-              )}
+              <div className="ml-auto flex items-center gap-1">
+                {esAutor && (
+                  <button
+                    type="button"
+                    onClick={() => compartirPost(p)}
+                    className="flex items-center gap-1"
+                  >
+                    <IconShare size={16} />
+                    Compartir
+                  </button>
+                )}
+                {puedeInteractuar && (
+                  <button
+                    type="button"
+                    onClick={() => setPostACompartir(p)}
+                    aria-label="Compartir a un usuario"
+                    className="flex items-center gap-1"
+                  >
+                    <IconUsers size={16} />
+                  </button>
+                )}
+              </div>
             </div>
 
             {panelSocial?.postId === p.id && (

@@ -1,12 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { IconHeart, IconHeartFilled } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
 import { apiGet, apiPost, ApiError } from "@/lib/api";
 import {
   ETIQUETA_TIPO,
   misAsistenciasEvento,
   confirmarAsistenciaEvento,
+  misReaccionesPublicaciones,
+  reaccionarPublicacion,
   type Publicacion,
 } from "@/lib/publicaciones";
 import { CarruselFotos } from "@/components/CarruselFotos";
@@ -47,9 +50,11 @@ function textoVencimiento(p: Publicacion): string | null {
 export default function ComunidadPage() {
   const { sesion } = useSession();
   const token = sesion?.token ?? null;
+  const puedeInteractuar = sesion?.rol === "usuario" || sesion?.rol === "admin";
   const [publicaciones, setPublicaciones] = useState<Publicacion[]>([]);
   const [misRespuestas, setMisRespuestas] = useState<Record<number, string>>({});
   const [misAsistencias, setMisAsistencias] = useState<Record<number, boolean>>({});
+  const [misReacciones, setMisReacciones] = useState<number[]>([]);
   const [codigosIngresados, setCodigosIngresados] = useState<Record<number, string>>({});
   const [confirmandoAsistencia, setConfirmandoAsistencia] = useState<number | null>(null);
   const [cargando, setCargando] = useState(true);
@@ -65,6 +70,8 @@ export default function ComunidadPage() {
         setMisRespuestas(mias);
         const asistencias = await misAsistenciasEvento(token);
         setMisAsistencias(asistencias);
+        const reacciones = await misReaccionesPublicaciones(token);
+        setMisReacciones(reacciones);
       }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "No se pudo cargar la Comunidad.");
@@ -78,6 +85,27 @@ export default function ComunidadPage() {
     cargar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
+
+  async function reaccionar(publicacionId: number) {
+    if (!token) return;
+    try {
+      const resultado = await reaccionarPublicacion(publicacionId, token);
+      setMisReacciones((prev) =>
+        resultado.miReaccion
+          ? [...prev, publicacionId]
+          : prev.filter((id) => id !== publicacionId),
+      );
+      setPublicaciones((prev) =>
+        prev.map((p) =>
+          p.id === publicacionId
+            ? { ...p, reaccionesCount: resultado.reaccionesCount }
+            : p,
+        ),
+      );
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "No se pudo registrar tu reacción.");
+    }
+  }
 
   async function responderRsvp(publicacionId: number, estado: string) {
     if (!token) return;
@@ -148,6 +176,7 @@ export default function ComunidadPage() {
         const vencimiento = textoVencimiento(p);
         const miRespuesta = misRespuestas[p.id];
         const esAlerta = p.tipo === "alerta";
+        const yaReaccione = misReacciones.includes(p.id);
 
         return (
           <div
@@ -174,6 +203,26 @@ export default function ComunidadPage() {
               <p className="text-xs text-text-muted">
                 {[p.fecha, p.hora, p.puntoEncuentro].filter(Boolean).join(" · ")}
               </p>
+            )}
+
+            {puedeInteractuar ? (
+              <button
+                type="button"
+                onClick={() => reaccionar(p.id)}
+                className="flex w-fit items-center gap-1.5"
+              >
+                {yaReaccione ? (
+                  <IconHeartFilled size={18} className="text-text-accent transition" />
+                ) : (
+                  <IconHeart size={18} className="text-text-accent transition" />
+                )}
+                <span className="text-xs text-text-secondary">{p.reaccionesCount}</span>
+              </button>
+            ) : (
+              <span className="flex w-fit items-center gap-1.5">
+                <IconHeart size={18} className="text-text-accent" />
+                <span className="text-xs text-text-secondary">{p.reaccionesCount}</span>
+              </span>
             )}
 
             {p.rsvp && (

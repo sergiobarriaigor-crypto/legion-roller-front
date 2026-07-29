@@ -79,6 +79,7 @@ export interface Publicacion {
   fotos: string[];
   createdAt: string;
   rsvpCounts: { yes: number; maybe: number; no: number };
+  reaccionesCount: number;
 }
 
 export interface AsistenciaEventoDetalle {
@@ -114,6 +115,20 @@ export function alternarAsistenciaEvento(
 ) {
   return apiPost<{ asistio: boolean }>(
     `/publicaciones/${publicacionId}/asistencia-evento/${miembroId}`,
+    {},
+    token,
+  );
+}
+
+// "Me gusta" (corazón dorado) en los comunicados de Comunidad, mismo patrón
+// que las reacciones de Post.
+export function misReaccionesPublicaciones(token: string) {
+  return apiGet<number[]>("/publicaciones/mis-reacciones", token);
+}
+
+export function reaccionarPublicacion(publicacionId: number, token: string) {
+  return apiPost<{ reaccionesCount: number; miReaccion: boolean }>(
+    `/publicaciones/${publicacionId}/reaccion`,
     {},
     token,
   );
