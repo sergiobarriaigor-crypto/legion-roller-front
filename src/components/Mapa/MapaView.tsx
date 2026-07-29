@@ -51,6 +51,24 @@ let siguiendoAlRemontar = true;
 let ultimaPosicionConocida: { lat: number; lon: number } | null = null;
 let exploracionManualActiva = false;
 
+// También a nivel de módulo, y por el mismo motivo (SwipeNavigator
+// desmonta/remonta esta pantalla al cambiar de pestaña): la grabación GPS de
+// "Patinando"/"Estoy en Ruta" en curso. Antes vivía solo en refs de React
+// (grabandoRef, puntosGrabadosRef, inicioGrabacionRef), así que cada remontaje
+// la reiniciaba a cero — el usuario seguía viendo "patinando" activo (eso sí
+// se restauraba desde el backend), pero la grabación real había arrancado de
+// nuevo, perdiendo los km/tiempo ya acumulados. Se limpia en activarModo (al
+// empezar una grabación nueva) y en finalizarModo (al terminar); si no hay
+// ninguna coincidente al restaurar `modo`, se asume que no hay nada que
+// recuperar (ej. recarga real de página, no solo cambio de pestaña).
+let grabacionActivaModulo: {
+  modo: "patinando" | "ruta";
+  puntos: PuntoGps[];
+  inicioGrabacion: number;
+  mapeado: boolean;
+  rodadaUnidaId: number | null;
+} | null = null;
+
 // Si la nueva posición del GPS difiere de la que ya se muestra en menos de
 // esto, no vale la pena animar la cámara — sería ruido de precisión del GPS,
 // no un movimiento real.
@@ -522,6 +540,7 @@ export function MapaView() {
     const puntosLimpios = anteriores.filter((p) => p.timestamp < inicioTramo);
     setPuntosGrabados(puntosLimpios);
     puntosGrabadosRef.current = puntosLimpios;
+    if (grabacionActivaModulo) grabacionActivaModulo.puntos = puntosLimpios;
     setAvisoVelocidad(true);
     avisoVelocidadRef.current = true;
     // Push real (no solo el modal en pantalla): quien está patinando suele
@@ -626,6 +645,7 @@ export function MapaView() {
           const acabaDePausar = revisarVelocidadSospechosa(puntoGrabado);
           if (!acabaDePausar) {
             setPuntosGrabados((prev) => [...prev, puntoGrabado]);
+            if (grabacionActivaModulo) grabacionActivaModulo.puntos.push(puntoGrabado);
           }
         }
 
@@ -696,6 +716,23 @@ export function MapaView() {
             // abajo) — forzar el centrado acá lo habría ignorado por completo.
             if (siguiendoAlRemontar) {
               mapRef.current?.setView([mia.lat, mia.lon], ZOOM_CENTRADO_AUTOMATICO);
+            }
+
+            // Además de restaurar lo visual, retoma la grabación real de km/
+            // tiempo si venía en curso desde antes del remontaje (ver
+            // grabacionActivaModulo). Sin esto, grabandoRef quedaba en false
+            // y toda la sesión perdía su distancia/duración apenas el
+            // usuario cambiaba de pestaña y volvía. Si no hay nada
+            // coincidente guardado (ej. recarga real de página), no hay
+            // nada que recuperar — se queda como antes.
+            if (grabacionActivaModulo && grabacionActivaModulo.modo === mia.modo) {
+              setPuntosGrabados(grabacionActivaModulo.puntos);
+              puntosGrabadosRef.current = grabacionActivaModulo.puntos;
+              inicioGrabacionRef.current = grabacionActivaModulo.inicioGrabacion;
+              grabandoRef.current = true;
+              mapeadoRef.current = grabacionActivaModulo.mapeado;
+              setMapeado(grabacionActivaModulo.mapeado);
+              rodadaUnidaIdRef.current = grabacionActivaModulo.rodadaUnidaId;
             }
           }
         }
@@ -789,11 +826,19 @@ export function MapaView() {
     inicioTramoRapidoRef.current = null;
     setAvisoVelocidad(false);
     avisoVelocidadRef.current = false;
+    grabacionActivaModulo = {
+      modo: nuevoModo,
+      puntos: [],
+      inicioGrabacion: inicioGrabacionRef.current,
+      mapeado: false,
+      rodadaUnidaId: null,
+    };
   }
 
   function unirseARodada(id: number) {
     rodadaUnidaIdRef.current = id;
     setCandidatasRodada([]);
+    if (grabacionActivaModulo) grabacionActivaModulo.rodadaUnidaId = id;
   }
 
   // Atajo del banner "Tu rodada está por comenzar": a diferencia del botón
@@ -808,6 +853,7 @@ export function MapaView() {
     activarModo("ruta");
     necesitaRevisarRodadaRef.current = false;
     rodadaUnidaIdRef.current = rodadaActiva.id;
+    if (grabacionActivaModulo) grabacionActivaModulo.rodadaUnidaId = rodadaActiva.id;
   }
 
   function descartarCandidatasRodada() {
@@ -822,12 +868,14 @@ export function MapaView() {
     mapeadoRef.current = true;
     setMapeado(true);
     setMostrarPreguntaMapeo(false);
+    if (grabacionActivaModulo) grabacionActivaModulo.mapeado = true;
   }
 
   function confirmarMapeoNo() {
     mapeadoRef.current = false;
     setMapeado(false);
     setMostrarPreguntaMapeo(false);
+    if (grabacionActivaModulo) grabacionActivaModulo.mapeado = false;
   }
 
   function continuarPatinando() {
@@ -857,6 +905,7 @@ export function MapaView() {
     setModo(null);
     setMostrarPreguntaMapeo(false);
     grabandoRef.current = false;
+    grabacionActivaModulo = null;
 
     if (tokenActual) {
       try {
