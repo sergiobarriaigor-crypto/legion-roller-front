@@ -67,6 +67,17 @@ let grabacionActivaModulo: {
   inicioGrabacion: number;
   mapeado: boolean;
   rodadaUnidaId: number | null;
+  // Mismo problema que con la grabación de puntos, pero para el aviso de
+  // inactividad (ver más abajo): ultimoMovimientoEnRef es un ref de React
+  // normal, así que cada remontaje lo reiniciaba a "ahora mismo" — el conteo
+  // de MIN_AVISO_INACTIVIDAD nunca llegaba a acumularse de corrido si el
+  // usuario cambiaba de pestaña aunque fuera una vez en medio, dejando
+  // sesiones "activas" indefinidamente sin que saltara el aviso ni el cierre
+  // automático. avisoInactividadDesde (no solo un booleano) permite recalcular
+  // cuánto falta del cierre automático de MIN_CIERRE_AUTOMATICO si el
+  // remontaje ocurre justo con el aviso ya mostrado.
+  ultimoMovimientoEn: number;
+  avisoInactividadDesde: number | null;
 } | null = null;
 
 // Si la nueva posición del GPS difiere de la que ya se muestra en menos de
@@ -478,6 +489,7 @@ export function MapaView() {
     if (!anterior) {
       ultimaPosSignificativaRef.current = ahora;
       ultimoMovimientoEnRef.current = Date.now();
+      if (grabacionActivaModulo) grabacionActivaModulo.ultimoMovimientoEn = ultimoMovimientoEnRef.current;
       return;
     }
     const distanciaKm = distanciaHaversineKm(anterior, ahora);
@@ -493,6 +505,7 @@ export function MapaView() {
     if (distanciaKm >= umbralKm) {
       ultimaPosSignificativaRef.current = ahora;
       ultimoMovimientoEnRef.current = Date.now();
+      if (grabacionActivaModulo) grabacionActivaModulo.ultimoMovimientoEn = ultimoMovimientoEnRef.current;
       if (avisoInactividadRef.current) {
         continuarPatinando();
       }
@@ -733,6 +746,30 @@ export function MapaView() {
               mapeadoRef.current = grabacionActivaModulo.mapeado;
               setMapeado(grabacionActivaModulo.mapeado);
               rodadaUnidaIdRef.current = grabacionActivaModulo.rodadaUnidaId;
+
+              // Mismo motivo que arriba, pero para el aviso de inactividad:
+              // ultimoMovimientoEnRef es un ref normal, así que sin esto
+              // volvía a "ahora mismo" en cada remontaje y los 25 minutos de
+              // MIN_AVISO_INACTIVIDAD nunca llegaban a acumularse de corrido
+              // si el usuario cambiaba de pestaña — dejando sesiones activas
+              // indefinidamente sin que saltara el aviso ni el cierre
+              // automático. Si el remontaje ocurre justo con el aviso ya
+              // mostrado, se recalcula cuánto queda del cierre automático (o
+              // se cierra ya mismo si ese plazo ya se cumplió).
+              ultimoMovimientoEnRef.current = grabacionActivaModulo.ultimoMovimientoEn;
+              if (grabacionActivaModulo.avisoInactividadDesde !== null) {
+                const avisoDesde = grabacionActivaModulo.avisoInactividadDesde;
+                avisoInactividadRef.current = true;
+                setAvisoInactividad(true);
+                const restanteMs = MIN_CIERRE_AUTOMATICO * 60000 - (Date.now() - avisoDesde);
+                if (restanteMs <= 0) {
+                  finalizarModo();
+                } else {
+                  cierreAutomaticoTimeoutRef.current = setTimeout(() => {
+                    finalizarModo();
+                  }, restanteMs);
+                }
+              }
             }
           }
         }
@@ -744,6 +781,7 @@ export function MapaView() {
     cargarOtros();
     const intervalo = setInterval(cargarOtros, 15000);
     return () => clearInterval(intervalo);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, sesion?.id]);
 
   // Etiqueta SOS roja: emergencias activas de otros miembros con ubicación conocida.
@@ -787,6 +825,7 @@ export function MapaView() {
       if (inactivoMs >= MIN_AVISO_INACTIVIDAD * 60000) {
         setAvisoInactividad(true);
         avisoInactividadRef.current = true;
+        if (grabacionActivaModulo) grabacionActivaModulo.avisoInactividadDesde = Date.now();
         cierreAutomaticoTimeoutRef.current = setTimeout(() => {
           finalizarModo();
         }, MIN_CIERRE_AUTOMATICO * 60000);
@@ -832,6 +871,8 @@ export function MapaView() {
       inicioGrabacion: inicioGrabacionRef.current,
       mapeado: false,
       rodadaUnidaId: null,
+      ultimoMovimientoEn: ultimoMovimientoEnRef.current,
+      avisoInactividadDesde: null,
     };
   }
 
@@ -880,6 +921,10 @@ export function MapaView() {
 
   function continuarPatinando() {
     ultimoMovimientoEnRef.current = Date.now();
+    if (grabacionActivaModulo) {
+      grabacionActivaModulo.ultimoMovimientoEn = ultimoMovimientoEnRef.current;
+      grabacionActivaModulo.avisoInactividadDesde = null;
+    }
     if (cierreAutomaticoTimeoutRef.current) {
       clearTimeout(cierreAutomaticoTimeoutRef.current);
       cierreAutomaticoTimeoutRef.current = null;
