@@ -239,6 +239,11 @@ export default function PostPage() {
   // criterio que EditorHistoria.tsx, con el límite propio de Post: 50s). Si
   // supera el máximo, se abre el editor de recorte (VideoTrimmer) en vez de
   // rechazarlo directamente.
+  //
+  // El timeout de respaldo existe porque en algunos equipos (decodificación
+  // por hardware fallando, códec no soportado, etc.) el <video> ni dispara
+  // "loadedmetadata" ni "error" — sin esto, el usuario se queda mirando un
+  // botón que no hace nada, sin ningún aviso.
   function onVideoElegido(e: React.ChangeEvent<HTMLInputElement>) {
     const archivo = e.target.files?.[0];
     if (!archivo || !token) return;
@@ -247,7 +252,22 @@ export default function PostPage() {
     const url = URL.createObjectURL(archivo);
     const video = document.createElement("video");
     video.preload = "metadata";
+    let resuelto = false;
+    const marcarNoLeible = () => {
+      if (resuelto) return;
+      resuelto = true;
+      clearTimeout(timeoutId);
+      URL.revokeObjectURL(url);
+      setError(
+        "No se pudo leer este video (formato no compatible o archivo dañado). Probá con otro archivo, o recortalo en otra app antes de subirlo.",
+      );
+      if (videoInputRef.current) videoInputRef.current.value = "";
+    };
+    const timeoutId = setTimeout(marcarNoLeible, 10000);
     video.onloadedmetadata = async () => {
+      if (resuelto) return;
+      resuelto = true;
+      clearTimeout(timeoutId);
       URL.revokeObjectURL(url);
       if (video.duration > DURACION_MAXIMA_VIDEO_SEG) {
         setVideoParaRecortar(archivo);
@@ -255,6 +275,7 @@ export default function PostPage() {
       }
       await subirVideo(archivo, archivo.name);
     };
+    video.onerror = marcarNoLeible;
     video.src = url;
   }
 

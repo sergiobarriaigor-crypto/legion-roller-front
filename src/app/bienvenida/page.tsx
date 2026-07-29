@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "@/context/SessionContext";
 import { rutaInicialParaRol, type Rol } from "@/lib/session";
@@ -27,7 +27,10 @@ function destinoSeguro(next: string | null): string | null {
   return next;
 }
 
-export default function BienvenidaPage() {
+// Next.js exige que useSearchParams() esté dentro de un <Suspense> (si no, el
+// build de producción falla con "missing-suspense-with-csr-bailout") — de ahí
+// el wrapper de más abajo; no hay ningún estado intermedio real que mostrar.
+function BienvenidaContenido() {
   const { sesion, cargando, login } = useSession();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -194,5 +197,13 @@ export default function BienvenidaPage() {
         <FormularioRegistro onVolver={() => setPanel("roles")} />
       )}
     </div>
+  );
+}
+
+export default function BienvenidaPage() {
+  return (
+    <Suspense fallback={null}>
+      <BienvenidaContenido />
+    </Suspense>
   );
 }

@@ -126,10 +126,28 @@ export function EditorHistoria({
     // Video: se valida la duración en el cliente ANTES de subir. Si supera el
     // máximo, en vez de rechazarlo se abre el editor de recorte (VideoTrimmer)
     // para que el usuario elija el fragmento a publicar, sin salir de la app.
+    //
+    // El timeout de respaldo existe porque en algunos equipos (decodificación
+    // por hardware fallando, códec no soportado, etc.) el <video> ni dispara
+    // "loadedmetadata" ni "error" — sin esto, el usuario se queda mirando la
+    // pantalla sin ningún aviso de que algo salió mal.
     const video = document.createElement("video");
     video.preload = "metadata";
     video.muted = true;
+    let resuelto = false;
+    const marcarNoLeible = () => {
+      if (resuelto) return;
+      resuelto = true;
+      clearTimeout(timeoutId);
+      setError(
+        "No se pudo leer este video (formato no compatible o archivo dañado). Probá con otro archivo.",
+      );
+    };
+    const timeoutId = setTimeout(marcarNoLeible, 10000);
     video.onloadedmetadata = async () => {
+      if (resuelto) return;
+      resuelto = true;
+      clearTimeout(timeoutId);
       await repararVideoStreameado(video);
       if (video.duration > DURACION_MAXIMA_VIDEO_HISTORIA_SEG) {
         setMostrarRecorte(true);
@@ -138,8 +156,12 @@ export function EditorHistoria({
       setPreviewUrl(url);
       setTipo("video");
     };
+    video.onerror = marcarNoLeible;
     video.src = url;
-    return () => URL.revokeObjectURL(url);
+    return () => {
+      clearTimeout(timeoutId);
+      URL.revokeObjectURL(url);
+    };
   }, [archivoInicial]);
 
   function abrirEdicionTexto() {

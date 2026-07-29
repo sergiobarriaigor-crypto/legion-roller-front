@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, type ReactNode } from "react";
+import { Suspense, useEffect, type ReactNode } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { AppHeader } from "@/components/AppHeader";
 import { BottomNav } from "@/components/BottomNav";
@@ -10,6 +10,26 @@ import { useSession } from "@/context/SessionContext";
 import { BorradorPostProvider } from "@/context/BorradorPostContext";
 import { RUTAS_RESTRINGIDAS_VISITANTE } from "@/lib/session";
 
+// Next.js exige que useSearchParams() esté dentro de un <Suspense> (si no, el
+// build de producción falla con "missing-suspense-with-csr-bailout") — se
+// aisla en su propio componente solo por eso, no por necesidad real de mostrar
+// un fallback (el padre ya cubre la pantalla con su propio "Cargando...").
+function RedirigirSinSesion() {
+  const { sesion, cargando } = useSession();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  useEffect(() => {
+    if (cargando || sesion) return;
+    const query = searchParams.toString();
+    const destino = pathname + (query ? `?${query}` : "");
+    router.replace(`/bienvenida?next=${encodeURIComponent(destino)}`);
+  }, [cargando, sesion, pathname, router, searchParams]);
+
+  return null;
+}
+
 export default function AppGroupLayout({
   children,
 }: {
@@ -18,17 +38,9 @@ export default function AppGroupLayout({
   const { sesion, cargando, logout } = useSession();
   const router = useRouter();
   const pathname = usePathname();
-  const searchParams = useSearchParams();
 
   useEffect(() => {
-    if (cargando) return;
-
-    if (!sesion) {
-      const query = searchParams.toString();
-      const destino = pathname + (query ? `?${query}` : "");
-      router.replace(`/bienvenida?next=${encodeURIComponent(destino)}`);
-      return;
-    }
+    if (cargando || !sesion) return;
 
     if (
       sesion.rol === "visitante" &&
@@ -36,7 +48,7 @@ export default function AppGroupLayout({
     ) {
       router.replace("/post");
     }
-  }, [cargando, sesion, pathname, router, searchParams]);
+  }, [cargando, sesion, pathname, router]);
 
   const rutaRestringida =
     sesion?.rol === "visitante" &&
@@ -44,9 +56,14 @@ export default function AppGroupLayout({
 
   if (cargando || !sesion || rutaRestringida) {
     return (
-      <div className="flex flex-1 items-center justify-center text-text-secondary">
-        Cargando...
-      </div>
+      <>
+        <Suspense fallback={null}>
+          <RedirigirSinSesion />
+        </Suspense>
+        <div className="flex flex-1 items-center justify-center text-text-secondary">
+          Cargando...
+        </div>
+      </>
     );
   }
 
