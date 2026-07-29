@@ -923,9 +923,8 @@ export function MapaView() {
     const distanciaKm = distanciaTotalKm(puntos);
 
     if (tokenActual && puntos.length >= 2) {
-      setResumen({ distanciaKm, duracionSeg });
       try {
-        const resultado = await apiPost<{ guardadoDetalle?: boolean }>(
+        const resultado = await apiPost<{ guardado?: boolean; guardadoDetalle?: boolean }>(
           "/mapa/recorridos",
           {
             tipo: modoActual === "ruta" ? "ruta" : "libre",
@@ -937,11 +936,16 @@ export function MapaView() {
           },
           tokenActual,
         );
-        if (resultado?.guardadoDetalle === false) {
-          setMensaje(
-            "Tus estadísticas se guardaron, pero no el detalle de esta ruta: alcanzaste el máximo de 10 rutas mapeadas en Mis Rutas.",
-          );
-          setLimiteRutasAlcanzado(true);
+        // guardado === false: sesión demasiado corta (toque accidental), el
+        // backend no guardó nada — no hay resumen que mostrar.
+        if (resultado?.guardado !== false) {
+          setResumen({ distanciaKm, duracionSeg });
+          if (resultado?.guardadoDetalle === false) {
+            setMensaje(
+              "Tus estadísticas se guardaron, pero no el detalle de esta ruta: alcanzaste el máximo de 10 rutas mapeadas en Mis Rutas.",
+            );
+            setLimiteRutasAlcanzado(true);
+          }
         }
       } catch (err) {
         setMensaje(err instanceof ApiError ? err.message : "No se pudo guardar el recorrido.");
