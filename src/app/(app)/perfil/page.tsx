@@ -70,7 +70,7 @@ export default function PerfilPage() {
       // ignorar
     }
     try {
-      const recorridos = await apiGet<RecorridoResumen[]>("/mapa/recorridos", token);
+      const recorridos = await apiGet<RecorridoResumen[]>("/mapa/historial", token);
       setMisRecorridos(recorridos);
     } catch {
       // ignorar
@@ -501,7 +501,7 @@ export default function PerfilPage() {
                   <div>
                     <p className={r.tipo === "ruta" ? "text-sm text-text-accent" : "text-sm text-text-primary"}>
                       {r.tipo === "ruta" ? "Ruta" : "Libre"}
-                      {!r.mapeado && " · sin mapeo"}
+                      {!r.mapeado && " · SM"}
                     </p>
                     <p className="text-[10px] text-text-muted">tipo</p>
                   </div>

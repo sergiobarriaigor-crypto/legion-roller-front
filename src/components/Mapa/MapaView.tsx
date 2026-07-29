@@ -890,7 +890,7 @@ export function MapaView() {
         );
         if (resultado?.guardadoDetalle === false) {
           setMensaje(
-            "Tus estadísticas se guardaron, pero no el detalle de esta ruta: alcanzaste el máximo de 10 rutas guardadas.",
+            "Tus estadísticas se guardaron, pero no el detalle de esta ruta: alcanzaste el máximo de 10 rutas mapeadas en Mis Rutas.",
           );
           setLimiteRutasAlcanzado(true);
         }
