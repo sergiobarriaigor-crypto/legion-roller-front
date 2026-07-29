@@ -172,6 +172,7 @@ export function FormularioRegistro({ onVolver }: Props) {
     <form
       onSubmit={enviarSolicitud}
       className="card flex w-full flex-col gap-3 p-5"
+      style={{ border: "none" }}
     >
       <h2 className="text-sm font-semibold text-text-primary">Solicitud de registro</h2>
 
