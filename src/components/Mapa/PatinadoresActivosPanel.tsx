@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { IconX } from "@tabler/icons-react";
-import { sectorMasCercano } from "@/lib/sectores";
+import { useNombreLugar } from "@/lib/sectores";
 import { tiempoTranscurrido } from "@/lib/tiempo";
 
 export interface PatinadorActivo {
@@ -17,6 +17,7 @@ export interface PatinadorActivo {
 const MAX_VISIBLES = 5;
 
 function TarjetaPatinador({ p }: { p: PatinadorActivo }) {
+  const sector = useNombreLugar(p.lat, p.lon);
   return (
     <div className="flex items-center gap-3 rounded-app border border-white/10 bg-black/40 px-3 py-2 backdrop-blur-sm">
       {p.fotoUrl ? (
@@ -29,7 +30,7 @@ function TarjetaPatinador({ p }: { p: PatinadorActivo }) {
       )}
       <div className="flex flex-1 flex-col">
         <span className="text-sm text-text-primary">{p.nombre}</span>
-        <span className="text-xs text-blue-text">{sectorMasCercano(p.lat, p.lon)}</span>
+        <span className="text-xs text-blue-text">{sector}</span>
       </div>
       <span className="whitespace-nowrap text-[10px] text-text-muted">
         {tiempoTranscurrido(p.iniciadoEn)}

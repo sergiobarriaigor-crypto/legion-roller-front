@@ -1,4 +1,6 @@
+import { useEffect, useState } from "react";
 import { distanciaHaversineKm } from "@/lib/geo";
+import { reverseGeocodificarConCache } from "@/lib/geocodificacion";
 
 interface Sector {
   nombre: string;
@@ -35,4 +37,26 @@ export function sectorMasCercano(lat: number, lon: number): string {
   }
 
   return mejor.nombre;
+}
+
+// Reemplaza el resultado de sectorMasCercano (que solo ordena estos mismos 6
+// puntos fijos por cercanía, aunque el más cercano esté a varios km de
+// distancia real) por el nombre real del lugar vía reverseGeocodificar
+// (Nominatim). Devuelve sectorMasCercano de entrada mientras responde la red
+// o si Nominatim falla, así el usuario siempre ve algo y nunca un espacio en
+// blanco.
+export function useNombreLugar(lat: number, lon: number): string {
+  const [nombre, setNombre] = useState(() => sectorMasCercano(lat, lon));
+
+  useEffect(() => {
+    let cancelado = false;
+    reverseGeocodificarConCache(lat, lon).then((real) => {
+      if (!cancelado && real) setNombre(real);
+    });
+    return () => {
+      cancelado = true;
+    };
+  }, [lat, lon]);
+
+  return nombre;
 }

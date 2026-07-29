@@ -50,3 +50,25 @@ export async function reverseGeocodificar(lat: number, lon: number): Promise<Lug
     return null;
   }
 }
+
+// Cache en memoria (dura mientras la pestaña esté abierta) para no golpear
+// Nominatim de nuevo por cada patinador activo o cada ruta en la lista, que se
+// re-renderizan seguido (el panel de Patinadores Activos re-consulta cada
+// 15-20s). Redondear a 3 decimales (~110m) agrupa posiciones que en la
+// práctica son el mismo lugar.
+const cacheNombreLugar = new Map<string, string>();
+
+function claveCache(lat: number, lon: number): string {
+  return `${lat.toFixed(3)},${lon.toFixed(3)}`;
+}
+
+export async function reverseGeocodificarConCache(lat: number, lon: number): Promise<string | null> {
+  const clave = claveCache(lat, lon);
+  const cacheado = cacheNombreLugar.get(clave);
+  if (cacheado) return cacheado;
+
+  const resultado = await reverseGeocodificar(lat, lon);
+  if (!resultado) return null;
+  cacheNombreLugar.set(clave, resultado.nombre);
+  return resultado.nombre;
+}

@@ -12,7 +12,8 @@ import {
 } from "@tabler/icons-react";
 import { apiGet, apiPatch, apiDelete, ApiError } from "@/lib/api";
 import { velocidadMaximaKmH, type PuntoGps } from "@/lib/geo";
-import { sectorMasCercano } from "@/lib/sectores";
+import { useNombreLugar } from "@/lib/sectores";
+import { NombreLugar } from "@/components/Mapa/NombreLugar";
 import { CompartirRecorridoModal } from "@/components/Mapa/CompartirRecorridoModal";
 import { Toast } from "@/components/Toast";
 
@@ -179,7 +180,7 @@ function FichaRecorrido({
     hour: "2-digit",
     minute: "2-digit",
   });
-  const sector = sectorMasCercano(inicio.lat, inicio.lon);
+  const sector = useNombreLugar(inicio.lat, inicio.lon);
 
   return (
     <div className="flex flex-col gap-3">
@@ -479,9 +480,11 @@ export function MisRutasPanel({
                         <span className="text-sm text-text-primary">
                           {new Date(r.createdAt).toLocaleDateString("es-CL")}
                         </span>
-                        <span className="text-xs text-blue-text">
-                          {sectorMasCercano(r.puntos[0].lat, r.puntos[0].lon)}
-                        </span>
+                        <NombreLugar
+                          lat={r.puntos[0].lat}
+                          lon={r.puntos[0].lon}
+                          className="text-xs text-blue-text"
+                        />
                         <span className="text-xs text-text-secondary">
                           {r.distanciaKm.toFixed(2)} km — {Math.round(r.duracionSeg / 60)} min
                         </span>
