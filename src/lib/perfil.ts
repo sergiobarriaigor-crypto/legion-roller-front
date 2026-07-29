@@ -6,7 +6,15 @@ export interface StatsPerfil {
   numRutas: number;
   asistencias: number;
   eventos: number;
-  horasPatinadas: number;
+  duracionMinutos: number;
+}
+
+export function formatearDuracion(minutos: number): string {
+  const horas = Math.floor(minutos / 60);
+  const min = minutos % 60;
+  if (horas === 0) return `${min} min`;
+  if (min === 0) return `${horas} h`;
+  return `${horas} h ${min} min`;
 }
 
 export interface EstadoPerfil {

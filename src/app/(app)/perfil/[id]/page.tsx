@@ -6,7 +6,7 @@ import Link from "next/link";
 import { IconCheck, IconTarget, IconLock } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
 import { ApiError } from "@/lib/api";
-import { CATALOGO_TECNICAS, HITOS_DISTANCIA_KM, perfilPublico, type PerfilPublico } from "@/lib/perfil";
+import { CATALOGO_TECNICAS, HITOS_DISTANCIA_KM, formatearDuracion, perfilPublico, type PerfilPublico } from "@/lib/perfil";
 import { GaleriaPerfil } from "@/components/Perfil/GaleriaPerfil";
 
 // Vista de solo lectura del perfil de OTRO miembro — abierta desde "Ver
@@ -100,8 +100,10 @@ export default function PerfilPublicoPage() {
           <p className="text-xs text-text-muted">eventos</p>
         </div>
         <div>
-          <p className="text-lg font-semibold text-text-accent">{perfil.stats.horasPatinadas}</p>
-          <p className="text-xs text-text-muted">horas</p>
+          <p className="text-lg font-semibold text-text-accent">
+            {formatearDuracion(perfil.stats.duracionMinutos)}
+          </p>
+          <p className="text-xs text-text-muted">tiempo</p>
         </div>
       </div>
 

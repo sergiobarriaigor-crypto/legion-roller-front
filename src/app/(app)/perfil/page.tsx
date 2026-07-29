@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { IconCheck, IconTarget, IconLock, IconPlayerPlay, IconPhoto } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
 import { apiGet, apiPatch, apiPut, apiDelete, ApiError } from "@/lib/api";
-import { CATALOGO_TECNICAS, HITOS_DISTANCIA_KM, type MiPerfil } from "@/lib/perfil";
+import { CATALOGO_TECNICAS, HITOS_DISTANCIA_KM, formatearDuracion, type MiPerfil } from "@/lib/perfil";
 import { ETIQUETA_MOTIVO, type MiEmergencia } from "@/lib/emergencias";
 import type { Post } from "@/lib/posts";
 import { ImageUploadCrop } from "@/components/ImageUploadCrop";
@@ -278,8 +278,10 @@ export default function PerfilPage() {
           <p className="text-sm text-text-muted">eventos</p>
         </div>
         <div>
-          <p className="text-lg font-semibold text-text-accent">{perfil.stats.horasPatinadas}</p>
-          <p className="text-sm text-text-muted">horas</p>
+          <p className="text-lg font-semibold text-text-accent">
+            {formatearDuracion(perfil.stats.duracionMinutos)}
+          </p>
+          <p className="text-sm text-text-muted">tiempo</p>
         </div>
       </div>
 
