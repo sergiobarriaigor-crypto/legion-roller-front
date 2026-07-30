@@ -267,7 +267,7 @@ export function BurbujaMensaje({
               <img
                 src={mensaje.adjuntoUrl}
                 alt="Foto"
-                className="max-h-64 w-full rounded-app object-cover"
+                className="max-h-80 w-full rounded-app object-cover"
               />
             </button>
           )}
@@ -300,6 +300,7 @@ export function BurbujaMensaje({
                   lon={mensaje.adjuntoUbicacionLon}
                   fotoUrl={mensaje.autorFotoUrl}
                   nombre={mensaje.autorNombre}
+                  alto={180}
                 />
                 {mensaje.adjuntoUbicacionNombre && (
                   <span className="mt-1 flex items-center gap-1 text-xs opacity-80">
@@ -336,7 +337,7 @@ export function BurbujaMensaje({
             mensaje.adjuntoRutaPuntos &&
             mensaje.adjuntoRutaDistanciaKm !== null &&
             mensaje.adjuntoRutaDuracionSeg !== null && (
-              <div className="mb-1 bg-black/20 rounded-app">
+              <div className="mb-1">
                 <TarjetaRuta
                   puntos={JSON.parse(mensaje.adjuntoRutaPuntos)}
                   distanciaKm={mensaje.adjuntoRutaDistanciaKm}
@@ -349,7 +350,7 @@ export function BurbujaMensaje({
             <video
               src={mensaje.adjuntoUrl}
               controls
-              className="mb-1 max-h-64 w-full rounded-app"
+              className="mb-1 max-h-80 w-full rounded-app"
             />
           )}
 
@@ -374,20 +375,22 @@ export function BurbujaMensaje({
               target="_blank"
               rel="noopener noreferrer"
               download={mensaje.adjuntoArchivoNombre ?? undefined}
-              className="mb-1 flex items-center gap-2 rounded-app bg-black/20 px-2.5 py-2"
+              className="mb-1 flex w-full items-center gap-3 rounded-app bg-black/25 px-3 py-3"
             >
-              <IconoArchivo nombre={mensaje.adjuntoArchivoNombre ?? ""} size={28} />
+              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-app bg-black/20">
+                <IconoArchivo nombre={mensaje.adjuntoArchivoNombre ?? ""} size={26} />
+              </span>
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-xs font-semibold">
+                <span className="block truncate text-sm font-semibold">
                   {mensaje.adjuntoArchivoNombre ?? "Documento"}
                 </span>
                 {mensaje.adjuntoArchivoTamanoKb !== null && (
-                  <span className="block text-[11px] opacity-70">
+                  <span className="block text-xs opacity-70">
                     {formatearTamano(mensaje.adjuntoArchivoTamanoKb)}
                   </span>
                 )}
               </span>
-              <IconDownload size={16} className="shrink-0 opacity-70" />
+              <IconDownload size={18} className="shrink-0 opacity-70" />
             </a>
           )}
 

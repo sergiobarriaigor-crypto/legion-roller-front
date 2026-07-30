@@ -2,28 +2,28 @@
 
 import { IconRoute } from "@tabler/icons-react";
 
-const TAM_PREVIEW = 64;
+const ANCHO_PREVIEW = 320;
+const ALTO_PREVIEW = 170;
 
 interface PuntoRuta {
   lat: number;
   lon: number;
 }
 
-// Boceto simple del trazado (misma lógica que VistaPreviaSvg de MisRutasPanel.tsx,
-// copiada localmente: no se comparten helpers pequeños entre módulos en este proyecto).
+// Vista previa grande del trazado (a diferencia del ícono chico de 64x64 que
+// se usa en listas como MisRutasPanel.tsx, acá el recorrido es el propio
+// contenido del mensaje — mismo criterio que una foto o un video: ocupa todo
+// el ancho de la burbuja, no una tarjeta angosta).
 function VistaPreviaTrazado({ puntos }: { puntos: PuntoRuta[] }) {
   if (puntos.length < 2) {
     return (
-      <div
-        className="flex shrink-0 items-center justify-center rounded-app bg-black/20"
-        style={{ width: TAM_PREVIEW, height: TAM_PREVIEW }}
-      >
-        <IconRoute size={20} className="opacity-60" />
+      <div className="flex aspect-[16/9] w-full items-center justify-center bg-black/30">
+        <IconRoute size={32} className="opacity-60" />
       </div>
     );
   }
 
-  const padding = 6;
+  const padding = 16;
   const lats = puntos.map((p) => p.lat);
   const lons = puntos.map((p) => p.lon);
   const minLat = Math.min(...lats);
@@ -33,8 +33,8 @@ function VistaPreviaTrazado({ puntos }: { puntos: PuntoRuta[] }) {
   const rangoLat = maxLat - minLat || 0.0001;
   const rangoLon = maxLon - minLon || 0.0001;
 
-  const x = (lon: number) => padding + ((lon - minLon) / rangoLon) * (TAM_PREVIEW - padding * 2);
-  const y = (lat: number) => padding + ((maxLat - lat) / rangoLat) * (TAM_PREVIEW - padding * 2);
+  const x = (lon: number) => padding + ((lon - minLon) / rangoLon) * (ANCHO_PREVIEW - padding * 2);
+  const y = (lat: number) => padding + ((maxLat - lat) / rangoLat) * (ALTO_PREVIEW - padding * 2);
 
   const inicio = puntos[0];
   const fin = puntos[puntos.length - 1];
@@ -42,14 +42,13 @@ function VistaPreviaTrazado({ puntos }: { puntos: PuntoRuta[] }) {
 
   return (
     <svg
-      viewBox={`0 0 ${TAM_PREVIEW} ${TAM_PREVIEW}`}
-      width={TAM_PREVIEW}
-      height={TAM_PREVIEW}
-      className="shrink-0 rounded-app bg-black/20"
+      viewBox={`0 0 ${ANCHO_PREVIEW} ${ALTO_PREVIEW}`}
+      className="block w-full bg-black/30"
+      preserveAspectRatio="xMidYMid meet"
     >
-      <polyline points={trazo} fill="none" stroke="#C99A3D" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
-      <circle cx={x(inicio.lon)} cy={y(inicio.lat)} r={3} fill="#5fae4e" />
-      <circle cx={x(fin.lon)} cy={y(fin.lat)} r={3} fill="#d8342f" />
+      <polyline points={trazo} fill="none" stroke="#C99A3D" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx={x(inicio.lon)} cy={y(inicio.lat)} r={5} fill="#5fae4e" />
+      <circle cx={x(fin.lon)} cy={y(fin.lat)} r={5} fill="#d8342f" />
     </svg>
   );
 }
@@ -64,13 +63,16 @@ export function TarjetaRuta({
   duracionSeg: number;
 }) {
   return (
-    <div className="flex items-center gap-2.5 rounded-app px-2 py-1.5">
+    <div className="relative w-full overflow-hidden rounded-app">
       <VistaPreviaTrazado puntos={puntos} />
-      <div className="min-w-0">
-        <p className="text-xs font-semibold">Recorrido compartido</p>
-        <p className="text-xs opacity-80">
-          {distanciaKm.toFixed(2)} km — {Math.round(duracionSeg / 60)} min
-        </p>
+      <div className="absolute inset-x-0 bottom-0 flex items-center gap-2 bg-gradient-to-t from-black/75 to-transparent px-3 py-2.5">
+        <IconRoute size={18} className="shrink-0" />
+        <div className="min-w-0">
+          <p className="text-sm font-semibold">Recorrido compartido</p>
+          <p className="text-xs opacity-85">
+            {distanciaKm.toFixed(2)} km — {Math.round(duracionSeg / 60)} min
+          </p>
+        </div>
       </div>
     </div>
   );
