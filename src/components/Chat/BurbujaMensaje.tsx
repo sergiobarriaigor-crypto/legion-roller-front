@@ -193,17 +193,12 @@ export function BurbujaMensaje({
     );
   }
 
-  // Adjuntos "de borde a borde": en vez de una vista previa chica flotando
-  // dentro del padding de la burbuja, el adjunto ocupa el ancho completo de
-  // la burbuja (y el radio de sus esquinas superiores) igual que
-  // WhatsApp/Telegram/iMessage. `estiloSangrado` cancela el px-3/py-2 del
-  // contenedor padre con márgenes negativos (mismo truco ya usado para el
-  // header fijo del chat) y calca el radio de la burbuja: las esquinas de
+  // Sangrado "de borde a borde" para audio y encuestas: el adjunto cancela
+  // el px-3/py-2 del contenedor padre con márgenes negativos (mismo truco
+  // usado para el header fijo del chat) y calca el radio de la burbuja —
   // arriba solo si el adjunto es lo primero (si hay "Reenviado" o una cita
   // de respuesta antes, esas ya tienen su propio padding y quedan rectas),
-  // las de abajo solo si el adjunto es lo último (ningún adjunto de este chat
-  // hoy manda texto junto con el archivo, pero se deja la condición por si
-  // algún día se agrega esa combinación).
+  // abajo solo si el adjunto es lo último.
   const hayEncabezadoAntes = !compacto && (mensaje.reenviado || mensaje.respuestaA !== null);
   const radioSuperior = esMio ? "14px 4px" : "4px 14px";
   function estiloSangrado(esUltimo: boolean): React.CSSProperties {
@@ -215,11 +210,6 @@ export function BurbujaMensaje({
       borderRadius: `${hayEncabezadoAntes ? "0px 0px" : radioSuperior} ${esUltimo ? "14px 14px" : "0px 0px"}`,
     };
   }
-
-  // Se ocultan aquí (no en la burbuja) porque solo se usan en los adjuntos
-  // que se superponen al contenido (foto, ubicación con mapa, ruta) — el
-  // resto (video, documento, audio, encuesta) conserva la fila de abajo tal
-  // cual, sin superponer nada sobre sus propios controles.
   const horaTexto = new Date(mensaje.createdAt).toLocaleTimeString("es-CL", {
     hour: "2-digit",
     minute: "2-digit",
@@ -229,22 +219,6 @@ export function BurbujaMensaje({
       {estadoEnvio === "enviado" ? <IconCheck size={12} /> : <IconChecks size={12} />}
     </span>
   );
-  function pastillaTiempo() {
-    return (
-      <span className="absolute bottom-1.5 right-1.5 flex items-center gap-1 rounded-full bg-black/55 px-2 py-0.5 text-[10px] text-white">
-        {mensaje.fijado && <IconPin size={10} />}
-        <span>{horaTexto}</span>
-        {iconoEnvio}
-      </span>
-    );
-  }
-  const ocultarFilaInferior =
-    !mensaje.texto &&
-    (mensaje.adjuntoTipo === "foto" ||
-      (mensaje.adjuntoTipo === "ubicacion" &&
-        mensaje.adjuntoUbicacionLat !== null &&
-        mensaje.adjuntoUbicacionLon !== null) ||
-      mensaje.adjuntoTipo === "ruta");
 
   return (
     <div id={`mensaje-${mensaje.id}`} className={`flex flex-col ${esMio ? "items-end" : "items-start"}`}>
@@ -314,16 +288,14 @@ export function BurbujaMensaje({
               onTouchMove={(e) => e.stopPropagation()}
               onTouchEnd={(e) => e.stopPropagation()}
               onContextMenu={(e) => e.stopPropagation()}
-              style={estiloSangrado(!mensaje.texto)}
-              className="relative block overflow-hidden"
+              className="mb-1 block w-full"
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={mensaje.adjuntoUrl}
                 alt="Foto"
-                className="block max-h-80 w-full object-cover"
+                className="max-h-80 w-full rounded-app object-cover"
               />
-              {!mensaje.texto && pastillaTiempo()}
             </button>
           )}
 
@@ -348,21 +320,17 @@ export function BurbujaMensaje({
                 onTouchMove={(e) => e.stopPropagation()}
                 onTouchEnd={(e) => e.stopPropagation()}
                 onContextMenu={(e) => e.stopPropagation()}
-                style={estiloSangrado(!mensaje.texto)}
-                className="block overflow-hidden text-left"
+                className="mb-1 block w-full text-left"
               >
-                <div className="relative">
-                  <MiniMapaUbicacion
-                    lat={mensaje.adjuntoUbicacionLat}
-                    lon={mensaje.adjuntoUbicacionLon}
-                    fotoUrl={mensaje.autorFotoUrl}
-                    nombre={mensaje.autorNombre}
-                    alto={180}
-                  />
-                  {!mensaje.texto && pastillaTiempo()}
-                </div>
+                <MiniMapaUbicacion
+                  lat={mensaje.adjuntoUbicacionLat}
+                  lon={mensaje.adjuntoUbicacionLon}
+                  fotoUrl={mensaje.autorFotoUrl}
+                  nombre={mensaje.autorNombre}
+                  alto={180}
+                />
                 {mensaje.adjuntoUbicacionNombre && (
-                  <span className="flex items-center gap-1 px-3 pb-2 pt-1 text-xs opacity-80">
+                  <span className="mt-1 flex items-center gap-1 text-xs opacity-80">
                     <IconMapPin size={13} className="shrink-0" />
                     Cerca de {mensaje.adjuntoUbicacionNombre}
                   </span>
@@ -373,10 +341,7 @@ export function BurbujaMensaje({
           {mensaje.adjuntoTipo === "ubicacion" &&
             (mensaje.adjuntoUbicacionLat === null || mensaje.adjuntoUbicacionLon === null) &&
             mensaje.adjuntoUbicacionNombre && (
-              <div
-                style={estiloSangrado(false)}
-                className="flex items-center gap-1.5 bg-black/20 px-3 py-2"
-              >
+              <div className="mb-1 flex items-center gap-1.5 rounded-app bg-black/20 px-2 py-1.5">
                 <IconMapPin size={16} className="shrink-0" />
                 <span className="text-xs font-semibold">{mensaje.adjuntoUbicacionNombre}</span>
               </div>
@@ -399,28 +364,20 @@ export function BurbujaMensaje({
             mensaje.adjuntoRutaPuntos &&
             mensaje.adjuntoRutaDistanciaKm !== null &&
             mensaje.adjuntoRutaDuracionSeg !== null && (
-              <div style={estiloSangrado(!mensaje.texto)} className="overflow-hidden">
+              <div className="mb-1">
                 <TarjetaRuta
                   puntos={JSON.parse(mensaje.adjuntoRutaPuntos)}
                   distanciaKm={mensaje.adjuntoRutaDistanciaKm}
                   duracionSeg={mensaje.adjuntoRutaDuracionSeg}
-                  horaTexto={!mensaje.texto ? horaTexto : undefined}
-                  marcaEnvio={!mensaje.texto ? iconoEnvio : undefined}
-                  fijado={!mensaje.texto && mensaje.fijado}
                 />
               </div>
             )}
 
-          {/* El video conserva la fila de hora/check debajo (no superpuesta):
-              los controles nativos del navegador ya ocupan la franja
-              inferior del video, y una pastilla propia ahí se vería encimada
-              con ellos. */}
           {mensaje.adjuntoTipo === "video" && mensaje.adjuntoUrl && (
             <video
               src={mensaje.adjuntoUrl}
               controls
-              style={estiloSangrado(false)}
-              className="block max-h-80 w-full"
+              className="mb-1 max-h-80 w-full rounded-app"
             />
           )}
 
@@ -446,8 +403,7 @@ export function BurbujaMensaje({
               target="_blank"
               rel="noopener noreferrer"
               download={mensaje.adjuntoArchivoNombre ?? undefined}
-              style={estiloSangrado(false)}
-              className="flex w-full items-center gap-3 bg-black/25 px-3 py-3"
+              className="mb-1 flex w-full items-center gap-3 rounded-app bg-black/25 px-3 py-3"
             >
               <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-app bg-black/20">
                 <IconoArchivo nombre={mensaje.adjuntoArchivoNombre ?? ""} size={26} />
@@ -522,13 +478,11 @@ export function BurbujaMensaje({
 
           {mensaje.texto && mensaje.adjuntoTipo !== "encuesta" && <p>{mensaje.texto}</p>}
 
-          {!ocultarFilaInferior && (
-            <div className="mt-0.5 flex items-center justify-end gap-1">
-              {mensaje.fijado && <IconPin size={11} className="opacity-70" />}
-              <span className="text-[10px] opacity-70">{horaTexto}</span>
-              {iconoEnvio}
-            </div>
-          )}
+          <div className="mt-0.5 flex items-center justify-end gap-1">
+            {mensaje.fijado && <IconPin size={11} className="opacity-70" />}
+            <span className="text-[10px] opacity-70">{horaTexto}</span>
+            {iconoEnvio}
+          </div>
         </div>
       </div>
 

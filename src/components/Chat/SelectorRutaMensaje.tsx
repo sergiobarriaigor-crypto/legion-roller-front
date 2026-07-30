@@ -64,7 +64,7 @@ export function SelectorRutaMensaje({
               key={r.id}
               type="button"
               onClick={() => onElegir(r)}
-              className="w-full overflow-hidden rounded-app text-left text-text-primary active:bg-white/5"
+              className="w-full rounded-app text-left text-text-primary active:bg-white/5"
             >
               <TarjetaRuta puntos={r.puntos} distanciaKm={r.distanciaKm} duracionSeg={r.duracionSeg} />
             </button>
