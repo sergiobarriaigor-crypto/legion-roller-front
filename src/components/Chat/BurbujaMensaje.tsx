@@ -226,18 +226,9 @@ export function BurbujaMensaje({
     </span>
   );
 
-  // Encuesta y audio ignoran el límite de 75% del resto de los mensajes —
-  // mismo criterio que WhatsApp/Telegram, que les dan más ancho porque el
-  // contenido (texto de las opciones, controles del reproductor) se lee mal
-  // en una columna angosta.
-  const anchoMaximo =
-    mensaje.adjuntoTipo === "encuesta" || mensaje.adjuntoTipo === "audio"
-      ? "max-w-[92%]"
-      : "max-w-[75%]";
-
   return (
     <div id={`mensaje-${mensaje.id}`} className={`flex flex-col ${esMio ? "items-end" : "items-start"}`}>
-      <div className={`relative w-full ${anchoMaximo}`} style={{ [esMio ? "marginLeft" : "marginRight"]: "auto" }}>
+      <div className="relative w-full max-w-[75%]" style={{ [esMio ? "marginLeft" : "marginRight"]: "auto" }}>
         {!compacto && arrastreX > 0 && (
           <IconArrowBackUp
             size={16}
