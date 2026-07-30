@@ -226,9 +226,18 @@ export function BurbujaMensaje({
     </span>
   );
 
+  // Encuesta y audio ignoran el límite de 75% del resto de los mensajes —
+  // mismo criterio que WhatsApp/Telegram, que les dan más ancho porque el
+  // contenido (texto de las opciones, controles del reproductor) se lee mal
+  // en una columna angosta.
+  const anchoMaximo =
+    mensaje.adjuntoTipo === "encuesta" || mensaje.adjuntoTipo === "audio"
+      ? "max-w-[92%]"
+      : "max-w-[75%]";
+
   return (
     <div id={`mensaje-${mensaje.id}`} className={`flex flex-col ${esMio ? "items-end" : "items-start"}`}>
-      <div className="relative w-full max-w-[75%]" style={{ [esMio ? "marginLeft" : "marginRight"]: "auto" }}>
+      <div className={`relative w-full ${anchoMaximo}`} style={{ [esMio ? "marginLeft" : "marginRight"]: "auto" }}>
         {!compacto && arrastreX > 0 && (
           <IconArrowBackUp
             size={16}
@@ -438,13 +447,13 @@ export function BurbujaMensaje({
               onTouchEnd={(e) => e.stopPropagation()}
               onContextMenu={(e) => e.stopPropagation()}
               style={estiloSangrado(false)}
-              className="flex flex-col gap-1.5 overflow-hidden bg-black/20 px-2.5 py-2"
+              className="flex flex-col gap-2.5 overflow-hidden bg-black/20 px-3.5 py-3"
             >
-              <p className="flex items-center gap-1.5 text-sm font-semibold">
-                <IconChartBar size={15} className="shrink-0" />
+              <p className="flex items-center gap-2 text-base font-semibold">
+                <IconChartBar size={19} className="shrink-0" />
                 {mensaje.texto}
               </p>
-              <div className="flex flex-col gap-1.5">
+              <div className="flex flex-col gap-2">
                 {mensaje.encuesta.opciones.map((o) => {
                   const total = mensaje.encuesta!.totalVotos;
                   const pct = total > 0 ? Math.round((o.votos / total) * 100) : 0;
@@ -452,7 +461,7 @@ export function BurbujaMensaje({
                   return (
                     <div
                       key={o.id}
-                      className={`relative flex items-center gap-1.5 overflow-hidden rounded-app border px-2.5 py-1.5 text-xs ${
+                      className={`relative flex items-center gap-2 overflow-hidden rounded-app border px-3.5 py-2.5 text-sm ${
                         votada ? "border-text-accent" : "border-white/15"
                       }`}
                     >
@@ -466,9 +475,9 @@ export function BurbujaMensaje({
                           e.stopPropagation();
                           onVotarEncuesta?.(mensaje.id, o.id);
                         }}
-                        className="relative flex min-w-0 flex-1 items-center gap-1 text-left"
+                        className="relative flex min-w-0 flex-1 items-center gap-1.5 text-left"
                       >
-                        {votada && <IconCheck size={12} className="shrink-0" />}
+                        {votada && <IconCheck size={15} className="shrink-0" />}
                         <span className="truncate">{o.texto}</span>
                       </button>
                       <span className="relative shrink-0 opacity-70">{pct}%</span>
@@ -482,14 +491,14 @@ export function BurbujaMensaje({
                           aria-label="Ver quién votó"
                           className="relative shrink-0 text-text-accent"
                         >
-                          <IconUsers size={14} />
+                          <IconUsers size={17} />
                         </button>
                       )}
                     </div>
                   );
                 })}
               </div>
-              <span className="text-[11px] opacity-60">
+              <span className="text-xs opacity-60">
                 {mensaje.encuesta.totalVotos} de {mensaje.encuesta.totalMiembros} votaron
                 {mensaje.encuesta.anonima ? " · voto anónimo" : ""}
               </span>

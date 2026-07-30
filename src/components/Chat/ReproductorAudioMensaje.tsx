@@ -69,7 +69,7 @@ export function ReproductorAudioMensaje({
   const segundosAMostrar = tiempoActual > 0 ? tiempoActual : (duracionSeg ?? 0);
 
   return (
-    <div className="flex items-center gap-2 bg-black/20 px-2.5 py-2">
+    <div className="flex items-center gap-3 bg-black/20 px-3.5 py-3">
       <audio ref={audioRef} src={url} preload="metadata" className="hidden" />
       <button
         type="button"
@@ -80,15 +80,15 @@ export function ReproductorAudioMensaje({
         aria-label={reproduciendo ? "Pausar" : "Reproducir"}
         className="shrink-0 text-text-accent"
       >
-        {reproduciendo ? <IconPlayerPause size={22} /> : <IconPlayerPlay size={22} />}
+        {reproduciendo ? <IconPlayerPause size={30} /> : <IconPlayerPlay size={30} />}
       </button>
-      <div onClick={buscar} className="relative h-1.5 flex-1 cursor-pointer rounded-full bg-white/20">
+      <div onClick={buscar} className="relative h-2 flex-1 cursor-pointer rounded-full bg-white/20">
         <div
           className="absolute inset-y-0 left-0 rounded-full bg-text-accent"
           style={{ width: `${progreso * 100}%` }}
         />
       </div>
-      <span className="shrink-0 text-[11px] tabular-nums opacity-70">
+      <span className="shrink-0 text-sm tabular-nums opacity-70">
         {formatearReloj(segundosAMostrar)}
       </span>
     </div>
