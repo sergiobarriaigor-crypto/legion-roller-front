@@ -30,7 +30,8 @@ export type TipoAdjuntoMensaje =
   | "ruta"
   | "video"
   | "archivo"
-  | "audio";
+  | "audio"
+  | "encuesta";
 
 export interface RespuestaCitada {
   texto: string;
@@ -40,6 +41,21 @@ export interface RespuestaCitada {
 export interface ReaccionMensaje {
   miembroId: number;
   emoji: string;
+}
+
+// Encuesta: solo en el chat grupal, la pregunta es el propio texto del
+// mensaje. miVotoOpcionId es null si el usuario actual todavía no votó.
+export interface OpcionEncuesta {
+  id: number;
+  texto: string;
+  votos: number;
+}
+
+export interface EncuestaMensaje {
+  id: number;
+  opciones: OpcionEncuesta[];
+  totalVotos: number;
+  miVotoOpcionId: number | null;
 }
 
 export interface MensajeChat {
@@ -67,6 +83,7 @@ export interface MensajeChat {
   adjuntoArchivoTamanoKb: number | null;
   adjuntoAudioDuracionSeg: number | null;
   fijado: boolean;
+  encuesta: EncuestaMensaje | null;
   reacciones: ReaccionMensaje[];
 }
 
@@ -113,6 +130,13 @@ export interface EventoFijado {
   mensajeId: number;
   sala: string;
   fijado: boolean;
+}
+
+export interface EventoEncuesta {
+  mensajeId: number;
+  sala: string;
+  opciones: OpcionEncuesta[];
+  totalVotos: number;
 }
 
 export interface MiembroSimple {
@@ -243,4 +267,30 @@ export function adjuntosDeSala(
   token: string | null,
 ) {
   return apiGet<AdjuntoAlbum[]>(`/chat/mensajes/${sala}/adjuntos?tipo=${tipo}`, token);
+}
+
+// Encuestas: solo disponibles en el chat grupal (validado en el backend).
+export function crearEncuesta(
+  sala: string,
+  pregunta: string,
+  opciones: string[],
+  token: string | null,
+) {
+  return apiPost<MensajeChat>(
+    `/chat/mensajes/${sala}/encuesta`,
+    { pregunta, opciones },
+    token,
+  );
+}
+
+export function votarEncuesta(
+  mensajeId: number,
+  opcionId: number,
+  token: string | null,
+) {
+  return apiPost<EncuestaMensaje>(
+    `/chat/encuestas/${mensajeId}/votar`,
+    { opcionId },
+    token,
+  );
 }

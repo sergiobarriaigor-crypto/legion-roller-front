@@ -13,6 +13,7 @@ import {
   IconFileTypeXls,
   IconFile,
   IconDownload,
+  IconChartBar,
 } from "@tabler/icons-react";
 import { useRouter } from "next/navigation";
 import type { EstadoEnvio } from "@/hooks/useConversacion";
@@ -73,6 +74,7 @@ export function BurbujaMensaje({
   onResponder,
   onAbrirMenu,
   onReaccionar,
+  onVotarEncuesta,
 }: {
   mensaje: MensajeChat;
   esMio: boolean;
@@ -83,6 +85,7 @@ export function BurbujaMensaje({
   onResponder?: (mensaje: MensajeChat) => void;
   onAbrirMenu?: (mensaje: MensajeChat, rect: DOMRect) => void;
   onReaccionar?: (mensaje: MensajeChat, emoji: string) => void;
+  onVotarEncuesta?: (mensajeId: number, opcionId: number) => void;
 }) {
   const router = useRouter();
   const [arrastreX, setArrastreX] = useState(0);
@@ -384,7 +387,60 @@ export function BurbujaMensaje({
             </a>
           )}
 
-          {mensaje.texto && <p>{mensaje.texto}</p>}
+          {mensaje.adjuntoTipo === "encuesta" && mensaje.encuesta && (
+            // Detiene la propagación de touch/click/contextmenu: mismo motivo
+            // que la foto/ubicación — votar no debe disparar a la vez el
+            // long-press del mensaje.
+            <div
+              onTouchStart={(e) => e.stopPropagation()}
+              onTouchMove={(e) => e.stopPropagation()}
+              onTouchEnd={(e) => e.stopPropagation()}
+              onContextMenu={(e) => e.stopPropagation()}
+              className="mb-1 flex flex-col gap-1.5 rounded-app bg-black/20 px-2.5 py-2"
+            >
+              <p className="flex items-center gap-1.5 text-sm font-semibold">
+                <IconChartBar size={15} className="shrink-0" />
+                {mensaje.texto}
+              </p>
+              <div className="flex flex-col gap-1.5">
+                {mensaje.encuesta.opciones.map((o) => {
+                  const total = mensaje.encuesta!.totalVotos;
+                  const pct = total > 0 ? Math.round((o.votos / total) * 100) : 0;
+                  const votada = mensaje.encuesta!.miVotoOpcionId === o.id;
+                  return (
+                    <button
+                      key={o.id}
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onVotarEncuesta?.(mensaje.id, o.id);
+                      }}
+                      className={`relative overflow-hidden rounded-app border px-2.5 py-1.5 text-left text-xs ${
+                        votada ? "border-text-accent" : "border-white/15"
+                      }`}
+                    >
+                      <span
+                        className="absolute inset-y-0 left-0 bg-text-accent/25"
+                        style={{ width: `${pct}%` }}
+                      />
+                      <span className="relative flex items-center justify-between gap-2">
+                        <span className="flex items-center gap-1">
+                          {votada && <IconCheck size={12} className="shrink-0" />}
+                          {o.texto}
+                        </span>
+                        <span className="shrink-0 opacity-70">{pct}%</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <span className="text-[11px] opacity-60">
+                {mensaje.encuesta.totalVotos} voto{mensaje.encuesta.totalVotos === 1 ? "" : "s"}
+              </span>
+            </div>
+          )}
+
+          {mensaje.texto && mensaje.adjuntoTipo !== "encuesta" && <p>{mensaje.texto}</p>}
 
           <div className="mt-0.5 flex items-center justify-end gap-1">
             {mensaje.fijado && <IconPin size={11} className="opacity-70" />}

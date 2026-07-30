@@ -9,6 +9,8 @@ import {
   eliminarMensaje as apiEliminarMensaje,
   reaccionarMensaje as apiReaccionarMensaje,
   reenviarMensaje as apiReenviarMensaje,
+  crearEncuesta as apiCrearEncuesta,
+  votarEncuesta as apiVotarEncuesta,
   lecturaDeSala,
   type MensajeChat,
   type EnviarMensajeBody,
@@ -16,6 +18,7 @@ import {
   type EventoLectura,
   type EventoReaccion,
   type EventoMensajeEliminado,
+  type EventoEncuesta,
   type CursorLectura,
 } from "@/lib/chat";
 
@@ -164,12 +167,28 @@ export function useConversacion({
       setRespondiendoA((prev) => (prev?.id === ev.mensajeId ? null : prev));
     }
 
+    // Resultados agregados solamente (sin miVotoOpcionId propio): quien acaba
+    // de votar ya actualizó su propio voto de forma optimista al recibir la
+    // respuesta de votarEncuesta(); este evento solo refresca los conteos para
+    // el resto de la sala.
+    function onEncuesta(ev: EventoEncuesta) {
+      if (ev.sala !== sala) return;
+      setMensajes((prev) =>
+        prev.map((m) =>
+          m.id === ev.mensajeId && m.encuesta
+            ? { ...m, encuesta: { ...m.encuesta, opciones: ev.opciones, totalVotos: ev.totalVotos } }
+            : m,
+        ),
+      );
+    }
+
     socket.on("chat:mensaje", onMensaje);
     socket.on("chat:escribiendo", onEscribiendo);
     socket.on("chat:leido", onLeido);
     socket.on("chat:entregado", onEntregado);
     socket.on("chat:reaccion", onReaccion);
     socket.on("chat:mensaje-eliminado", onEliminado);
+    socket.on("chat:encuesta", onEncuesta);
 
     return () => {
       socket.emit("chat:salir", sala);
@@ -179,6 +198,7 @@ export function useConversacion({
       socket.off("chat:entregado", onEntregado);
       socket.off("chat:reaccion", onReaccion);
       socket.off("chat:mensaje-eliminado", onEliminado);
+      socket.off("chat:encuesta", onEncuesta);
       if (escribiendoTimeoutRef.current) clearTimeout(escribiendoTimeoutRef.current);
     };
   }, [sala, token, propioId, otroId]);
@@ -234,6 +254,27 @@ export function useConversacion({
     await apiReenviarMensaje(mensajeId, destinatarioIds, token);
   }
 
+  // El mensaje de la encuesta recién creada llega vía "chat:mensaje" (mismo
+  // eco que enviar()), no se agrega acá a mano.
+  async function crearEncuesta(pregunta: string, opciones: string[]) {
+    if (!token) return;
+    await apiCrearEncuesta(sala, pregunta, opciones, token);
+  }
+
+  // Optimista: la respuesta de votar ya trae miVotoOpcionId propio, que el
+  // evento "chat:encuesta" (solo agregados) no puede reconstruir para mí.
+  async function votarEncuesta(mensajeId: number, opcionId: number) {
+    if (!token) return;
+    try {
+      const resultado = await apiVotarEncuesta(mensajeId, opcionId, token);
+      setMensajes((prev) =>
+        prev.map((m) => (m.id === mensajeId ? { ...m, encuesta: resultado } : m)),
+      );
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "No se pudo votar.");
+    }
+  }
+
   function estadoEnvio(mensaje: MensajeChat): EstadoEnvio | null {
     if (!esDm || mensaje.autorId !== propioId) return null;
     if (!cursorOtro) return "enviado";
@@ -257,6 +298,8 @@ export function useConversacion({
     eliminar,
     reaccionar,
     reenviar,
+    crearEncuesta,
+    votarEncuesta,
     notificarEscribiendo,
     estadoEnvio,
     recargar: cargar,

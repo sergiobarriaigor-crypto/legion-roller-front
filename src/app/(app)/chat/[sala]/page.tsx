@@ -43,6 +43,7 @@ import { SelectorUbicacionChat } from "@/components/Chat/SelectorUbicacionChat";
 import { SelectorRutaMensaje } from "@/components/Chat/SelectorRutaMensaje";
 import { PopoverClima } from "@/components/Chat/PopoverClima";
 import { AlbumChatPanel } from "@/components/Chat/AlbumChatPanel";
+import { CrearEncuestaModal } from "@/components/Chat/CrearEncuestaModal";
 import { GrabadorNotaVoz, soportaGrabarAudio } from "@/components/Chat/GrabadorNotaVoz";
 import { Avatar } from "@/components/Avatar";
 import { useNoAutofill } from "@/lib/useNoAutofill";
@@ -92,6 +93,7 @@ export default function ConversacionPage() {
   const [mostrarUbicacion, setMostrarUbicacion] = useState(false);
   const [mostrarRuta, setMostrarRuta] = useState(false);
   const [mostrarAlbum, setMostrarAlbum] = useState(false);
+  const [mostrarEncuesta, setMostrarEncuesta] = useState(false);
   const [fijados, setFijados] = useState<MensajeFijado[]>([]);
   const [subiendoFoto, setSubiendoFoto] = useState(false);
   const [errorAdjunto, setErrorAdjunto] = useState("");
@@ -116,6 +118,8 @@ export default function ConversacionPage() {
     eliminar,
     reaccionar,
     reenviar,
+    crearEncuesta,
+    votarEncuesta,
     notificarEscribiendo,
     estadoEnvio,
   } = useConversacion({ sala, token, propioId });
@@ -502,6 +506,7 @@ export default function ConversacionPage() {
             onResponder={setRespondiendoA}
             onAbrirMenu={abrirMenuMensaje}
             onReaccionar={(mensaje, emoji) => reaccionar(mensaje.id, emoji)}
+            onVotarEncuesta={votarEncuesta}
           />
         ))}
       </div>
@@ -749,6 +754,18 @@ export default function ConversacionPage() {
             >
               Ruta registrada
             </button>
+            {sala === "grupal" && (
+              <button
+                type="button"
+                onClick={() => {
+                  setMostrarAdjuntos(false);
+                  setMostrarEncuesta(true);
+                }}
+                className="rounded-app px-3 py-2.5 text-left text-sm text-text-primary active:bg-white/5"
+              >
+                Encuesta
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setMostrarAdjuntos(false)}
@@ -779,6 +796,10 @@ export default function ConversacionPage() {
 
       {mostrarAlbum && (
         <AlbumChatPanel sala={sala} token={token} onCerrar={() => setMostrarAlbum(false)} />
+      )}
+
+      {mostrarEncuesta && (
+        <CrearEncuestaModal onCrear={crearEncuesta} onCerrar={() => setMostrarEncuesta(false)} />
       )}
     </div>
   );
