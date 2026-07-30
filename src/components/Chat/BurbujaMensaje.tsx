@@ -190,7 +190,7 @@ export function BurbujaMensaje({
   }
 
   return (
-    <div className={`flex flex-col ${esMio ? "items-end" : "items-start"}`}>
+    <div id={`mensaje-${mensaje.id}`} className={`flex flex-col ${esMio ? "items-end" : "items-start"}`}>
       <div className="relative w-full max-w-[75%]" style={{ [esMio ? "marginLeft" : "marginRight"]: "auto" }}>
         {!compacto && arrastreX > 0 && (
           <IconArrowBackUp
@@ -349,6 +349,18 @@ export function BurbujaMensaje({
             />
           )}
 
+          {mensaje.adjuntoTipo === "audio" && mensaje.adjuntoUrl && (
+            <div className="mb-1 flex flex-col gap-1 rounded-app bg-black/20 px-2.5 py-2">
+              <audio src={mensaje.adjuntoUrl} controls className="h-9 w-full max-w-[220px]" />
+              {mensaje.adjuntoAudioDuracionSeg !== null && (
+                <span className="text-[11px] opacity-70">
+                  {Math.floor(mensaje.adjuntoAudioDuracionSeg / 60)}:
+                  {String(mensaje.adjuntoAudioDuracionSeg % 60).padStart(2, "0")}
+                </span>
+              )}
+            </div>
+          )}
+
           {mensaje.adjuntoTipo === "archivo" && mensaje.adjuntoUrl && (
             <a
               href={mensaje.adjuntoUrl}
@@ -375,6 +387,7 @@ export function BurbujaMensaje({
           {mensaje.texto && <p>{mensaje.texto}</p>}
 
           <div className="mt-0.5 flex items-center justify-end gap-1">
+            {mensaje.fijado && <IconPin size={11} className="opacity-70" />}
             <span className="text-[10px] opacity-70">
               {new Date(mensaje.createdAt).toLocaleTimeString("es-CL", {
                 hour: "2-digit",

@@ -14,6 +14,8 @@ import {
   IconMoodSmile,
   IconPaperclip,
   IconPhoto,
+  IconPin,
+  IconPinnedOff,
   IconUser,
   IconX,
 } from "@tabler/icons-react";
@@ -24,10 +26,14 @@ import { tiempoTranscurrido } from "@/lib/tiempo";
 import type { PuntoGps } from "@/lib/geo";
 import {
   estadoDeMiembro,
+  fijarMensaje,
+  mensajesFijados,
   type Conversaciones,
   type EstadoMiembro,
+  type EventoFijado,
   type EventoPresencia,
   type MensajeChat,
+  type MensajeFijado,
 } from "@/lib/chat";
 import { useConversacion } from "@/hooks/useConversacion";
 import { BurbujaMensaje } from "@/components/Chat/BurbujaMensaje";
@@ -37,6 +43,7 @@ import { SelectorUbicacionChat } from "@/components/Chat/SelectorUbicacionChat";
 import { SelectorRutaMensaje } from "@/components/Chat/SelectorRutaMensaje";
 import { PopoverClima } from "@/components/Chat/PopoverClima";
 import { AlbumChatPanel } from "@/components/Chat/AlbumChatPanel";
+import { GrabadorNotaVoz, soportaGrabarAudio } from "@/components/Chat/GrabadorNotaVoz";
 import { Avatar } from "@/components/Avatar";
 import { useNoAutofill } from "@/lib/useNoAutofill";
 
@@ -85,6 +92,7 @@ export default function ConversacionPage() {
   const [mostrarUbicacion, setMostrarUbicacion] = useState(false);
   const [mostrarRuta, setMostrarRuta] = useState(false);
   const [mostrarAlbum, setMostrarAlbum] = useState(false);
+  const [fijados, setFijados] = useState<MensajeFijado[]>([]);
   const [subiendoFoto, setSubiendoFoto] = useState(false);
   const [errorAdjunto, setErrorAdjunto] = useState("");
   const raizRef = useRef<HTMLDivElement>(null);
@@ -167,6 +175,46 @@ export default function ConversacionPage() {
       socket.off("chat:presencia", onPresencia);
     };
   }, [token, otro]);
+
+  async function cargarFijados() {
+    if (!token) return;
+    try {
+      const lista = await mensajesFijados(sala, token);
+      setFijados(lista);
+    } catch {
+      // ignorar — el banner de fijados simplemente no aparece
+    }
+  }
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    cargarFijados();
+    if (!token) return;
+    const socket = obtenerSocket(token);
+    function onFijado(ev: EventoFijado) {
+      if (ev.sala === sala) cargarFijados();
+    }
+    socket.on("chat:fijado", onFijado);
+    return () => {
+      socket.off("chat:fijado", onFijado);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, sala]);
+
+  function irAMensaje(mensajeId: number) {
+    document.getElementById(`mensaje-${mensajeId}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }
+
+  async function alFijarDesfijar() {
+    if (!mensajeMenu || !token) return;
+    try {
+      await fijarMensaje(mensajeMenu.id, token);
+      cargarFijados();
+    } catch (err) {
+      setErrorAdjunto(err instanceof ApiError ? err.message : "No se pudo fijar el mensaje.");
+    }
+    cerrarMenuMensaje();
+  }
 
   // El contenedor "card" de los mensajes no tiene overflow propio en la
   // práctica (crece para mostrar todo su contenido): el que realmente hace
@@ -295,6 +343,20 @@ export default function ConversacionPage() {
     }
   }
 
+  async function onNotaVozGrabada(archivo: File, duracionSeg: number) {
+    if (!token) return;
+    setSubiendoFoto(true);
+    setErrorAdjunto("");
+    try {
+      const subida = await apiUpload<{ url: string }>("/uploads", archivo, token, archivo.name);
+      await enviar({ adjuntoTipo: "audio", adjuntoUrl: subida.url, adjuntoAudioDuracionSeg: duracionSeg });
+    } catch (err) {
+      setErrorAdjunto(err instanceof ApiError ? err.message : "No se pudo subir la nota de voz.");
+    } finally {
+      setSubiendoFoto(false);
+    }
+  }
+
   async function onElegirUbicacion(datos: { lat: number; lon: number; nombre: string }) {
     setMostrarUbicacion(false);
     await enviar({
@@ -347,6 +409,9 @@ export default function ConversacionPage() {
 
   const estadoTexto = escribiendo ? `${escribiendo.nombre} está escribiendo...` : lineaEstado(estado);
   const puedeEliminarParaTodos = mensajeMenu && (mensajeMenu.autorId === propioId || esAdmin);
+  // En el grupal, fijar es solo del admin global; en un DM, cualquiera de los
+  // 2 participantes (ya garantizado por estar viendo esta conversación).
+  const puedeFijar = sala !== "grupal" || esAdmin;
 
   return (
     <div ref={raizRef} className="relative flex h-full flex-col gap-3">
@@ -381,6 +446,40 @@ export default function ConversacionPage() {
           </Link>
         )}
       </div>
+
+      {fijados.length > 0 && (
+        <div className="card -mx-4 flex flex-col gap-1 px-3 py-2">
+          {fijados.map((f) => (
+            <div key={f.id} className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => irAMensaje(f.id)}
+                className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+              >
+                <IconPin size={13} className="shrink-0 text-text-accent" />
+                <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">
+                  <span className="font-semibold text-text-accent">{f.autorNombre}: </span>
+                  {f.texto || (f.adjuntoTipo ? `[${f.adjuntoTipo}]` : "")}
+                </span>
+              </button>
+              {puedeFijar && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!token) return;
+                    await fijarMensaje(f.id, token);
+                    cargarFijados();
+                  }}
+                  aria-label="Desfijar"
+                  className="shrink-0 text-text-secondary"
+                >
+                  <IconPinnedOff size={14} />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       {error && <p className="text-xs text-fill-warning">{error}</p>}
 
@@ -456,6 +555,9 @@ export default function ConversacionPage() {
         >
           <IconPaperclip size={18} />
         </button>
+        {soportaGrabarAudio() && (
+          <GrabadorNotaVoz onGrabada={onNotaVozGrabada} onError={setErrorAdjunto} />
+        )}
         <input
           type="text"
           autoComplete="off"
@@ -541,6 +643,15 @@ export default function ConversacionPage() {
               style={{ left: posicionMenu.left, top: posicionMenu.subTop }}
               onClick={(e) => e.stopPropagation()}
             >
+              {puedeFijar && (
+                <button
+                  type="button"
+                  onClick={alFijarDesfijar}
+                  className="rounded-app px-3 py-2 text-left text-sm text-text-primary active:bg-white/5"
+                >
+                  {mensajeMenu.fijado ? "Desfijar" : "Fijar"}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => eliminarMensaje("mi")}

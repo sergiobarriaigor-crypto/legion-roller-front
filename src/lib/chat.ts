@@ -66,6 +66,7 @@ export interface MensajeChat {
   adjuntoArchivoNombre: string | null;
   adjuntoArchivoTamanoKb: number | null;
   adjuntoAudioDuracionSeg: number | null;
+  fijado: boolean;
   reacciones: ReaccionMensaje[];
 }
 
@@ -106,6 +107,12 @@ export interface EventoReaccion {
 export interface EventoMensajeEliminado {
   mensajeId: number;
   sala: string;
+}
+
+export interface EventoFijado {
+  mensajeId: number;
+  sala: string;
+  fijado: boolean;
 }
 
 export interface MiembroSimple {
@@ -201,6 +208,23 @@ export interface CursorLectura {
 
 export function lecturaDeSala(sala: string, token: string | null) {
   return apiGet<CursorLectura[]>(`/chat/lectura/${sala}`, token);
+}
+
+// Mensaje fijado: en el grupal hasta 5, solo el admin global; en un DM hasta
+// 1, cualquiera de los 2 participantes.
+export interface MensajeFijado {
+  id: number;
+  texto: string;
+  autorNombre: string;
+  adjuntoTipo: TipoAdjuntoMensaje | null;
+}
+
+export function mensajesFijados(sala: string, token: string | null) {
+  return apiGet<MensajeFijado[]>(`/chat/mensajes/${sala}/fijados`, token);
+}
+
+export function fijarMensaje(mensajeId: number, token: string | null) {
+  return apiPost<{ fijado: boolean }>(`/chat/mensajes/${mensajeId}/fijar`, {}, token);
 }
 
 // Álbum: adjuntos ya enviados en la sala, agrupados por tipo (foto/video/archivo).
