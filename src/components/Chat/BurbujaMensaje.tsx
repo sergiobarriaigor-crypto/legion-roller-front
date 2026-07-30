@@ -19,6 +19,7 @@ import { useRouter } from "next/navigation";
 import type { EstadoEnvio } from "@/hooks/useConversacion";
 import type { MensajeChat } from "@/lib/chat";
 import { TarjetaRuta } from "@/components/Chat/TarjetaRuta";
+import { ReproductorAudioMensaje } from "@/components/Chat/ReproductorAudioMensaje";
 
 // Ícono según extensión del nombre original — solo cubre los tipos que
 // uploads.controller.ts acepta hoy (PDF, Word, Excel); cualquier otra cosa
@@ -353,14 +354,17 @@ export function BurbujaMensaje({
           )}
 
           {mensaje.adjuntoTipo === "audio" && mensaje.adjuntoUrl && (
-            <div className="mb-1 flex flex-col gap-1 rounded-app bg-black/20 px-2.5 py-2">
-              <audio src={mensaje.adjuntoUrl} controls className="h-9 w-full max-w-[220px]" />
-              {mensaje.adjuntoAudioDuracionSeg !== null && (
-                <span className="text-[11px] opacity-70">
-                  {Math.floor(mensaje.adjuntoAudioDuracionSeg / 60)}:
-                  {String(mensaje.adjuntoAudioDuracionSeg % 60).padStart(2, "0")}
-                </span>
-              )}
+            <div
+              className="mb-1"
+              onTouchStart={(e) => e.stopPropagation()}
+              onTouchMove={(e) => e.stopPropagation()}
+              onTouchEnd={(e) => e.stopPropagation()}
+              onContextMenu={(e) => e.stopPropagation()}
+            >
+              <ReproductorAudioMensaje
+                url={mensaje.adjuntoUrl}
+                duracionSeg={mensaje.adjuntoAudioDuracionSeg}
+              />
             </div>
           )}
 

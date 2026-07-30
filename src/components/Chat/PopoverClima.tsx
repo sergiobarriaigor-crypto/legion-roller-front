@@ -17,16 +17,17 @@ export function PopoverClima({ token, onCerrar }: { token: string | null; onCerr
       .catch((err) => setError(err instanceof ApiError ? err.message : "No se pudo cargar el clima."));
   }, [token]);
 
-  // El wrapper del botón (en chat/[sala]/page.tsx) es "relative" y este
-  // popover se ancla a él con "absolute bottom-full" — el catcher de "tocar
-  // afuera" va aparte, a nivel de viewport, para no volverse el contenedor
-  // de referencia del anclaje (si fuera un solo div "absolute inset-0" que
-  // envuelve todo, el popover terminaría anclado a la altura de la pantalla
-  // completa en vez de justo encima del botón).
+  // El wrapper del botón (en el header de chat/[sala]/page.tsx) es "relative"
+  // y este popover se ancla a él con "absolute top-full" (el botón vive
+  // arriba de la pantalla, así que se abre hacia abajo) — el catcher de
+  // "tocar afuera" va aparte, a nivel de viewport, para no volverse el
+  // contenedor de referencia del anclaje (si fuera un solo div "absolute
+  // inset-0" que envuelve todo, el popover terminaría anclado a la altura de
+  // la pantalla completa en vez de justo debajo del botón).
   return (
     <>
       <div className="fixed inset-0 z-40" data-no-swipe onClick={onCerrar} />
-      <div className="card absolute bottom-full left-0 z-50 mb-2 flex w-60 flex-col gap-2 p-3">
+      <div className="card absolute right-0 top-full z-50 mt-2 flex w-60 flex-col gap-2 p-3">
         <p className="text-xs font-semibold text-text-accent">Clima</p>
         {error && <p className="text-xs text-fill-warning">{error}</p>}
         {!error && !ciudades && <p className="text-xs text-text-secondary">Cargando...</p>}

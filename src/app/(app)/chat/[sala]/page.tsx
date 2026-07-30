@@ -11,11 +11,14 @@ import {
   IconCloud,
   IconCopy,
   IconDots,
+  IconMicrophone,
   IconMoodSmile,
   IconPaperclip,
   IconPhoto,
   IconPin,
   IconPinnedOff,
+  IconSend,
+  IconTrash,
   IconUser,
   IconX,
 } from "@tabler/icons-react";
@@ -45,7 +48,7 @@ import { SelectorRutaMensaje } from "@/components/Chat/SelectorRutaMensaje";
 import { PopoverClima } from "@/components/Chat/PopoverClima";
 import { AlbumChatPanel } from "@/components/Chat/AlbumChatPanel";
 import { CrearEncuestaModal } from "@/components/Chat/CrearEncuestaModal";
-import { GrabadorNotaVoz, soportaGrabarAudio } from "@/components/Chat/GrabadorNotaVoz";
+import { useGrabadorAudio, soportaGrabarAudio } from "@/components/Chat/GrabadorNotaVoz";
 import { Avatar } from "@/components/Avatar";
 import { useNoAutofill } from "@/lib/useNoAutofill";
 
@@ -56,6 +59,12 @@ interface OtroParticipante {
   id: number;
   nombre: string;
   fotoUrl: string | null;
+}
+
+function formatearReloj(segundos: number): string {
+  const min = Math.floor(segundos / 60);
+  const seg = segundos % 60;
+  return `${min}:${String(seg).padStart(2, "0")}`;
 }
 
 function lineaEstado(estado: EstadoMiembro | null): string | null {
@@ -125,6 +134,13 @@ export default function ConversacionPage() {
     estadoEnvio,
   } = useConversacion({ sala, token, propioId });
   const setChatHeader = useSetChatHeader();
+  const {
+    grabando,
+    segundos: segundosGrabando,
+    iniciar: iniciarGrabacion,
+    cancelar: cancelarGrabacion,
+    enviar: detenerYEnviarGrabacion,
+  } = useGrabadorAudio({ onGrabada: onNotaVozGrabada, onError: setErrorAdjunto });
 
   async function cargarTitulo() {
     if (!token) return;
@@ -444,6 +460,17 @@ export default function ConversacionPage() {
           <h1 className="text-sm font-semibold text-text-accent">{titulo}</h1>
           {estadoTexto && <p className="truncate text-xs text-text-muted">{estadoTexto}</p>}
         </div>
+        <div className="relative shrink-0">
+          <button
+            type="button"
+            onClick={() => setMostrarClima((v) => !v)}
+            aria-label="Ver el clima"
+            className="text-text-secondary"
+          >
+            <IconCloud size={20} />
+          </button>
+          {mostrarClima && <PopoverClima token={token} onCerrar={() => setMostrarClima(false)} />}
+        </div>
         <button
           type="button"
           onClick={() => setMostrarAlbum(true)}
@@ -461,7 +488,7 @@ export default function ConversacionPage() {
     );
     return () => setChatHeader(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [otro, sala, titulo, estadoTexto]);
+  }, [otro, sala, titulo, estadoTexto, mostrarClima, token]);
 
   return (
     <div ref={raizRef} className="relative flex h-full flex-col gap-3">
@@ -554,45 +581,70 @@ export default function ConversacionPage() {
           onChange={onElegirArchivo}
           className="hidden"
         />
-        <div className="relative shrink-0">
-          <button
-            type="button"
-            onClick={() => setMostrarClima((v) => !v)}
-            aria-label="Ver el clima"
-            className="rounded-app border border-border px-3 py-2 text-text-secondary"
-          >
-            <IconCloud size={18} />
-          </button>
-          {mostrarClima && <PopoverClima token={token} onCerrar={() => setMostrarClima(false)} />}
-        </div>
-        <button
-          type="button"
-          onClick={() => setMostrarAdjuntos(true)}
-          disabled={subiendoFoto}
-          aria-label="Adjuntar"
-          className="shrink-0 rounded-app border border-border px-3 py-2 text-text-secondary disabled:opacity-60"
-        >
-          <IconPaperclip size={18} />
-        </button>
-        {soportaGrabarAudio() && (
-          <GrabadorNotaVoz onGrabada={onNotaVozGrabada} onError={setErrorAdjunto} />
+        {grabando ? (
+          <>
+            <button
+              type="button"
+              onClick={cancelarGrabacion}
+              aria-label="Cancelar grabación"
+              className="shrink-0 rounded-app border border-border px-3 py-2 text-fill-warning"
+            >
+              <IconTrash size={18} />
+            </button>
+            <div className="flex min-w-0 flex-1 items-center gap-2 rounded-app border border-border bg-surface-2 px-3 py-2 text-sm text-text-primary">
+              <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-fill-warning" />
+              <span className="tabular-nums">{formatearReloj(segundosGrabando)}</span>
+            </div>
+            <button
+              type="button"
+              onClick={detenerYEnviarGrabacion}
+              aria-label="Enviar nota de voz"
+              className="btn-hero shrink-0 rounded-app px-4 py-2 text-sm"
+            >
+              <IconSend size={18} />
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              onClick={() => setMostrarAdjuntos(true)}
+              disabled={subiendoFoto}
+              aria-label="Adjuntar"
+              className="shrink-0 rounded-app border border-border px-3 py-2 text-text-secondary disabled:opacity-60"
+            >
+              <IconPaperclip size={18} />
+            </button>
+            <input
+              type="text"
+              autoComplete="off"
+              {...noAutofillMensaje}
+              placeholder="Escribe un mensaje..."
+              value={texto}
+              onChange={(e) => onCambioTexto(e.target.value)}
+              className="min-w-0 flex-1 rounded-app border border-border bg-surface-2 px-3 py-2 text-sm text-text-primary outline-none"
+            />
+            {texto.trim() ? (
+              <button
+                type="submit"
+                disabled={enviando}
+                aria-label="Enviar"
+                className="btn-hero shrink-0 rounded-app px-4 py-2 text-sm disabled:opacity-60"
+              >
+                <IconSend size={18} />
+              </button>
+            ) : soportaGrabarAudio() ? (
+              <button
+                type="button"
+                onClick={iniciarGrabacion}
+                aria-label="Grabar nota de voz"
+                className="btn-hero shrink-0 rounded-app px-4 py-2 text-sm"
+              >
+                <IconMicrophone size={18} />
+              </button>
+            ) : null}
+          </>
         )}
-        <input
-          type="text"
-          autoComplete="off"
-          {...noAutofillMensaje}
-          placeholder="Escribe un mensaje..."
-          value={texto}
-          onChange={(e) => onCambioTexto(e.target.value)}
-          className="min-w-0 flex-1 rounded-app border border-border bg-surface-2 px-3 py-2 text-sm text-text-primary outline-none"
-        />
-        <button
-          type="submit"
-          disabled={enviando}
-          className="btn-hero shrink-0 rounded-app px-4 py-2 text-sm disabled:opacity-60"
-        >
-          Enviar
-        </button>
       </form>
 
       {mensajeMenu && posicionMenu && (

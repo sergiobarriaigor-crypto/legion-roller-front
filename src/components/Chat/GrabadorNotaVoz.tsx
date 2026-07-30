@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { IconMicrophone } from "@tabler/icons-react";
 
-const MS_MAX_NOTA_VOZ = 120_000; // 2 minutos, tope duro
+const MS_MAX_NOTA_VOZ = 120_000; // 2 minutos, tope duro — corta y envía automático
 const TIPOS_AUDIO_CANDIDATOS = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"];
+const MENSAJE_PERMISO_DENEGADO =
+  "Para enviar mensajes de audio, debes permitir el acceso al micrófono desde la configuración de tu dispositivo.";
 
 export function soportaGrabarAudio(): boolean {
   return (
@@ -14,19 +15,12 @@ export function soportaGrabarAudio(): boolean {
   );
 }
 
-function formatearReloj(segundos: number): string {
-  const min = Math.floor(segundos / 60);
-  const seg = segundos % 60;
-  return `${min}:${String(seg).padStart(2, "0")}`;
-}
-
-// Botón de mantener presionado para grabar una nota de voz (máx 2 minutos),
-// mismo patrón getUserMedia+MediaRecorder ya usado en CamaraHistoria.tsx
-// (fallback de mimeType vía isTypeSupported, corte automático por duración),
-// adaptado a solo-audio. Soltar en cualquier parte de la pantalla termina la
-// grabación — no solo soltar encima del botón — porque el dedo puede
-// desplazarse mientras se mantiene presionado.
-export function GrabadorNotaVoz({
+// Botón inteligente estilo WhatsApp: a diferencia de la versión anterior
+// (mantener presionado), acá se toca una vez para empezar a grabar y la
+// grabación sigue en curso hasta que el usuario decide cancelarla (papelera)
+// o enviarla (botón enviar) — mismo patrón getUserMedia+MediaRecorder ya
+// usado en CamaraHistoria.tsx (fallback de mimeType vía isTypeSupported).
+export function useGrabadorAudio({
   onGrabada,
   onError,
 }: {
@@ -57,18 +51,6 @@ export function GrabadorNotaVoz({
     grabadoraRef.current.stop();
   }
 
-  // Soltar en cualquier lugar de la pantalla (no solo sobre el botón) termina
-  // la grabación — el dedo puede desplazarse mientras se mantiene presionado.
-  useEffect(() => {
-    if (!grabando) return;
-    window.addEventListener("pointerup", detener);
-    window.addEventListener("pointercancel", detener);
-    return () => {
-      window.removeEventListener("pointerup", detener);
-      window.removeEventListener("pointercancel", detener);
-    };
-  }, [grabando]);
-
   async function iniciar() {
     if (grabando) return;
     canceladaRef.current = false;
@@ -87,7 +69,7 @@ export function GrabadorNotaVoz({
         limpiar();
         setGrabando(false);
         setSegundos(0);
-        // Menos de 1s: seguramente un toque accidental, se descarta en silencio.
+        // Cancelada o menos de 1s (toque accidental): se descarta en silencio.
         if (canceladaRef.current || duracionSeg < 1) return;
         // El Blob final se declara "audio/webm" liso (sin ";codecs=...") —
         // mismo motivo que VideoTrimmer.tsx: el mimeType con coma rompe el
@@ -109,37 +91,34 @@ export function GrabadorNotaVoz({
       const nombre = err instanceof Error ? err.name : "";
       onError(
         nombre === "NotAllowedError" || nombre === "SecurityError"
-          ? "Activa el permiso de micrófono para grabar notas de voz."
+          ? MENSAJE_PERMISO_DENEGADO
           : "No se pudo acceder al micrófono.",
       );
     }
   }
 
-  return (
-    <div className="flex shrink-0 items-center gap-1.5">
-      {grabando && (
-        <span className="flex items-center gap-1 text-xs text-fill-warning">
-          <span className="h-2 w-2 rounded-full bg-fill-warning" />
-          {formatearReloj(segundos)}
-        </span>
-      )}
-      <button
-        type="button"
-        onPointerDown={(e) => {
-          e.preventDefault();
-          iniciar();
-        }}
-        aria-label={
-          grabando
-            ? "Grabando nota de voz, soltar para enviar"
-            : "Mantener presionado para grabar una nota de voz"
-        }
-        className={`rounded-app border px-3 py-2 ${
-          grabando ? "border-fill-warning text-fill-warning" : "border-border text-text-secondary"
-        }`}
-      >
-        <IconMicrophone size={18} />
-      </button>
-    </div>
-  );
+  function cancelar() {
+    if (!grabando) return;
+    canceladaRef.current = true;
+    detener();
+  }
+
+  function enviar() {
+    if (!grabando) return;
+    canceladaRef.current = false;
+    detener();
+  }
+
+  // Si la pantalla se desmonta con la grabación en curso (el usuario navega a
+  // otra conversación), se descarta en vez de quedar un MediaRecorder vivo.
+  useEffect(() => {
+    return () => {
+      canceladaRef.current = true;
+      detener();
+      limpiar();
+    };
+     
+  }, []);
+
+  return { grabando, segundos, iniciar, cancelar, enviar };
 }
