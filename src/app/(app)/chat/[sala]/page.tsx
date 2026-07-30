@@ -13,6 +13,7 @@ import {
   IconDots,
   IconMoodSmile,
   IconPaperclip,
+  IconPhoto,
   IconUser,
   IconX,
 } from "@tabler/icons-react";
@@ -35,6 +36,7 @@ import { SelectorEmojiMensaje } from "@/components/Chat/SelectorEmojiMensaje";
 import { SelectorUbicacionChat } from "@/components/Chat/SelectorUbicacionChat";
 import { SelectorRutaMensaje } from "@/components/Chat/SelectorRutaMensaje";
 import { PopoverClima } from "@/components/Chat/PopoverClima";
+import { AlbumChatPanel } from "@/components/Chat/AlbumChatPanel";
 import { Avatar } from "@/components/Avatar";
 import { useNoAutofill } from "@/lib/useNoAutofill";
 
@@ -82,6 +84,7 @@ export default function ConversacionPage() {
   const [mostrarClima, setMostrarClima] = useState(false);
   const [mostrarUbicacion, setMostrarUbicacion] = useState(false);
   const [mostrarRuta, setMostrarRuta] = useState(false);
+  const [mostrarAlbum, setMostrarAlbum] = useState(false);
   const [subiendoFoto, setSubiendoFoto] = useState(false);
   const [errorAdjunto, setErrorAdjunto] = useState("");
   const raizRef = useRef<HTMLDivElement>(null);
@@ -91,6 +94,8 @@ export default function ConversacionPage() {
   const propioEscribiendoRef = useRef(false);
   const pausaEscribiendoRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputFotoRef = useRef<HTMLInputElement>(null);
+  const inputVideoRef = useRef<HTMLInputElement>(null);
+  const inputArchivoRef = useRef<HTMLInputElement>(null);
 
   const {
     mensajes,
@@ -251,6 +256,45 @@ export default function ConversacionPage() {
     }
   }
 
+  async function onElegirVideo(e: React.ChangeEvent<HTMLInputElement>) {
+    const archivo = e.target.files?.[0];
+    if (inputVideoRef.current) inputVideoRef.current.value = "";
+    if (!archivo || !token) return;
+    setMostrarAdjuntos(false);
+    setSubiendoFoto(true);
+    setErrorAdjunto("");
+    try {
+      const subida = await apiUpload<{ url: string }>("/uploads", archivo, token, archivo.name);
+      await enviar({ adjuntoTipo: "video", adjuntoUrl: subida.url });
+    } catch (err) {
+      setErrorAdjunto(err instanceof ApiError ? err.message : "No se pudo subir el video.");
+    } finally {
+      setSubiendoFoto(false);
+    }
+  }
+
+  async function onElegirArchivo(e: React.ChangeEvent<HTMLInputElement>) {
+    const archivo = e.target.files?.[0];
+    if (inputArchivoRef.current) inputArchivoRef.current.value = "";
+    if (!archivo || !token) return;
+    setMostrarAdjuntos(false);
+    setSubiendoFoto(true);
+    setErrorAdjunto("");
+    try {
+      const subida = await apiUpload<{ url: string }>("/uploads", archivo, token, archivo.name);
+      await enviar({
+        adjuntoTipo: "archivo",
+        adjuntoUrl: subida.url,
+        adjuntoArchivoNombre: archivo.name,
+        adjuntoArchivoTamanoKb: Math.round(archivo.size / 1024),
+      });
+    } catch (err) {
+      setErrorAdjunto(err instanceof ApiError ? err.message : "No se pudo subir el archivo.");
+    } finally {
+      setSubiendoFoto(false);
+    }
+  }
+
   async function onElegirUbicacion(datos: { lat: number; lon: number; nombre: string }) {
     setMostrarUbicacion(false);
     await enviar({
@@ -323,6 +367,14 @@ export default function ConversacionPage() {
           <h1 className="text-sm font-semibold text-text-accent">{titulo}</h1>
           {estadoTexto && <p className="truncate text-xs text-text-muted">{estadoTexto}</p>}
         </div>
+        <button
+          type="button"
+          onClick={() => setMostrarAlbum(true)}
+          aria-label="Álbum"
+          className="shrink-0 text-text-secondary"
+        >
+          <IconPhoto size={20} />
+        </button>
         {otro && (
           <Link href={`/perfil/${otro.id}`} aria-label="Ver perfil" className="shrink-0 text-text-secondary">
             <IconUser size={20} />
@@ -376,6 +428,14 @@ export default function ConversacionPage() {
 
       <form ref={formRef} onSubmit={onEnviar} className="flex gap-2">
         <input ref={inputFotoRef} type="file" accept="image/*" onChange={onElegirFoto} className="hidden" />
+        <input ref={inputVideoRef} type="file" accept="video/*" onChange={onElegirVideo} className="hidden" />
+        <input
+          ref={inputArchivoRef}
+          type="file"
+          accept="application/pdf,.pdf,.doc,.docx,.xls,.xlsx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          onChange={onElegirArchivo}
+          className="hidden"
+        />
         <div className="relative shrink-0">
           <button
             type="button"
@@ -542,6 +602,26 @@ export default function ConversacionPage() {
               type="button"
               onClick={() => {
                 setMostrarAdjuntos(false);
+                inputVideoRef.current?.click();
+              }}
+              className="rounded-app px-3 py-2.5 text-left text-sm text-text-primary active:bg-white/5"
+            >
+              Video
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setMostrarAdjuntos(false);
+                inputArchivoRef.current?.click();
+              }}
+              className="rounded-app px-3 py-2.5 text-left text-sm text-text-primary active:bg-white/5"
+            >
+              Documento
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setMostrarAdjuntos(false);
                 setMostrarUbicacion(true);
               }}
               className="rounded-app px-3 py-2.5 text-left text-sm text-text-primary active:bg-white/5"
@@ -584,6 +664,10 @@ export default function ConversacionPage() {
           onElegir={onElegirRuta}
           onCerrar={() => setMostrarRuta(false)}
         />
+      )}
+
+      {mostrarAlbum && (
+        <AlbumChatPanel sala={sala} token={token} onCerrar={() => setMostrarAlbum(false)} />
       )}
     </div>
   );

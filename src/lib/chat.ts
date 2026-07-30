@@ -24,7 +24,13 @@ export interface Conversaciones {
   individuales: ConversacionIndividual[];
 }
 
-export type TipoAdjuntoMensaje = "foto" | "ubicacion" | "ruta";
+export type TipoAdjuntoMensaje =
+  | "foto"
+  | "ubicacion"
+  | "ruta"
+  | "video"
+  | "archivo"
+  | "audio";
 
 export interface RespuestaCitada {
   texto: string;
@@ -57,6 +63,9 @@ export interface MensajeChat {
   adjuntoRutaDistanciaKm: number | null;
   adjuntoRutaDuracionSeg: number | null;
   adjuntoRutaPuntos: string | null;
+  adjuntoArchivoNombre: string | null;
+  adjuntoArchivoTamanoKb: number | null;
+  adjuntoAudioDuracionSeg: number | null;
   reacciones: ReaccionMensaje[];
 }
 
@@ -143,6 +152,9 @@ export interface EnviarMensajeBody {
   adjuntoRutaDistanciaKm?: number;
   adjuntoRutaDuracionSeg?: number;
   adjuntoRutaPuntos?: string;
+  adjuntoArchivoNombre?: string;
+  adjuntoArchivoTamanoKb?: number;
+  adjuntoAudioDuracionSeg?: number;
 }
 
 export function enviarMensaje(sala: string, body: EnviarMensajeBody, token: string | null) {
@@ -189,4 +201,22 @@ export interface CursorLectura {
 
 export function lecturaDeSala(sala: string, token: string | null) {
   return apiGet<CursorLectura[]>(`/chat/lectura/${sala}`, token);
+}
+
+// Álbum: adjuntos ya enviados en la sala, agrupados por tipo (foto/video/archivo).
+export interface AdjuntoAlbum {
+  id: number;
+  url: string | null;
+  nombre: string | null;
+  tamanoKb: number | null;
+  createdAt: string;
+  autorNombre: string;
+}
+
+export function adjuntosDeSala(
+  sala: string,
+  tipo: "foto" | "video" | "archivo",
+  token: string | null,
+) {
+  return apiGet<AdjuntoAlbum[]>(`/chat/mensajes/${sala}/adjuntos?tipo=${tipo}`, token);
 }

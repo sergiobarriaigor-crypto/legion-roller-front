@@ -2,11 +2,38 @@
 
 import { useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import { IconArrowBackUp, IconCheck, IconChecks, IconMapPin, IconPin } from "@tabler/icons-react";
+import {
+  IconArrowBackUp,
+  IconCheck,
+  IconChecks,
+  IconMapPin,
+  IconPin,
+  IconFileTypePdf,
+  IconFileTypeDoc,
+  IconFileTypeXls,
+  IconFile,
+  IconDownload,
+} from "@tabler/icons-react";
 import { useRouter } from "next/navigation";
 import type { EstadoEnvio } from "@/hooks/useConversacion";
 import type { MensajeChat } from "@/lib/chat";
 import { TarjetaRuta } from "@/components/Chat/TarjetaRuta";
+
+// Ícono según extensión del nombre original — solo cubre los tipos que
+// uploads.controller.ts acepta hoy (PDF, Word, Excel); cualquier otra cosa
+// cae en el genérico.
+function IconoArchivo({ nombre, size }: { nombre: string; size: number }) {
+  const ext = nombre.split(".").pop()?.toLowerCase();
+  if (ext === "pdf") return <IconFileTypePdf size={size} />;
+  if (ext === "doc" || ext === "docx") return <IconFileTypeDoc size={size} />;
+  if (ext === "xls" || ext === "xlsx") return <IconFileTypeXls size={size} />;
+  return <IconFile size={size} />;
+}
+
+function formatearTamano(kb: number): string {
+  if (kb < 1024) return `${kb} KB`;
+  return `${(kb / 1024).toFixed(1)} MB`;
+}
 
 const MiniMapaUbicacion = dynamic(
   () => import("@/components/Chat/MiniMapaUbicacion").then((m) => m.MiniMapaUbicacion),
@@ -313,6 +340,37 @@ export function BurbujaMensaje({
                 />
               </div>
             )}
+
+          {mensaje.adjuntoTipo === "video" && mensaje.adjuntoUrl && (
+            <video
+              src={mensaje.adjuntoUrl}
+              controls
+              className="mb-1 max-h-64 w-full rounded-app"
+            />
+          )}
+
+          {mensaje.adjuntoTipo === "archivo" && mensaje.adjuntoUrl && (
+            <a
+              href={mensaje.adjuntoUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              download={mensaje.adjuntoArchivoNombre ?? undefined}
+              className="mb-1 flex items-center gap-2 rounded-app bg-black/20 px-2.5 py-2"
+            >
+              <IconoArchivo nombre={mensaje.adjuntoArchivoNombre ?? ""} size={28} />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-xs font-semibold">
+                  {mensaje.adjuntoArchivoNombre ?? "Documento"}
+                </span>
+                {mensaje.adjuntoArchivoTamanoKb !== null && (
+                  <span className="block text-[11px] opacity-70">
+                    {formatearTamano(mensaje.adjuntoArchivoTamanoKb)}
+                  </span>
+                )}
+              </span>
+              <IconDownload size={16} className="shrink-0 opacity-70" />
+            </a>
+          )}
 
           {mensaje.texto && <p>{mensaje.texto}</p>}
 
