@@ -54,6 +54,12 @@ export default function AppGroupLayout({
     sesion?.rol === "visitante" &&
     RUTAS_RESTRINGIDAS_VISITANTE.some((ruta) => pathname.startsWith(ruta));
 
+  // Dentro de una conversación abierta, el panel fijo propio de esa pantalla
+  // (avatar/nombre/estado de con quién se habla, ver chat/[sala]/page.tsx)
+  // reemplaza al header global — no tiene sentido mostrar ambos apilados.
+  // "/chat" (la lista) sigue mostrando el header normal.
+  const enConversacionChat = /^\/chat\/[^/]+$/.test(pathname);
+
   if (cargando || !sesion || rutaRestringida) {
     return (
       <>
@@ -77,7 +83,7 @@ export default function AppGroupLayout({
     // teléfono — por eso en desktop se veían expandidos a pantalla completa
     // en vez de quedar centrados y angostos como en un celular.
     <div className="relative mx-auto flex min-h-dvh w-full max-w-md flex-1 flex-col bg-page-bg [transform:translateZ(0)]">
-      <AppHeader />
+      {!enConversacionChat && <AppHeader />}
       {sesion.rol !== "visitante" && <EmergenciaBanner />}
 
       {sesion.rol === "visitante" && (
