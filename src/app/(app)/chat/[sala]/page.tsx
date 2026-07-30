@@ -19,7 +19,6 @@ import {
   IconPinnedOff,
   IconSend,
   IconTrash,
-  IconUser,
   IconX,
 } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
@@ -448,11 +447,13 @@ export default function ConversacionPage() {
           <IconChevronLeft size={20} />
         </Link>
         {otro ? (
-          <Avatar fotoUrl={otro.fotoUrl} nombre={otro.nombre} tamano={44}>
-            {estado?.enLinea && (
-              <span className="absolute bottom-0 right-0 h-2 w-2 rounded-full border-2 border-surface-1 bg-fill-success" />
-            )}
-          </Avatar>
+          <Link href={`/perfil/${otro.id}`} aria-label="Ver perfil" className="shrink-0">
+            <Avatar fotoUrl={otro.fotoUrl} nombre={otro.nombre} tamano={44}>
+              {estado?.enLinea && (
+                <span className="absolute bottom-0 right-0 h-2 w-2 rounded-full border-2 border-surface-1 bg-fill-success" />
+              )}
+            </Avatar>
+          </Link>
         ) : (
           sala === "grupal" && <Avatar fotoUrl={IMAGEN_CHAT_GRUPAL} nombre="Legión" tamano={44} />
         )}
@@ -465,9 +466,9 @@ export default function ConversacionPage() {
             type="button"
             onClick={() => setMostrarClima((v) => !v)}
             aria-label="Ver el clima"
-            className="text-text-secondary"
+            className="flex h-9 w-9 items-center justify-center rounded-full text-text-secondary"
           >
-            <IconCloud size={20} />
+            <IconCloud size={22} />
           </button>
           {mostrarClima && <PopoverClima token={token} onCerrar={() => setMostrarClima(false)} />}
         </div>
@@ -475,15 +476,10 @@ export default function ConversacionPage() {
           type="button"
           onClick={() => setMostrarAlbum(true)}
           aria-label="Álbum"
-          className="shrink-0 text-text-secondary"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-text-secondary"
         >
-          <IconPhoto size={20} />
+          <IconPhoto size={22} />
         </button>
-        {otro && (
-          <Link href={`/perfil/${otro.id}`} aria-label="Ver perfil" className="shrink-0 text-text-secondary">
-            <IconUser size={20} />
-          </Link>
-        )}
       </div>,
     );
     return () => setChatHeader(null);
