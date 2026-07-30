@@ -423,7 +423,7 @@ export default function ConversacionPage() {
           (app)/layout.tsx) — se queda pegado arriba del contenedor que hace
           scroll (el <main> de SwipeNavigator) mientras se recorren los
           mensajes, para siempre poder ver con quién se está hablando. */}
-      <div className="card sticky top-0 z-10 -mx-4 flex items-center gap-2 rounded-t-none px-3 py-2.5">
+      <div className="card sticky top-0 z-10 -mx-4 -mt-4 flex items-center gap-2 rounded-t-none px-3 py-2.5">
         <Link href="/chat" aria-label="Volver" className="shrink-0 text-text-secondary">
           <IconChevronLeft size={20} />
         </Link>
