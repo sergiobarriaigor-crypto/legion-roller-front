@@ -176,7 +176,15 @@ export function useConversacion({
       setMensajes((prev) =>
         prev.map((m) =>
           m.id === ev.mensajeId && m.encuesta
-            ? { ...m, encuesta: { ...m.encuesta, opciones: ev.opciones, totalVotos: ev.totalVotos } }
+            ? {
+                ...m,
+                encuesta: {
+                  ...m.encuesta,
+                  opciones: ev.opciones,
+                  totalVotos: ev.totalVotos,
+                  totalMiembros: ev.totalMiembros,
+                },
+              }
             : m,
         ),
       );
@@ -256,9 +264,9 @@ export function useConversacion({
 
   // El mensaje de la encuesta recién creada llega vía "chat:mensaje" (mismo
   // eco que enviar()), no se agrega acá a mano.
-  async function crearEncuesta(pregunta: string, opciones: string[]) {
+  async function crearEncuesta(pregunta: string, opciones: string[], anonima: boolean) {
     if (!token) return;
-    await apiCrearEncuesta(sala, pregunta, opciones, token);
+    await apiCrearEncuesta(sala, pregunta, opciones, anonima, token);
   }
 
   // Optimista: la respuesta de votar ya trae miVotoOpcionId propio, que el

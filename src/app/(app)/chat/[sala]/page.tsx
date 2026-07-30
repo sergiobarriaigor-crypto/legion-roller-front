@@ -489,34 +489,47 @@ export default function ConversacionPage() {
   return (
     <div ref={raizRef} className="relative flex h-full flex-col gap-3">
       {fijados.length > 0 && (
-        <div className="card -mx-4 flex flex-col gap-1 px-3 py-2">
+        <div className="flex flex-col gap-2">
           {fijados.map((f) => (
-            <div key={f.id} className="flex items-center gap-2">
+            <div key={f.id} className="card -mx-4 flex items-center gap-3 px-3 py-2.5">
               <button
                 type="button"
                 onClick={() => irAMensaje(f.id)}
-                className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                className="flex min-w-0 flex-1 items-center gap-3 text-left"
               >
-                <IconPin size={13} className="shrink-0 text-text-accent" />
-                <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">
-                  <span className="font-semibold text-text-accent">{f.autorNombre}: </span>
-                  {f.texto || (f.adjuntoTipo ? `[${f.adjuntoTipo}]` : "")}
-                </span>
+                <Avatar fotoUrl={f.autorFotoUrl} nombre={f.autorNombre} tamano={40} />
+                <div className="min-w-0 flex-1">
+                  <p className="flex items-center gap-1 text-sm font-semibold text-text-primary">
+                    <IconPin size={12} className="shrink-0 text-text-accent" />
+                    {f.autorNombre}
+                  </p>
+                  <p className="truncate text-xs text-text-secondary">
+                    {f.texto || (f.adjuntoTipo ? `[${f.adjuntoTipo}]` : "")}
+                  </p>
+                </div>
               </button>
-              {puedeFijar && (
-                <button
-                  type="button"
-                  onClick={async () => {
-                    if (!token) return;
-                    await fijarMensaje(f.id, token);
-                    cargarFijados();
-                  }}
-                  aria-label="Desfijar"
-                  className="shrink-0 text-text-secondary"
-                >
-                  <IconPinnedOff size={14} />
-                </button>
-              )}
+              <div className="flex shrink-0 flex-col items-end gap-1">
+                <span className="text-[10px] text-text-muted">
+                  {new Date(f.createdAt).toLocaleTimeString("es-CL", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </span>
+                {puedeFijar && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!token) return;
+                      await fijarMensaje(f.id, token);
+                      cargarFijados();
+                    }}
+                    aria-label="Desfijar"
+                    className="text-text-secondary"
+                  >
+                    <IconPinnedOff size={14} />
+                  </button>
+                )}
+              </div>
             </div>
           ))}
         </div>

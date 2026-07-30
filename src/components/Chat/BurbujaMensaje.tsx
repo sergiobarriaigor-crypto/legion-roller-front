@@ -14,10 +14,11 @@ import {
   IconFile,
   IconDownload,
   IconChartBar,
+  IconUsers,
 } from "@tabler/icons-react";
 import { useRouter } from "next/navigation";
 import type { EstadoEnvio } from "@/hooks/useConversacion";
-import type { MensajeChat } from "@/lib/chat";
+import type { MensajeChat, OpcionEncuesta } from "@/lib/chat";
 import { TarjetaRuta } from "@/components/Chat/TarjetaRuta";
 import { ReproductorAudioMensaje } from "@/components/Chat/ReproductorAudioMensaje";
 
@@ -47,6 +48,10 @@ const VisorUbicacionMensaje = dynamic(
 );
 const VisorFotoMensaje = dynamic(
   () => import("@/components/Chat/VisorFotoMensaje").then((m) => m.VisorFotoMensaje),
+  { ssr: false },
+);
+const VotantesEncuestaModal = dynamic(
+  () => import("@/components/Chat/VotantesEncuestaModal").then((m) => m.VotantesEncuestaModal),
   { ssr: false },
 );
 
@@ -92,6 +97,7 @@ export function BurbujaMensaje({
   const [arrastreX, setArrastreX] = useState(0);
   const [mostrarVisorUbicacion, setMostrarVisorUbicacion] = useState(false);
   const [mostrarVisorFoto, setMostrarVisorFoto] = useState(false);
+  const [opcionVotantes, setOpcionVotantes] = useState<OpcionEncuesta | null>(null);
   const inicioXRef = useRef<number | null>(null);
   const timeoutLongPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const esSwipeRef = useRef(false);
@@ -444,14 +450,9 @@ export function BurbujaMensaje({
                   const pct = total > 0 ? Math.round((o.votos / total) * 100) : 0;
                   const votada = mensaje.encuesta!.miVotoOpcionId === o.id;
                   return (
-                    <button
+                    <div
                       key={o.id}
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onVotarEncuesta?.(mensaje.id, o.id);
-                      }}
-                      className={`relative overflow-hidden rounded-app border px-2.5 py-1.5 text-left text-xs ${
+                      className={`relative flex items-center gap-1.5 overflow-hidden rounded-app border px-2.5 py-1.5 text-xs ${
                         votada ? "border-text-accent" : "border-white/15"
                       }`}
                     >
@@ -459,21 +460,48 @@ export function BurbujaMensaje({
                         className="absolute inset-y-0 left-0 bg-text-accent/25"
                         style={{ width: `${pct}%` }}
                       />
-                      <span className="relative flex items-center justify-between gap-2">
-                        <span className="flex items-center gap-1">
-                          {votada && <IconCheck size={12} className="shrink-0" />}
-                          {o.texto}
-                        </span>
-                        <span className="shrink-0 opacity-70">{pct}%</span>
-                      </span>
-                    </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onVotarEncuesta?.(mensaje.id, o.id);
+                        }}
+                        className="relative flex min-w-0 flex-1 items-center gap-1 text-left"
+                      >
+                        {votada && <IconCheck size={12} className="shrink-0" />}
+                        <span className="truncate">{o.texto}</span>
+                      </button>
+                      <span className="relative shrink-0 opacity-70">{pct}%</span>
+                      {!mensaje.encuesta!.anonima && o.votos > 0 && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setOpcionVotantes(o);
+                          }}
+                          aria-label="Ver quién votó"
+                          className="relative shrink-0 text-text-accent"
+                        >
+                          <IconUsers size={14} />
+                        </button>
+                      )}
+                    </div>
                   );
                 })}
               </div>
               <span className="text-[11px] opacity-60">
-                {mensaje.encuesta.totalVotos} voto{mensaje.encuesta.totalVotos === 1 ? "" : "s"}
+                {mensaje.encuesta.totalVotos} de {mensaje.encuesta.totalMiembros} votaron
+                {mensaje.encuesta.anonima ? " · voto anónimo" : ""}
               </span>
             </div>
+          )}
+
+          {opcionVotantes && (
+            <VotantesEncuestaModal
+              opcionTexto={opcionVotantes.texto}
+              votantes={opcionVotantes.votantes}
+              onCerrar={() => setOpcionVotantes(null)}
+            />
           )}
 
           {mensaje.texto && mensaje.adjuntoTipo !== "encuesta" && <p>{mensaje.texto}</p>}

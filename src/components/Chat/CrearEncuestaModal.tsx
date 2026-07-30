@@ -14,11 +14,12 @@ export function CrearEncuestaModal({
   onCrear,
   onCerrar,
 }: {
-  onCrear: (pregunta: string, opciones: string[]) => Promise<void>;
+  onCrear: (pregunta: string, opciones: string[], anonima: boolean) => Promise<void>;
   onCerrar: () => void;
 }) {
   const [pregunta, setPregunta] = useState("");
   const [opciones, setOpciones] = useState(["", ""]);
+  const [anonima, setAnonima] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState("");
 
@@ -42,7 +43,7 @@ export function CrearEncuestaModal({
     setEnviando(true);
     setError("");
     try {
-      await onCrear(pregunta.trim(), opcionesValidas);
+      await onCrear(pregunta.trim(), opcionesValidas, anonima);
       onCerrar();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "No se pudo crear la encuesta.");
@@ -110,6 +111,15 @@ export function CrearEncuestaModal({
               Agregar opción
             </button>
           )}
+
+          <label className="flex items-center gap-2 text-xs text-text-secondary">
+            <input
+              type="checkbox"
+              checked={anonima}
+              onChange={(e) => setAnonima(e.target.checked)}
+            />
+            Ocultar quién votó (solo se ven los conteos)
+          </label>
 
           {error && <p className="text-xs text-fill-warning">{error}</p>}
         </div>

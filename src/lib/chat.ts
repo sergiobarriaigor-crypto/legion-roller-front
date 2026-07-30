@@ -45,16 +45,27 @@ export interface ReaccionMensaje {
 
 // Encuesta: solo en el chat grupal, la pregunta es el propio texto del
 // mensaje. miVotoOpcionId es null si el usuario actual todavía no votó.
+// votantes/totalMiembros son visibles para cualquiera del grupal (encuesta
+// no anónima, mismo criterio que WhatsApp/Telegram).
+export interface VotanteEncuesta {
+  id: number;
+  nombre: string;
+  fotoUrl: string | null;
+}
+
 export interface OpcionEncuesta {
   id: number;
   texto: string;
   votos: number;
+  votantes: VotanteEncuesta[];
 }
 
 export interface EncuestaMensaje {
   id: number;
+  anonima: boolean;
   opciones: OpcionEncuesta[];
   totalVotos: number;
+  totalMiembros: number;
   miVotoOpcionId: number | null;
 }
 
@@ -137,6 +148,7 @@ export interface EventoEncuesta {
   sala: string;
   opciones: OpcionEncuesta[];
   totalVotos: number;
+  totalMiembros: number;
 }
 
 export interface MiembroSimple {
@@ -240,6 +252,8 @@ export interface MensajeFijado {
   id: number;
   texto: string;
   autorNombre: string;
+  autorFotoUrl: string | null;
+  createdAt: string;
   adjuntoTipo: TipoAdjuntoMensaje | null;
 }
 
@@ -270,15 +284,17 @@ export function adjuntosDeSala(
 }
 
 // Encuestas: solo disponibles en el chat grupal (validado en el backend).
+// `anonima` la fija el autor al crearla y no cambia después.
 export function crearEncuesta(
   sala: string,
   pregunta: string,
   opciones: string[],
+  anonima: boolean,
   token: string | null,
 ) {
   return apiPost<MensajeChat>(
     `/chat/mensajes/${sala}/encuesta`,
-    { pregunta, opciones },
+    { pregunta, opciones, anonima },
     token,
   );
 }
