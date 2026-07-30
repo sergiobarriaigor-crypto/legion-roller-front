@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, type ReactNode } from "react";
+import { Suspense, useEffect, useState, type ReactNode } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { AppHeader } from "@/components/AppHeader";
 import { BottomNav } from "@/components/BottomNav";
@@ -8,6 +8,7 @@ import { EmergenciaBanner } from "@/components/EmergenciaBanner";
 import { SwipeNavigator } from "@/components/SwipeNavigator";
 import { useSession } from "@/context/SessionContext";
 import { BorradorPostProvider } from "@/context/BorradorPostContext";
+import { ChatHeaderProvider } from "@/context/ChatHeaderContext";
 import { RUTAS_RESTRINGIDAS_VISITANTE } from "@/lib/session";
 
 // Next.js exige que useSearchParams() esté dentro de un <Suspense> (si no, el
@@ -38,6 +39,7 @@ export default function AppGroupLayout({
   const { sesion, cargando, logout } = useSession();
   const router = useRouter();
   const pathname = usePathname();
+  const [chatHeader, setChatHeader] = useState<ReactNode | null>(null);
 
   useEffect(() => {
     if (cargando || !sesion) return;
@@ -83,7 +85,7 @@ export default function AppGroupLayout({
     // teléfono — por eso en desktop se veían expandidos a pantalla completa
     // en vez de quedar centrados y angostos como en un celular.
     <div className="relative mx-auto flex min-h-dvh w-full max-w-md flex-1 flex-col bg-page-bg [transform:translateZ(0)]">
-      {!enConversacionChat && <AppHeader />}
+      {enConversacionChat ? chatHeader : <AppHeader />}
       {sesion.rol !== "visitante" && <EmergenciaBanner />}
 
       {sesion.rol === "visitante" && (
@@ -95,9 +97,11 @@ export default function AppGroupLayout({
         </div>
       )}
 
-      <BorradorPostProvider>
-        <SwipeNavigator>{children}</SwipeNavigator>
-      </BorradorPostProvider>
+      <ChatHeaderProvider value={setChatHeader}>
+        <BorradorPostProvider>
+          <SwipeNavigator>{children}</SwipeNavigator>
+        </BorradorPostProvider>
+      </ChatHeaderProvider>
 
       <BottomNav />
     </div>

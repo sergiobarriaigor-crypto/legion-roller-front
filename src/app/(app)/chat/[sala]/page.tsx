@@ -36,6 +36,7 @@ import {
   type MensajeFijado,
 } from "@/lib/chat";
 import { useConversacion } from "@/hooks/useConversacion";
+import { useSetChatHeader } from "@/context/ChatHeaderContext";
 import { BurbujaMensaje } from "@/components/Chat/BurbujaMensaje";
 import { SelectorReenviarMensaje } from "@/components/Chat/SelectorReenviarMensaje";
 import { SelectorEmojiMensaje } from "@/components/Chat/SelectorEmojiMensaje";
@@ -123,6 +124,7 @@ export default function ConversacionPage() {
     notificarEscribiendo,
     estadoEnvio,
   } = useConversacion({ sala, token, propioId });
+  const setChatHeader = useSetChatHeader();
 
   async function cargarTitulo() {
     if (!token) return;
@@ -417,13 +419,15 @@ export default function ConversacionPage() {
   // 2 participantes (ya garantizado por estar viendo esta conversación).
   const puedeFijar = sala !== "grupal" || esAdmin;
 
-  return (
-    <div ref={raizRef} className="relative flex h-full flex-col gap-3">
-      {/* Sticky: reemplaza al header global (oculto en esta ruta, ver
-          (app)/layout.tsx) — se queda pegado arriba del contenedor que hace
-          scroll (el <main> de SwipeNavigator) mientras se recorren los
-          mensajes, para siempre poder ver con quién se está hablando. */}
-      <div className="card sticky top-0 z-10 -mx-4 -mt-4 flex items-center gap-2 rounded-t-none px-3 py-2.5">
+  // El header vive fuera del <main> que hace scroll (ver (app)/layout.tsx +
+  // ChatHeaderContext) para quedar realmente pegado arriba de la pantalla
+  // desde el primer render — un position:sticky adentro de ese <main> queda
+  // atado a su padding superior y deja un espacio vacío hasta que se
+  // scrollea. useLayoutEffect (no useEffect) para publicarlo antes del
+  // primer paint y evitar un parpadeo al entrar o cambiar de conversación.
+  useLayoutEffect(() => {
+    setChatHeader(
+      <div className="card z-10 flex items-center gap-2 rounded-t-none px-3 py-2.5">
         <Link href="/chat" aria-label="Volver" className="shrink-0 text-text-secondary">
           <IconChevronLeft size={20} />
         </Link>
@@ -453,8 +457,14 @@ export default function ConversacionPage() {
             <IconUser size={20} />
           </Link>
         )}
-      </div>
+      </div>,
+    );
+    return () => setChatHeader(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [otro, sala, titulo, estadoTexto]);
 
+  return (
+    <div ref={raizRef} className="relative flex h-full flex-col gap-3">
       {fijados.length > 0 && (
         <div className="card -mx-4 flex flex-col gap-1 px-3 py-2">
           {fijados.map((f) => (
