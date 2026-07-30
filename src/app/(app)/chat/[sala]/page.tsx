@@ -346,6 +346,7 @@ export default function ConversacionPage() {
             mensaje={m}
             esMio={m.autorId === propioId}
             estadoEnvio={estadoEnvio(m)}
+            seleccionado={mensajeMenu?.id === m.id}
             propioId={propioId}
             onResponder={setRespondiendoA}
             onAbrirMenu={abrirMenuMensaje}

@@ -41,6 +41,7 @@ export function BurbujaMensaje({
   esMio,
   estadoEnvio,
   compacto = false,
+  seleccionado = false,
   propioId,
   onResponder,
   onAbrirMenu,
@@ -50,6 +51,7 @@ export function BurbujaMensaje({
   esMio: boolean;
   estadoEnvio: EstadoEnvio | null;
   compacto?: boolean;
+  seleccionado?: boolean;
   propioId?: number | null;
   onResponder?: (mensaje: MensajeChat) => void;
   onAbrirMenu?: (mensaje: MensajeChat, rect: DOMRect) => void;
@@ -185,6 +187,14 @@ export function BurbujaMensaje({
           // hay un arrastre real en curso.
           style={{
             borderRadius: esMio ? RADIO_BURBUJA_MIA : RADIO_BURBUJA_OTRO,
+            // El resaltado usa solo box-shadow (nunca transform) para no crear
+            // un containing block en reposo — mismo motivo por el que
+            // `arrastreX` de abajo solo aplica transform durante el arrastre
+            // real: un transform persistente atraparía los overlays `fixed`
+            // del visor de foto/ubicación dentro del rectángulo chico de la
+            // burbuja en vez de cubrir la pantalla completa.
+            transition: "box-shadow 150ms ease",
+            boxShadow: seleccionado ? "0 0 0 2px var(--border-accent)" : undefined,
             ...(arrastreX ? { transform: `translateX(${arrastreX}px)` } : undefined),
           }}
           className={`px-3 py-2 text-sm ${esMio ? "chat-burbuja-mia" : "bg-surface-2 text-text-primary"}`}
