@@ -69,7 +69,7 @@ export function ReproductorAudioMensaje({
   const segundosAMostrar = tiempoActual > 0 ? tiempoActual : (duracionSeg ?? 0);
 
   return (
-    <div className="flex items-center gap-2 rounded-app bg-black/20 px-2.5 py-2">
+    <div className="flex items-center gap-2 bg-black/20 px-2.5 py-2">
       <audio ref={audioRef} src={url} preload="metadata" className="hidden" />
       <button
         type="button"

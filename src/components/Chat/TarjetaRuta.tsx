@@ -1,6 +1,7 @@
 "use client";
 
-import { IconRoute } from "@tabler/icons-react";
+import type { ReactNode } from "react";
+import { IconPin, IconRoute } from "@tabler/icons-react";
 
 const ANCHO_PREVIEW = 320;
 const ALTO_PREVIEW = 170;
@@ -53,26 +54,46 @@ function VistaPreviaTrazado({ puntos }: { puntos: PuntoRuta[] }) {
   );
 }
 
+// Sin radio/recorte propio: quien la usa decide eso (en el chat, el radio
+// tiene que calcar el de la burbuja; en SelectorRutaMensaje.tsx, el botón que
+// la envuelve ya se encarga). `horaTexto`/`marcaEnvio`/`fijado` son opcionales
+// — solo el chat los pasa, para que la hora/el check queden dentro de esta
+// misma franja en vez de una fila aparte debajo.
 export function TarjetaRuta({
   puntos,
   distanciaKm,
   duracionSeg,
+  horaTexto,
+  marcaEnvio,
+  fijado,
 }: {
   puntos: PuntoRuta[];
   distanciaKm: number;
   duracionSeg: number;
+  horaTexto?: string;
+  marcaEnvio?: ReactNode;
+  fijado?: boolean;
 }) {
   return (
-    <div className="relative w-full overflow-hidden rounded-app">
+    <div className="relative w-full">
       <VistaPreviaTrazado puntos={puntos} />
-      <div className="absolute inset-x-0 bottom-0 flex items-center gap-2 bg-gradient-to-t from-black/75 to-transparent px-3 py-2.5">
-        <IconRoute size={18} className="shrink-0" />
-        <div className="min-w-0">
-          <p className="text-sm font-semibold">Recorrido compartido</p>
-          <p className="text-xs opacity-85">
-            {distanciaKm.toFixed(2)} km — {Math.round(duracionSeg / 60)} min
-          </p>
+      <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-gradient-to-t from-black/75 to-transparent px-3 py-2.5">
+        <div className="flex min-w-0 items-center gap-2">
+          <IconRoute size={18} className="shrink-0" />
+          <div className="min-w-0">
+            <p className="text-sm font-semibold">Recorrido compartido</p>
+            <p className="text-xs opacity-85">
+              {distanciaKm.toFixed(2)} km — {Math.round(duracionSeg / 60)} min
+            </p>
+          </div>
         </div>
+        {horaTexto && (
+          <div className="flex shrink-0 items-center gap-1 text-[10px] opacity-90">
+            {fijado && <IconPin size={10} />}
+            <span>{horaTexto}</span>
+            {marcaEnvio}
+          </div>
+        )}
       </div>
     </div>
   );
