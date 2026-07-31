@@ -22,7 +22,7 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
-import { apiGet, apiUpload, ApiError } from "@/lib/api";
+import { apiGet, apiUploadConProgreso, ApiError } from "@/lib/api";
 import { obtenerSocket } from "@/lib/socket";
 import { tiempoTranscurrido } from "@/lib/tiempo";
 import type { PuntoGps } from "@/lib/geo";
@@ -107,7 +107,7 @@ export default function ConversacionPage() {
   const [mostrarAlbum, setMostrarAlbum] = useState(false);
   const [mostrarEncuesta, setMostrarEncuesta] = useState(false);
   const [fijados, setFijados] = useState<MensajeFijado[]>([]);
-  const [subiendoFoto, setSubiendoFoto] = useState(false);
+  const [subida, setSubida] = useState<{ etiqueta: string; pct: number } | null>(null);
   const [errorAdjunto, setErrorAdjunto] = useState("");
   const raizRef = useRef<HTMLDivElement>(null);
   const contenedorRef = useRef<HTMLDivElement>(null);
@@ -318,15 +318,17 @@ export default function ConversacionPage() {
     if (inputFotoRef.current) inputFotoRef.current.value = "";
     if (!archivo || !token) return;
     setMostrarAdjuntos(false);
-    setSubiendoFoto(true);
+    setSubida({ etiqueta: "Subiendo foto...", pct: 0 });
     setErrorAdjunto("");
     try {
-      const subida = await apiUpload<{ url: string }>("/uploads", archivo, token, archivo.name);
-      await enviar({ adjuntoTipo: "foto", adjuntoUrl: subida.url });
+      const res = await apiUploadConProgreso<{ url: string }>("/uploads", archivo, token, archivo.name, (pct) =>
+        setSubida({ etiqueta: "Subiendo foto...", pct }),
+      );
+      await enviar({ adjuntoTipo: "foto", adjuntoUrl: res.url });
     } catch (err) {
       setErrorAdjunto(err instanceof ApiError ? err.message : "No se pudo subir la foto.");
     } finally {
-      setSubiendoFoto(false);
+      setSubida(null);
     }
   }
 
@@ -335,15 +337,17 @@ export default function ConversacionPage() {
     if (inputVideoRef.current) inputVideoRef.current.value = "";
     if (!archivo || !token) return;
     setMostrarAdjuntos(false);
-    setSubiendoFoto(true);
+    setSubida({ etiqueta: "Subiendo video...", pct: 0 });
     setErrorAdjunto("");
     try {
-      const subida = await apiUpload<{ url: string }>("/uploads", archivo, token, archivo.name);
-      await enviar({ adjuntoTipo: "video", adjuntoUrl: subida.url });
+      const res = await apiUploadConProgreso<{ url: string }>("/uploads", archivo, token, archivo.name, (pct) =>
+        setSubida({ etiqueta: "Subiendo video...", pct }),
+      );
+      await enviar({ adjuntoTipo: "video", adjuntoUrl: res.url });
     } catch (err) {
       setErrorAdjunto(err instanceof ApiError ? err.message : "No se pudo subir el video.");
     } finally {
-      setSubiendoFoto(false);
+      setSubida(null);
     }
   }
 
@@ -352,34 +356,38 @@ export default function ConversacionPage() {
     if (inputArchivoRef.current) inputArchivoRef.current.value = "";
     if (!archivo || !token) return;
     setMostrarAdjuntos(false);
-    setSubiendoFoto(true);
+    setSubida({ etiqueta: "Subiendo archivo...", pct: 0 });
     setErrorAdjunto("");
     try {
-      const subida = await apiUpload<{ url: string }>("/uploads", archivo, token, archivo.name);
+      const res = await apiUploadConProgreso<{ url: string }>("/uploads", archivo, token, archivo.name, (pct) =>
+        setSubida({ etiqueta: "Subiendo archivo...", pct }),
+      );
       await enviar({
         adjuntoTipo: "archivo",
-        adjuntoUrl: subida.url,
+        adjuntoUrl: res.url,
         adjuntoArchivoNombre: archivo.name,
         adjuntoArchivoTamanoKb: Math.round(archivo.size / 1024),
       });
     } catch (err) {
       setErrorAdjunto(err instanceof ApiError ? err.message : "No se pudo subir el archivo.");
     } finally {
-      setSubiendoFoto(false);
+      setSubida(null);
     }
   }
 
   async function onNotaVozGrabada(archivo: File, duracionSeg: number) {
     if (!token) return;
-    setSubiendoFoto(true);
+    setSubida({ etiqueta: "Subiendo nota de voz...", pct: 0 });
     setErrorAdjunto("");
     try {
-      const subida = await apiUpload<{ url: string }>("/uploads", archivo, token, archivo.name);
-      await enviar({ adjuntoTipo: "audio", adjuntoUrl: subida.url, adjuntoAudioDuracionSeg: duracionSeg });
+      const res = await apiUploadConProgreso<{ url: string }>("/uploads", archivo, token, archivo.name, (pct) =>
+        setSubida({ etiqueta: "Subiendo nota de voz...", pct }),
+      );
+      await enviar({ adjuntoTipo: "audio", adjuntoUrl: res.url, adjuntoAudioDuracionSeg: duracionSeg });
     } catch (err) {
       setErrorAdjunto(err instanceof ApiError ? err.message : "No se pudo subir la nota de voz.");
     } finally {
-      setSubiendoFoto(false);
+      setSubida(null);
     }
   }
 
@@ -581,6 +589,21 @@ export default function ConversacionPage() {
         </div>
       )}
 
+      {subida && (
+        <div className="flex flex-col gap-1 rounded-app border border-border bg-surface-2 px-3 py-2">
+          <div className="flex items-center justify-between text-xs text-text-secondary">
+            <span>{subida.etiqueta}</span>
+            <span className="tabular-nums">{subida.pct}%</span>
+          </div>
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-black/20">
+            <div
+              className="h-full rounded-full bg-text-accent transition-[width]"
+              style={{ width: `${subida.pct}%` }}
+            />
+          </div>
+        </div>
+      )}
+
       {errorAdjunto && <p className="text-xs text-fill-warning">{errorAdjunto}</p>}
 
       <form ref={formRef} onSubmit={onEnviar} className="flex items-end gap-2">
@@ -621,7 +644,7 @@ export default function ConversacionPage() {
             <button
               type="button"
               onClick={() => setMostrarAdjuntos(true)}
-              disabled={subiendoFoto}
+              disabled={!!subida}
               aria-label="Adjuntar"
               className="shrink-0 rounded-app border border-border px-3 py-2 text-text-secondary disabled:opacity-60"
             >

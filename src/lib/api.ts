@@ -120,3 +120,52 @@ export async function apiUpload<T>(
   });
   return manejarRespuesta<T>(res);
 }
+
+// Igual que apiUpload, pero con XMLHttpRequest en vez de fetch: es la única
+// API del navegador que expone el evento de progreso de subida (fetch no lo
+// tiene), necesario para mostrar un % real mientras se sube un archivo
+// grande (foto/video/documento) en el chat.
+export function apiUploadConProgreso<T>(
+  ruta: string,
+  archivo: Blob,
+  token: string | null,
+  nombreArchivo: string,
+  onProgreso: (pct: number) => void,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const formData = new FormData();
+    formData.append("archivo", archivo, nombreArchivo);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_URL}${ruta}`);
+    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgreso(Math.round((e.loaded / e.total) * 100));
+    };
+
+    xhr.onload = () => {
+      let data: unknown = null;
+      if (xhr.responseText) {
+        try {
+          data = JSON.parse(xhr.responseText);
+        } catch {
+          data = {};
+        }
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(data as T);
+        return;
+      }
+      const cuerpo = (data ?? {}) as ApiErrorBody;
+      const mensaje = Array.isArray(cuerpo.message)
+        ? cuerpo.message.join(", ")
+        : (cuerpo.message ?? "Ocurrió un error inesperado");
+      reject(new ApiError(mensaje, xhr.status));
+    };
+
+    xhr.onerror = () => reject(new ApiError("No se pudo conectar con el servidor.", 0));
+
+    xhr.send(formData);
+  });
+}
