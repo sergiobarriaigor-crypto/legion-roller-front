@@ -5,6 +5,7 @@ export interface HoraClima {
   temperatura: number;
   icono: string;
   probabilidadLluvia: number;
+  vientoVelocidad: number;
 }
 
 export interface DiaClima {

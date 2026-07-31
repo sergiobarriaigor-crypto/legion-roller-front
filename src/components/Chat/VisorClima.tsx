@@ -7,8 +7,10 @@ import {
   IconWind,
   IconRefresh,
   IconMapPinOff,
+  IconMapPin,
 } from "@tabler/icons-react";
 import { obtenerClima, type ClimaDetalle, type SemaforoClima } from "@/lib/clima";
+import { obtenerCiudad } from "@/lib/geocodificacion";
 import { ApiError } from "@/lib/api";
 
 const SEMAFORO: Record<SemaforoClima, { emoji: string; texto: string; color: string }> = {
@@ -34,6 +36,7 @@ function formatearDiaSemana(fecha: string): string {
 // se abre, sin recordar un "permiso denegado" ni caer a ciudades fijas.
 export function VisorClima({ token, onCerrar }: { token: string | null; onCerrar: () => void }) {
   const [clima, setClima] = useState<ClimaDetalle | null>(null);
+  const [ciudad, setCiudad] = useState<string | null>(null);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
 
@@ -41,6 +44,7 @@ export function VisorClima({ token, onCerrar }: { token: string | null; onCerrar
     setError("");
     setCargando(true);
     setClima(null);
+    setCiudad(null);
     if (!navigator.geolocation) {
       setError("Tu navegador no permite compartir la ubicación.");
       setCargando(false);
@@ -48,6 +52,7 @@ export function VisorClima({ token, onCerrar }: { token: string | null; onCerrar
     }
     navigator.geolocation.getCurrentPosition(
       (pos) => {
+        obtenerCiudad(pos.coords.latitude, pos.coords.longitude).then(setCiudad);
         obtenerClima(pos.coords.latitude, pos.coords.longitude, token)
           .then(setClima)
           .catch((err) =>
@@ -105,6 +110,13 @@ export function VisorClima({ token, onCerrar }: { token: string | null; onCerrar
 
         {!cargando && clima && semaforo && (
           <>
+            {ciudad && (
+              <p className="flex items-center gap-1.5 text-sm text-text-secondary">
+                <IconMapPin size={16} className="shrink-0 text-text-accent" />
+                {ciudad}
+              </p>
+            )}
+
             <div
               className="flex items-center gap-2 rounded-app px-3 py-2.5"
               style={{ backgroundColor: `${semaforo.color}22` }}
@@ -149,6 +161,10 @@ export function VisorClima({ token, onCerrar }: { token: string | null; onCerrar
                       <span className="text-[11px] text-text-secondary">{formatearHora(h.hora)}</span>
                       <span className="text-lg">{h.icono}</span>
                       <span className="text-xs font-semibold text-text-primary">{h.temperatura}°</span>
+                      <span className="flex items-center gap-0.5 text-[10px] text-text-muted">
+                        <IconWind size={11} />
+                        {h.vientoVelocidad}
+                      </span>
                     </div>
                   ))}
                 </div>

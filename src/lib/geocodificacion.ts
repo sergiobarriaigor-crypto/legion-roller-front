@@ -82,6 +82,25 @@ export async function reverseGeocodificar(lat: number, lon: number): Promise<Lug
   }
 }
 
+// Solo el nombre de la ciudad/comuna (sin calle ni barrio) — zoom=10 pide un
+// nivel de detalle de ciudad en vez de sector, a diferencia de
+// reverseGeocodificar (zoom=16). Lo usa el clima, donde interesa "en qué
+// ciudad estoy" y no la dirección exacta.
+export async function obtenerCiudad(lat: number, lon: number): Promise<string | null> {
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&accept-language=es&zoom=10&addressdetails=1`,
+    );
+    if (!res.ok) return null;
+    const data: unknown = await res.json();
+    if (!data || typeof data !== "object" || !("address" in data)) return null;
+    const address = (data as { address?: DireccionNominatim }).address;
+    return address?.city || address?.town || address?.village || address?.municipality || null;
+  } catch {
+    return null;
+  }
+}
+
 // Cache en memoria (dura mientras la pestaña esté abierta) para no golpear
 // Nominatim de nuevo por cada patinador activo o cada ruta en la lista, que se
 // re-renderizan seguido (el panel de Patinadores Activos re-consulta cada
