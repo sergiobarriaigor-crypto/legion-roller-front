@@ -606,7 +606,7 @@ export default function ConversacionPage() {
 
       {errorAdjunto && <p className="text-xs text-fill-warning">{errorAdjunto}</p>}
 
-      <form ref={formRef} onSubmit={onEnviar} className="flex items-end gap-2">
+      <form ref={formRef} onSubmit={onEnviar} className="mb-4 flex items-end gap-2">
         <input ref={inputFotoRef} type="file" accept="image/*" onChange={onElegirFoto} className="hidden" />
         <input ref={inputVideoRef} type="file" accept="video/*" onChange={onElegirVideo} className="hidden" />
         <input
