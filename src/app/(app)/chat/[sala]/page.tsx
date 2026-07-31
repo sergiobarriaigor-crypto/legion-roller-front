@@ -44,7 +44,7 @@ import { SelectorReenviarMensaje } from "@/components/Chat/SelectorReenviarMensa
 import { SelectorEmojiMensaje } from "@/components/Chat/SelectorEmojiMensaje";
 import { SelectorUbicacionChat } from "@/components/Chat/SelectorUbicacionChat";
 import { SelectorRutaMensaje } from "@/components/Chat/SelectorRutaMensaje";
-import { PopoverClima } from "@/components/Chat/PopoverClima";
+import { VisorClima } from "@/components/Chat/VisorClima";
 import { AlbumChatPanel } from "@/components/Chat/AlbumChatPanel";
 import { CrearEncuestaModal } from "@/components/Chat/CrearEncuestaModal";
 import { useGrabadorAudio, soportaGrabarAudio } from "@/components/Chat/GrabadorNotaVoz";
@@ -466,17 +466,15 @@ export default function ConversacionPage() {
           <h1 className="text-sm font-semibold text-text-accent">{titulo}</h1>
           {estadoTexto && <p className="truncate text-xs text-text-muted">{estadoTexto}</p>}
         </div>
-        <div className="relative shrink-0">
-          <button
-            type="button"
-            onClick={() => setMostrarClima((v) => !v)}
-            aria-label="Ver el clima"
-            className="flex h-9 w-9 items-center justify-center rounded-full text-text-secondary"
-          >
-            <IconCloud size={22} />
-          </button>
-          {mostrarClima && <PopoverClima token={token} onCerrar={() => setMostrarClima(false)} />}
-        </div>
+        <button
+          type="button"
+          onClick={() => setMostrarClima(true)}
+          aria-label="Ver el clima"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-text-secondary"
+        >
+          <IconCloud size={22} />
+        </button>
+        {mostrarClima && <VisorClima token={token} onCerrar={() => setMostrarClima(false)} />}
         <button
           type="button"
           onClick={() => setMostrarAlbum(true)}
