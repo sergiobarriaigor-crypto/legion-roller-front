@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useSession } from "@/context/SessionContext";
 import { apiGet, ApiError } from "@/lib/api";
 import { obtenerSocket } from "@/lib/socket";
@@ -12,6 +13,7 @@ import {
   type MiembroSimple,
 } from "@/lib/chat";
 import { Avatar } from "@/components/Avatar";
+import { SelectorNuevoChat } from "@/components/Chat/SelectorNuevoChat";
 
 const MS_POLL_RESPALDO = 30000;
 
@@ -24,6 +26,7 @@ function horaMensaje(createdAt: string): string {
 
 export default function ChatListaPage() {
   const { sesion } = useSession();
+  const router = useRouter();
   const token = sesion?.token ?? null;
 
   const [conversaciones, setConversaciones] = useState<Conversaciones | null>(null);
@@ -159,30 +162,19 @@ export default function ChatListaPage() {
         </Link>
       ))}
 
-      {!mostrarNuevo ? (
-        <button type="button" onClick={abrirNuevo} className="btn-hero rounded-app px-4 py-2 text-sm">
-          Nuevo chat
-        </button>
-      ) : (
-        <div className="card -mx-4 flex flex-col gap-2 px-3 py-4">
-          <p className="text-sm font-semibold text-text-primary">Elige con quién chatear</p>
-          {miembros.map((m) => (
-            <Link
-              key={m.id}
-              href={`/chat/${salaIndividual(sesion!.id!, m.id)}`}
-              className="text-sm text-text-secondary underline"
-            >
-              {m.nombre}
-            </Link>
-          ))}
-          <button
-            type="button"
-            onClick={() => setMostrarNuevo(false)}
-            className="text-xs text-text-secondary underline"
-          >
-            Cancelar
-          </button>
-        </div>
+      <button type="button" onClick={abrirNuevo} className="btn-hero rounded-app px-4 py-2 text-sm">
+        Nuevo chat
+      </button>
+
+      {mostrarNuevo && (
+        <SelectorNuevoChat
+          miembros={miembros}
+          onElegir={(m) => {
+            setMostrarNuevo(false);
+            router.push(`/chat/${salaIndividual(sesion!.id!, m.id)}`);
+          }}
+          onCerrar={() => setMostrarNuevo(false)}
+        />
       )}
     </div>
   );
