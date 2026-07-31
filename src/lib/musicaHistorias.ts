@@ -21,4 +21,7 @@ export interface CancionHistoria {
 
 // Se completa con las pistas reales una vez que estén en public/musica/<genero>/
 // — ver instrucciones en public/musica/README.md.
-export const CANCIONES_HISTORIA: CancionHistoria[] = [];
+export const CANCIONES_HISTORIA: CancionHistoria[] = [
+  { id: "rock-01", nombre: "Motivation", genero: "rock", archivo: "/musica/rock/01-motivation.mp3" },
+  { id: "rock-02", nombre: "Upbeat Rock", genero: "rock", archivo: "/musica/rock/02-upbeat-rock.mp3" },
+];
