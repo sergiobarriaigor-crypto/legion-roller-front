@@ -80,7 +80,7 @@ export function SwipeNavigator({ children }: { children: ReactNode }) {
       onTouchStart={onTouchStart}
       onTouchEnd={onTouchEnd}
     >
-      <div key={pathname} className={claseAnimacion}>
+      <div key={pathname} className={`h-full ${claseAnimacion}`}>
         {children}
       </div>
     </main>
