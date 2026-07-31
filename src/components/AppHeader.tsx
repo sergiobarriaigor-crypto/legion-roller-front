@@ -351,7 +351,7 @@ export function AppHeader() {
             aria-label="Activar notificaciones"
             className="flex h-9 w-9 items-center justify-center rounded-full text-text-secondary hover:text-text-primary disabled:opacity-60"
           >
-            <IconBellPlus size={20} />
+            <IconBellPlus size={24} />
           </button>
         )}
         <Link
@@ -359,7 +359,7 @@ export function AppHeader() {
           aria-label="Chat"
           className="relative flex h-9 w-9 items-center justify-center rounded-full text-text-secondary hover:text-text-primary"
         >
-          <IconMessageCircle2 size={20} />
+          <IconMessageCircle2 size={24} />
           {noLeidos > 0 && (
             <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-fill-primary px-1 text-[10px] text-on-primary">
               {noLeidos}
@@ -372,7 +372,7 @@ export function AppHeader() {
           aria-label="Notificaciones"
           className="relative flex h-9 w-9 items-center justify-center rounded-full text-text-secondary hover:text-text-primary"
         >
-          <IconBell size={20} />
+          <IconBell size={24} />
           {totalNotificaciones > 0 && (
             <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-fill-primary px-1 text-[10px] text-on-primary">
               {totalNotificaciones}

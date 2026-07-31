@@ -67,7 +67,7 @@ export function SosButton() {
         onPointerCancel={cancelarHold}
         className="relative flex h-9 w-9 select-none items-center justify-center rounded-full bg-fill-warning/10 text-fill-warning"
       >
-        <IconAlertTriangle size={20} />
+        <IconAlertTriangle size={24} />
         {manteniendo && (
           <svg className="pointer-events-none absolute inset-0 -rotate-90" width={36} height={36}>
             <circle
