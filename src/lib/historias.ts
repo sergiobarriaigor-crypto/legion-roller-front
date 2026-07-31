@@ -60,6 +60,8 @@ export interface Historia {
   texto: string | null;
   textoEstilo: string | null;
   fotosSticker: string | null;
+  musicaUrl: string | null;
+  musicaNombre: string | null;
   ubicacion: string | null;
   menciones: MencionEnHistoria[];
   mencionSinVer: boolean;
@@ -131,6 +133,8 @@ export interface CrearHistoriaInput {
   texto?: string;
   textoEstilo?: string;
   fotosSticker?: string;
+  musicaUrl?: string;
+  musicaNombre?: string;
   ubicacion?: string;
   menciones?: MencionInput[];
 }

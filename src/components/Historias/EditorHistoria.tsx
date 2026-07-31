@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { IconAt, IconCheck, IconMapPin, IconPhotoPlus, IconX } from "@tabler/icons-react";
+import { IconAt, IconCheck, IconDisc, IconMapPin, IconMusic, IconPhotoPlus, IconX } from "@tabler/icons-react";
 import { apiUpload, ApiError } from "@/lib/api";
 import {
   crearHistoria,
@@ -22,6 +22,7 @@ import { FILTROS_FOTO, FiltrosFoto, prepararFotoHistoria, type FiltroFoto } from
 import { MencionSobreImagen } from "@/components/Historias/MencionSobreImagen";
 import { SelectorMencion } from "@/components/Historias/SelectorMencion";
 import { FotoStickerSobreImagen } from "@/components/Historias/FotoStickerSobreImagen";
+import { SelectorMusicaHistoria } from "@/components/Historias/SelectorMusicaHistoria";
 import { VideoTrimmer } from "@/components/VideoTrimmer";
 
 const ESTILO_TEXTO_DEFECTO: Omit<EstiloTextoHistoria, "contenido"> = {
@@ -85,6 +86,9 @@ export function EditorHistoria({
     { id: string; archivo: File; previewUrl: string; x: number; y: number; escala: number; rotacion: number }[]
   >([]);
   const inputStickerRef = useRef<HTMLInputElement>(null);
+  const [musica, setMusica] = useState<{ url: string; nombre: string } | null>(null);
+  const [mostrarSelectorMusica, setMostrarSelectorMusica] = useState(false);
+  const audioPreviaRef = useRef<HTMLAudioElement>(null);
   const [mostrarSelectorMencion, setMostrarSelectorMencion] = useState(false);
   const [mostrarInputTexto, setMostrarInputTexto] = useState(false);
   const [borradorTexto, setBorradorTexto] = useState("");
@@ -96,6 +100,20 @@ export function EditorHistoria({
   const [publicado, setPublicado] = useState(false);
   const [mostrarRecorte, setMostrarRecorte] = useState(false);
   const [videoRecortadoBlob, setVideoRecortadoBlob] = useState<Blob | null>(null);
+
+  // Vista previa en vivo de la música elegida — lo que se escucha acá al
+  // editar es lo mismo que sonará al ver la historia (misma lógica que el
+  // filtro de color, que también se previsualiza igual a como queda).
+  useEffect(() => {
+    const audio = audioPreviaRef.current;
+    if (!audio) return;
+    if (!musica) {
+      audio.pause();
+      return;
+    }
+    audio.src = musica.url;
+    audio.play().catch(() => {});
+  }, [musica]);
 
   // Ubicación opcional: se autodetecta una vez al abrir el editor, geocodificando
   // la posición GPS real (Nominatim) en vez de un sector fijo — el usuario puede
@@ -255,6 +273,8 @@ export function EditorHistoria({
                 })),
               )
             : undefined,
+          musicaUrl: musica?.url,
+          musicaNombre: musica?.nombre,
           ubicacion,
           menciones: menciones.length
             ? menciones.map((m) => ({ miembroId: m.miembroId, x: m.x, y: m.y, escala: m.escala }))
@@ -413,6 +433,49 @@ export function EditorHistoria({
               onChange={onElegirSticker}
               className="hidden"
             />
+
+            {/* Cuarto control del mismo grupo — elegir música del catálogo
+                propio de la app. Reemplaza cualquier pista ya elegida. */}
+            <button
+              type="button"
+              onClick={() => setMostrarSelectorMusica(true)}
+              aria-label="Agregar música"
+              className={`absolute right-3 top-[9rem] z-10 flex h-9 w-9 items-center justify-center rounded-full text-white ${
+                musica ? "bg-fill-primary" : "bg-black/50"
+              }`}
+            >
+              <IconMusic size={18} />
+            </button>
+            {/* Se escucha en vivo mientras se edita — lo que se oye acá es lo
+                mismo que sonará al publicar (igual criterio que el filtro de
+                color, previsualizado tal cual queda). El <video> de arriba ya
+                está silenciado siempre en este editor, así que no compite. */}
+            <audio ref={audioPreviaRef} loop />
+
+            {mostrarSelectorMusica && (
+              <SelectorMusicaHistoria
+                onCerrar={() => setMostrarSelectorMusica(false)}
+                onSeleccionar={(c) => {
+                  setMusica({ url: c.archivo, nombre: c.nombre });
+                  setMostrarSelectorMusica(false);
+                }}
+              />
+            )}
+
+            {musica && (
+              <div className="absolute inset-x-3 bottom-3 z-10 flex items-center gap-2 rounded-full bg-black/55 px-3 py-1.5">
+                <IconDisc size={16} className="shrink-0 text-text-accent" />
+                <p className="min-w-0 flex-1 truncate text-xs font-medium text-white">{musica.nombre}</p>
+                <button
+                  type="button"
+                  onClick={() => setMusica(null)}
+                  aria-label="Quitar música"
+                  className="shrink-0 text-white/70"
+                >
+                  <IconX size={14} />
+                </button>
+              </div>
+            )}
 
             {estiloTexto && (
               <TextoSobreImagen

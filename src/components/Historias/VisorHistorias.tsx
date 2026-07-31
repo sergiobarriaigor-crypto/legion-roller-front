@@ -10,6 +10,7 @@ import {
   IconHeart,
   IconHeartFilled,
   IconSend2,
+  IconDisc,
 } from "@tabler/icons-react";
 import type { EcoEnHistoria, GrupoHistorias } from "@/lib/historias";
 import {
@@ -171,6 +172,7 @@ export function VisorHistorias({
   const [modoEnvio, setModoEnvio] = useState<"comentario" | "eco">("comentario");
   const startYRef = useRef(0);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const musicaRef = useRef<HTMLAudioElement>(null);
   const holdTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const holdActivadoRef = useRef(false);
   const socketRef = useRef<ReturnType<typeof obtenerSocket> | null>(null);
@@ -337,9 +339,18 @@ export function VisorHistorias({
 
   useEffect(() => {
     const video = videoRef.current;
-    if (!video) return;
-    if (pausadoEfectivo) video.pause();
-    else video.play().catch(() => {});
+    if (video) {
+      if (pausadoEfectivo) video.pause();
+      else video.play().catch(() => {});
+    }
+    // La música (si esta historia tiene) sigue el mismo estado de pausa que
+    // el video/temporizador — no tendría sentido que la canción siga sonando
+    // mientras la historia está detenida.
+    const musica = musicaRef.current;
+    if (musica) {
+      if (pausadoEfectivo) musica.pause();
+      else musica.play().catch(() => {});
+    }
   }, [pausadoEfectivo]);
 
   if (!grupo || !historia) return null;
@@ -581,6 +592,7 @@ export function VisorHistorias({
                 src={historia.mediaUrl}
                 className="h-full w-full object-cover"
                 autoPlay
+                muted={!!historia.musicaUrl}
                 playsInline
                 onLoadedMetadata={(e) => setDuracionVideoMs(e.currentTarget.duration * 1000)}
                 onEnded={avanzar}
@@ -590,9 +602,22 @@ export function VisorHistorias({
               <img src={historia.mediaUrl} alt="" className="h-full w-full object-cover" />
             )}
 
+            {/* Música elegida por el autor (catálogo propio de la app) — si la
+                historia es un video, su audio original queda silenciado
+                arriba para que solo suene esta pista. */}
+            {historia.musicaUrl && (
+              <audio ref={musicaRef} key={historia.id} src={historia.musicaUrl} autoPlay loop />
+            )}
+
             {historia.ubicacion && (
               <div className="absolute left-3 top-14 rounded-full bg-black/50 px-3 py-1 text-xs text-white">
                 {historia.ubicacion}
+              </div>
+            )}
+            {historia.musicaNombre && (
+              <div className="absolute right-3 top-14 flex max-w-[55%] items-center gap-1 rounded-full bg-black/50 px-3 py-1 text-xs text-white">
+                <IconDisc size={13} className="shrink-0 text-text-accent" />
+                <span className="truncate">{historia.musicaNombre}</span>
               </div>
             )}
             {(() => {
