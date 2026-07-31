@@ -53,6 +53,9 @@ import { useNoAutofill } from "@/lib/useNoAutofill";
 
 const MS_PAUSA_ESCRIBIENDO = 2000;
 const IMAGEN_CHAT_GRUPAL = "/avatar-chat-grupal.png";
+// Alto máximo del campo de texto antes de que empiece a scrollear por dentro
+// en vez de seguir creciendo (~5-6 líneas).
+const ALTURA_MAX_TEXTAREA = 120;
 
 interface OtroParticipante {
   id: number;
@@ -109,6 +112,7 @@ export default function ConversacionPage() {
   const raizRef = useRef<HTMLDivElement>(null);
   const contenedorRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const cantidadAnteriorRef = useRef(0);
   const propioEscribiendoRef = useRef(false);
   const pausaEscribiendoRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -306,6 +310,7 @@ export default function ConversacionPage() {
     notificarEscribiendo(false);
     await enviar({ texto });
     setTexto("");
+    if (textareaRef.current) textareaRef.current.style.height = "";
   }
 
   async function onElegirFoto(e: React.ChangeEvent<HTMLInputElement>) {
@@ -580,7 +585,7 @@ export default function ConversacionPage() {
 
       {errorAdjunto && <p className="text-xs text-fill-warning">{errorAdjunto}</p>}
 
-      <form ref={formRef} onSubmit={onEnviar} className="flex gap-2">
+      <form ref={formRef} onSubmit={onEnviar} className="flex items-end gap-2">
         <input ref={inputFotoRef} type="file" accept="image/*" onChange={onElegirFoto} className="hidden" />
         <input ref={inputVideoRef} type="file" accept="video/*" onChange={onElegirVideo} className="hidden" />
         <input
@@ -624,14 +629,19 @@ export default function ConversacionPage() {
             >
               <IconPaperclip size={18} />
             </button>
-            <input
-              type="text"
+            <textarea
+              ref={textareaRef}
+              rows={1}
               autoComplete="off"
               {...noAutofillMensaje}
               placeholder="Escribe un mensaje..."
               value={texto}
-              onChange={(e) => onCambioTexto(e.target.value)}
-              className="min-w-0 flex-1 rounded-app border border-border bg-surface-2 px-3 py-2 text-sm text-text-primary outline-none"
+              onChange={(e) => {
+                e.target.style.height = "auto";
+                e.target.style.height = `${Math.min(e.target.scrollHeight, ALTURA_MAX_TEXTAREA)}px`;
+                onCambioTexto(e.target.value);
+              }}
+              className="min-w-0 flex-1 resize-none rounded-app border border-border bg-surface-2 px-3 py-2 text-sm text-text-primary outline-none"
             />
             {texto.trim() ? (
               <button
