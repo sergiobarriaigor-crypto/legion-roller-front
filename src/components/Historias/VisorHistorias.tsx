@@ -10,7 +10,6 @@ import {
   IconHeart,
   IconHeartFilled,
   IconSend2,
-  IconDisc,
 } from "@tabler/icons-react";
 import type { EcoEnHistoria, GrupoHistorias } from "@/lib/historias";
 import {
@@ -614,12 +613,25 @@ export function VisorHistorias({
                 {historia.ubicacion}
               </div>
             )}
-            {historia.musicaNombre && (
-              <div className="absolute right-3 top-14 flex max-w-[55%] items-center gap-1 rounded-full bg-black/50 px-3 py-1 text-xs text-white">
-                <IconDisc size={13} className="shrink-0 text-text-accent" />
-                <span className="truncate">{historia.musicaNombre}</span>
+            {/* Las fotos-sticker van ANTES del texto/menciones a propósito —
+                mismo criterio que en el editor: el texto siempre debe quedar
+                legible arriba, sin importar en qué posición haya quedado
+                cada foto. */}
+            {parsearFotosSticker(historia.fotosSticker).map((s, i) => (
+              <div
+                key={i}
+                style={estiloVisualFotoSticker(s.x, s.y, s.escala, s.rotacion)}
+                className="flex flex-col gap-2 rounded-[2px] bg-white p-2 pb-4 shadow-[0_10px_24px_rgba(0,0,0,0.45)]"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={s.url}
+                  alt=""
+                  style={{ width: 116, height: 116 }}
+                  className="rounded-[1px] object-cover"
+                />
               </div>
-            )}
+            ))}
             {(() => {
               const estilo = parsearEstiloTexto(historia.textoEstilo);
               if (estilo) {
@@ -645,21 +657,6 @@ export function VisorHistorias({
               >
                 <span className="text-text-accent">@</span>
                 {m.nombre}
-              </div>
-            ))}
-            {parsearFotosSticker(historia.fotosSticker).map((s, i) => (
-              <div
-                key={i}
-                style={estiloVisualFotoSticker(s.x, s.y, s.escala, s.rotacion)}
-                className="flex flex-col gap-2 rounded-[2px] bg-white p-2 pb-4 shadow-[0_10px_24px_rgba(0,0,0,0.45)]"
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={s.url}
-                  alt=""
-                  style={{ width: 116, height: 116 }}
-                  className="rounded-[1px] object-cover"
-                />
               </div>
             ))}
           </div>

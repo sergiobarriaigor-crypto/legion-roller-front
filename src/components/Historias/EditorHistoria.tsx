@@ -480,14 +480,11 @@ export function EditorHistoria({
               </div>
             )}
 
-            {estiloTexto && (
-              <TextoSobreImagen
-                estilo={estiloTexto}
-                onChange={setEstiloTexto}
-                contenedorRef={contenedorMediaRef}
-              />
-            )}
-
+            {/* Las fotos-sticker van ANTES del texto a propósito: el texto debe
+                quedar siempre arriba/legible sin importar dónde se arrastre
+                cada elemento — si se dibujaran después, cualquier foto que
+                pasara sobre el texto lo taparía sin poder recuperarlo (queda
+                debajo también para los toques, no solo visualmente). */}
             {stickers.map((s) => (
               <FotoStickerSobreImagen
                 key={s.id}
@@ -503,6 +500,14 @@ export function EditorHistoria({
                 contenedorRef={contenedorMediaRef}
               />
             ))}
+
+            {estiloTexto && (
+              <TextoSobreImagen
+                estilo={estiloTexto}
+                onChange={setEstiloTexto}
+                contenedorRef={contenedorMediaRef}
+              />
+            )}
 
             {menciones.map((m) => (
               <MencionSobreImagen
