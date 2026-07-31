@@ -210,11 +210,14 @@ export function EditorHistoria({
     const archivo = e.target.files?.[0];
     if (inputStickerRef.current) inputStickerRef.current.value = "";
     if (!archivo) return;
-    // Pequeño escalón vertical y una rotación leve al azar por cada foto
-    // nueva, para que no queden todas apiladas exactamente igual (mismo
-    // criterio que el escalón de menciones, más el efecto "tirada sobre la
-    // mesa" de una Polaroid real).
-    const y = Math.min(0.8, 0.45 + stickers.length * 0.08);
+    // Nace en la mitad inferior (0.72), lejos del centro (0.5) donde por
+    // defecto cae el texto — si nacieran cerca del centro, la Polaroid (que
+    // es bastante más grande que un texto o una mención) tapaba el texto por
+    // completo apenas se agregaba, dejándolo inalcanzable porque queda
+    // debajo en el orden de dibujo. Además, un pequeño escalón vertical y una
+    // rotación leve al azar por cada foto nueva, para que no queden todas
+    // apiladas exactamente igual (efecto "tirada sobre la mesa").
+    const y = Math.min(0.8, 0.72 + stickers.length * 0.05);
     const rotacion = Math.random() * 10 - 5;
     setStickers((prev) => [
       ...prev,
