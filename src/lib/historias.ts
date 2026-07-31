@@ -15,6 +15,18 @@ export interface MencionEnHistoria {
 
 export const MAX_MENCIONES_POR_HISTORIA = 5;
 
+// Foto "Polaroid" pegada sobre la imagen (arrastrable/pellizcable/girable,
+// estilo Instagram) — hasta MAX_FOTOS_STICKER_POR_HISTORIA por historia.
+export interface FotoStickerHistoria {
+  url: string;
+  x: number;
+  y: number;
+  escala: number;
+  rotacion: number;
+}
+
+export const MAX_FOTOS_STICKER_POR_HISTORIA = 3;
+
 // Duración máxima de un video de historia — compartida entre EditorHistoria
 // (valida archivos elegidos desde Galería) y CamaraHistoria (corta la
 // grabación en vivo apenas la alcanza), para que ambos caminos usen siempre
@@ -47,6 +59,7 @@ export interface Historia {
   mediaUrl: string;
   texto: string | null;
   textoEstilo: string | null;
+  fotosSticker: string | null;
   ubicacion: string | null;
   menciones: MencionEnHistoria[];
   mencionSinVer: boolean;
@@ -117,6 +130,7 @@ export interface CrearHistoriaInput {
   mediaUrl: string;
   texto?: string;
   textoEstilo?: string;
+  fotosSticker?: string;
   ubicacion?: string;
   menciones?: MencionInput[];
 }
@@ -148,6 +162,19 @@ export function parsearEstiloTexto(json: string | null | undefined): EstiloTexto
     return JSON.parse(json) as EstiloTextoHistoria;
   } catch {
     return null;
+  }
+}
+
+export function serializarFotosSticker(fotos: FotoStickerHistoria[]): string {
+  return JSON.stringify(fotos);
+}
+
+export function parsearFotosSticker(json: string | null | undefined): FotoStickerHistoria[] {
+  if (!json) return [];
+  try {
+    return JSON.parse(json) as FotoStickerHistoria[];
+  } catch {
+    return [];
   }
 }
 

@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { IconAt, IconCheck, IconMapPin, IconX } from "@tabler/icons-react";
+import { IconAt, IconCheck, IconMapPin, IconPhotoPlus, IconX } from "@tabler/icons-react";
 import { apiUpload, ApiError } from "@/lib/api";
 import {
   crearHistoria,
   serializarEstiloTexto,
+  serializarFotosSticker,
   MAX_MENCIONES_POR_HISTORIA,
+  MAX_FOTOS_STICKER_POR_HISTORIA,
   DURACION_MAXIMA_VIDEO_HISTORIA_SEG,
   type EstiloTextoHistoria,
 } from "@/lib/historias";
@@ -19,6 +21,7 @@ import { BarraTextoHistoria } from "@/components/Historias/BarraTextoHistoria";
 import { FILTROS_FOTO, FiltrosFoto, prepararFotoHistoria, type FiltroFoto } from "@/components/Historias/FiltrosFoto";
 import { MencionSobreImagen } from "@/components/Historias/MencionSobreImagen";
 import { SelectorMencion } from "@/components/Historias/SelectorMencion";
+import { FotoStickerSobreImagen } from "@/components/Historias/FotoStickerSobreImagen";
 import { VideoTrimmer } from "@/components/VideoTrimmer";
 
 const ESTILO_TEXTO_DEFECTO: Omit<EstiloTextoHistoria, "contenido"> = {
@@ -78,6 +81,10 @@ export function EditorHistoria({
   const [menciones, setMenciones] = useState<
     { miembroId: number; nombre: string; x: number; y: number; escala: number }[]
   >([]);
+  const [stickers, setStickers] = useState<
+    { id: string; archivo: File; previewUrl: string; x: number; y: number; escala: number; rotacion: number }[]
+  >([]);
+  const inputStickerRef = useRef<HTMLInputElement>(null);
   const [mostrarSelectorMencion, setMostrarSelectorMencion] = useState(false);
   const [mostrarInputTexto, setMostrarInputTexto] = useState(false);
   const [borradorTexto, setBorradorTexto] = useState("");
@@ -181,6 +188,38 @@ export function EditorHistoria({
     setMostrarInputTexto(false);
   }
 
+  function onElegirSticker(e: React.ChangeEvent<HTMLInputElement>) {
+    const archivo = e.target.files?.[0];
+    if (inputStickerRef.current) inputStickerRef.current.value = "";
+    if (!archivo) return;
+    // Pequeño escalón vertical y una rotación leve al azar por cada foto
+    // nueva, para que no queden todas apiladas exactamente igual (mismo
+    // criterio que el escalón de menciones, más el efecto "tirada sobre la
+    // mesa" de una Polaroid real).
+    const y = Math.min(0.8, 0.45 + stickers.length * 0.08);
+    const rotacion = Math.random() * 10 - 5;
+    setStickers((prev) => [
+      ...prev,
+      {
+        id: `${Date.now()}-${prev.length}`,
+        archivo,
+        previewUrl: URL.createObjectURL(archivo),
+        x: 0.5,
+        y,
+        escala: 1,
+        rotacion,
+      },
+    ]);
+  }
+
+  function quitarSticker(id: string) {
+    setStickers((prev) => {
+      const objetivo = prev.find((s) => s.id === id);
+      if (objetivo) URL.revokeObjectURL(objetivo.previewUrl);
+      return prev.filter((s) => s.id !== id);
+    });
+  }
+
   async function publicar() {
     if (!tipo) return;
     setPublicando(true);
@@ -195,13 +234,27 @@ export function EditorHistoria({
       const nombreArchivo = videoRecortadoBlob && archivoASubir === videoRecortadoBlob
         ? "recorte.webm"
         : archivoInicial.name;
-      const subida = await apiUpload<{ url: string }>("/uploads", archivoASubir, token, nombreArchivo);
+      const [subida, ...subidasStickers] = await Promise.all([
+        apiUpload<{ url: string }>("/uploads", archivoASubir, token, nombreArchivo),
+        ...stickers.map((s) => apiUpload<{ url: string }>("/uploads", s.archivo, token, s.archivo.name)),
+      ]);
       await crearHistoria(
         {
           tipo,
           mediaUrl: subida.url,
           texto: estiloTexto?.contenido || undefined,
           textoEstilo: estiloTexto ? serializarEstiloTexto(estiloTexto) : undefined,
+          fotosSticker: stickers.length
+            ? serializarFotosSticker(
+                stickers.map((s, i) => ({
+                  url: subidasStickers[i].url,
+                  x: s.x,
+                  y: s.y,
+                  escala: s.escala,
+                  rotacion: s.rotacion,
+                })),
+              )
+            : undefined,
           ubicacion,
           menciones: menciones.length
             ? menciones.map((m) => ({ miembroId: m.miembroId, x: m.x, y: m.y, escala: m.escala }))
@@ -337,6 +390,30 @@ export function EditorHistoria({
               <IconAt size={18} />
             </button>
 
+            {/* Botón para pegar una foto "Polaroid" sobre la imagen (estilo
+                Instagram), tercer control del mismo grupo que "Aa" y "@". */}
+            <button
+              type="button"
+              onClick={() => {
+                if (stickers.length >= MAX_FOTOS_STICKER_POR_HISTORIA) {
+                  setError(`Puedes agregar hasta ${MAX_FOTOS_STICKER_POR_HISTORIA} fotos por historia.`);
+                  return;
+                }
+                inputStickerRef.current?.click();
+              }}
+              aria-label="Agregar una foto sobre la imagen"
+              className="absolute right-3 top-[6.25rem] z-10 flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white"
+            >
+              <IconPhotoPlus size={18} />
+            </button>
+            <input
+              ref={inputStickerRef}
+              type="file"
+              accept="image/*"
+              onChange={onElegirSticker}
+              className="hidden"
+            />
+
             {estiloTexto && (
               <TextoSobreImagen
                 estilo={estiloTexto}
@@ -344,6 +421,22 @@ export function EditorHistoria({
                 contenedorRef={contenedorMediaRef}
               />
             )}
+
+            {stickers.map((s) => (
+              <FotoStickerSobreImagen
+                key={s.id}
+                url={s.previewUrl}
+                x={s.x}
+                y={s.y}
+                escala={s.escala}
+                rotacion={s.rotacion}
+                onCambiar={(valores) =>
+                  setStickers((prev) => prev.map((p) => (p.id === s.id ? { ...p, ...valores } : p)))
+                }
+                onQuitar={() => quitarSticker(s.id)}
+                contenedorRef={contenedorMediaRef}
+              />
+            ))}
 
             {menciones.map((m) => (
               <MencionSobreImagen
