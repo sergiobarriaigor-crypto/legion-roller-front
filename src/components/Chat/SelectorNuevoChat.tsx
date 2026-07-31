@@ -60,7 +60,7 @@ export function SelectorNuevoChat({
             key={m.id}
             type="button"
             onClick={() => onElegir(m)}
-            className="flex w-full items-center gap-3 border-t border-border px-4 py-3 text-left active:bg-white/5"
+            className="flex w-full items-center gap-3 px-4 py-3 text-left active:bg-white/5"
           >
             <Avatar fotoUrl={m.fotoUrl ?? null} nombre={m.nombre} tamano={44} />
             <p className="text-sm text-text-primary">{m.nombre}</p>
