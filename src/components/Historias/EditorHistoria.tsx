@@ -10,7 +10,9 @@ import {
   MAX_MENCIONES_POR_HISTORIA,
   MAX_FOTOS_STICKER_POR_HISTORIA,
   DURACION_MAXIMA_VIDEO_HISTORIA_SEG,
+  MARCO_FOTO_STICKER_DEFECTO,
   type EstiloTextoHistoria,
+  type MarcoFotoStickerId,
 } from "@/lib/historias";
 import { reverseGeocodificar } from "@/lib/geocodificacion";
 import { SelectorUbicacion } from "@/components/SelectorUbicacion";
@@ -22,6 +24,7 @@ import { FILTROS_FOTO, FiltrosFoto, prepararFotoHistoria, type FiltroFoto } from
 import { MencionSobreImagen } from "@/components/Historias/MencionSobreImagen";
 import { SelectorMencion } from "@/components/Historias/SelectorMencion";
 import { FotoStickerSobreImagen } from "@/components/Historias/FotoStickerSobreImagen";
+import { SelectorMarcoFotoSticker } from "@/components/Historias/SelectorMarcoFotoSticker";
 import { SelectorMusicaHistoria } from "@/components/Historias/SelectorMusicaHistoria";
 import { VideoTrimmer } from "@/components/VideoTrimmer";
 
@@ -83,8 +86,20 @@ export function EditorHistoria({
     { miembroId: number; nombre: string; x: number; y: number; escala: number }[]
   >([]);
   const [stickers, setStickers] = useState<
-    { id: string; archivo: File; previewUrl: string; x: number; y: number; escala: number; rotacion: number }[]
+    {
+      id: string;
+      archivo: File;
+      previewUrl: string;
+      x: number;
+      y: number;
+      escala: number;
+      rotacion: number;
+      marco: MarcoFotoStickerId;
+    }[]
   >([]);
+  // Id de la foto-sticker cuyo selector de marco está abierto (se abre con un
+  // toque corto sobre ella, ver onTocar en FotoStickerSobreImagen).
+  const [marcoAbiertoId, setMarcoAbiertoId] = useState<string | null>(null);
   const inputStickerRef = useRef<HTMLInputElement>(null);
   const [musica, setMusica] = useState<{ url: string; nombre: string } | null>(null);
   const [mostrarSelectorMusica, setMostrarSelectorMusica] = useState(false);
@@ -229,6 +244,7 @@ export function EditorHistoria({
         y,
         escala: 1,
         rotacion,
+        marco: MARCO_FOTO_STICKER_DEFECTO,
       },
     ]);
   }
@@ -239,6 +255,7 @@ export function EditorHistoria({
       if (objetivo) URL.revokeObjectURL(objetivo.previewUrl);
       return prev.filter((s) => s.id !== id);
     });
+    setMarcoAbiertoId((prev) => (prev === id ? null : prev));
   }
 
   async function publicar() {
@@ -273,6 +290,7 @@ export function EditorHistoria({
                   y: s.y,
                   escala: s.escala,
                   rotacion: s.rotacion,
+                  marco: s.marco,
                 })),
               )
             : undefined,
@@ -493,10 +511,12 @@ export function EditorHistoria({
                 y={s.y}
                 escala={s.escala}
                 rotacion={s.rotacion}
+                marco={s.marco}
                 onCambiar={(valores) =>
                   setStickers((prev) => prev.map((p) => (p.id === s.id ? { ...p, ...valores } : p)))
                 }
                 onQuitar={() => quitarSticker(s.id)}
+                onTocar={() => setMarcoAbiertoId((prev) => (prev === s.id ? null : s.id))}
                 contenedorRef={contenedorMediaRef}
               />
             ))}
@@ -579,6 +599,21 @@ export function EditorHistoria({
           </div>
 
           <div className="flex flex-col gap-2 p-3">
+            {marcoAbiertoId &&
+              (() => {
+                const sticker = stickers.find((s) => s.id === marcoAbiertoId);
+                if (!sticker) return null;
+                return (
+                  <SelectorMarcoFotoSticker
+                    previewUrl={sticker.previewUrl}
+                    marcoActual={sticker.marco}
+                    onCambiar={(marco) =>
+                      setStickers((prev) => prev.map((p) => (p.id === marcoAbiertoId ? { ...p, marco } : p)))
+                    }
+                    onCerrar={() => setMarcoAbiertoId(null)}
+                  />
+                );
+              })()}
             {tipo === "foto" && (
               <FiltrosFoto previewUrl={previewUrl} filtroActual={filtro} onCambiar={setFiltro} />
             )}

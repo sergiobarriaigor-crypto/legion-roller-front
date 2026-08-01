@@ -2,9 +2,15 @@
 
 import { useRef, type CSSProperties, type RefObject } from "react";
 import { IconX } from "@tabler/icons-react";
+import { type MarcoFotoStickerId } from "@/lib/historias";
 
 const ESCALA_MINIMA = 0.5;
 const ESCALA_MAXIMA = 2.5;
+
+// Un toque se distingue de un arrastre por qué tan lejos se movió el dedo
+// entre pointerDown y pointerUp — por debajo de este umbral (en píxeles de
+// pantalla) se considera un tap, no un gesto.
+const UMBRAL_TAP_PX = 8;
 
 // Tamaño base del marco Polaroid a escala=1 (foto cuadrada + margen inferior
 // grueso, mismo criterio visual que una instantánea real).
@@ -36,6 +42,71 @@ function distanciaYAngulo(p1: { x: number; y: number }, p2: { x: number; y: numb
   return { distancia: Math.hypot(dx, dy), angulo: (Math.atan2(dy, dx) * 180) / Math.PI };
 }
 
+const SOMBRA_FOTO = "0 6px 18px rgba(0,0,0,0.5)";
+
+// Dibuja la foto según el marco elegido — compartido entre el editor
+// (FotoStickerSobreImagen, interactivo) y el visor (VisorHistorias, estático)
+// para que se vea idéntico en ambos. Todas las variantes ocupan el mismo
+// espacio (ANCHO_BASE x ALTO_BASE) para no afectar la posición/gestos.
+export function ContenidoFotoSticker({ url, marco }: { url: string; marco: MarcoFotoStickerId }) {
+  if (marco === "sinmarco") {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={url}
+        alt=""
+        draggable={false}
+        style={{ width: ANCHO_BASE, height: ALTO_BASE, boxShadow: SOMBRA_FOTO }}
+        className="rounded-app object-cover"
+      />
+    );
+  }
+  if (marco === "circular") {
+    const lado = ALTO_FOTO_BASE - 8;
+    return (
+      <div className="flex items-center justify-center" style={{ width: ANCHO_BASE, height: ALTO_BASE }}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={url}
+          alt=""
+          draggable={false}
+          style={{ width: lado, height: lado, boxShadow: SOMBRA_FOTO }}
+          className="rounded-full border-4 border-white object-cover"
+        />
+      </div>
+    );
+  }
+  if (marco === "redondeado") {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={url}
+        alt=""
+        draggable={false}
+        style={{ width: ANCHO_BASE, height: ALTO_BASE, boxShadow: SOMBRA_FOTO }}
+        className="rounded-2xl border-2 border-white object-cover"
+      />
+    );
+  }
+  // "polaroid" (por defecto) — marco blanco con margen inferior grueso, mismo
+  // criterio visual que una instantánea real.
+  return (
+    <div
+      className="flex flex-col gap-2 rounded-[2px] bg-white p-2 pb-4"
+      style={{ width: ANCHO_BASE, height: ALTO_BASE, boxShadow: "0 10px 24px rgba(0,0,0,0.45)" }}
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={url}
+        alt=""
+        draggable={false}
+        style={{ width: ANCHO_BASE - 16, height: ALTO_FOTO_BASE - 16 }}
+        className="rounded-[1px] object-cover"
+      />
+    </div>
+  );
+}
+
 // Foto "Polaroid" arrastrable/pellizcable/girable sobre la imagen, estilo
 // Instagram — mismo patrón de gestos que TextoSobreImagen (un dedo mueve,
 // dos dedos escalan y rotan juntos).
@@ -45,8 +116,10 @@ export function FotoStickerSobreImagen({
   y,
   escala,
   rotacion,
+  marco,
   onCambiar,
   onQuitar,
+  onTocar,
   contenedorRef,
   interactivo = true,
 }: {
@@ -55,12 +128,17 @@ export function FotoStickerSobreImagen({
   y: number;
   escala: number;
   rotacion: number;
+  marco: MarcoFotoStickerId;
   onCambiar?: (valores: { x: number; y: number; escala: number; rotacion: number }) => void;
   onQuitar?: () => void;
+  // Se dispara con un toque corto (sin arrastre ni pellizco) — el editor lo
+  // usa para abrir el selector de marco, sin chocar con mover/escalar/girar.
+  onTocar?: () => void;
   contenedorRef: RefObject<HTMLElement | null>;
   interactivo?: boolean;
 }) {
   const punterosRef = useRef(new Map<number, { x: number; y: number }>());
+  const tapRef = useRef<{ x: number; y: number; huboPellizco: boolean } | null>(null);
   const gestoRef = useRef<{
     modo: "arrastrar" | "pellizcar" | null;
     offsetX: number;
@@ -100,6 +178,7 @@ export function FotoStickerSobreImagen({
 
     if (punterosRef.current.size === 1) {
       iniciarArrastreDesdePuntero([...punterosRef.current.values()][0]);
+      tapRef.current = { x: e.clientX, y: e.clientY, huboPellizco: false };
     } else if (punterosRef.current.size === 2) {
       const [p1, p2] = [...punterosRef.current.values()];
       const { distancia, angulo } = distanciaYAngulo(p1, p2);
@@ -108,6 +187,7 @@ export function FotoStickerSobreImagen({
       gestoRef.current.anguloInicial = angulo;
       gestoRef.current.escalaInicial = escala;
       gestoRef.current.rotacionInicial = rotacion;
+      if (tapRef.current) tapRef.current.huboPellizco = true;
     }
   }
 
@@ -144,6 +224,12 @@ export function FotoStickerSobreImagen({
     punterosRef.current.delete(e.pointerId);
     if (punterosRef.current.size === 0) {
       gestoRef.current.modo = null;
+      const inicioTap = tapRef.current;
+      tapRef.current = null;
+      if (interactivo && onTocar && inicioTap && !inicioTap.huboPellizco) {
+        const distancia = Math.hypot(e.clientX - inicioTap.x, e.clientY - inicioTap.y);
+        if (distancia < UMBRAL_TAP_PX) onTocar();
+      }
     } else if (punterosRef.current.size === 1) {
       // Queda un solo dedo tras soltar uno de los dos: retoma el arrastre
       // desde la posición actual, para que la foto no salte de golpe.
@@ -162,16 +248,8 @@ export function FotoStickerSobreImagen({
         cursor: interactivo ? "grab" : undefined,
         touchAction: interactivo ? "none" : undefined,
       }}
-      className="flex flex-col gap-2 rounded-[2px] bg-white p-2 pb-4 shadow-[0_10px_24px_rgba(0,0,0,0.45)]"
     >
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={url}
-        alt=""
-        draggable={false}
-        style={{ width: ANCHO_BASE - 16, height: ALTO_FOTO_BASE - 16 }}
-        className="rounded-[1px] object-cover"
-      />
+      <ContenidoFotoSticker url={url} marco={marco} />
       {interactivo && onQuitar && (
         <button
           type="button"

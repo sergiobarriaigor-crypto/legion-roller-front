@@ -18,6 +18,7 @@ import {
   parsearEstiloTexto,
   parsearFotosSticker,
   toggleReaccionHistoria,
+  MARCO_FOTO_STICKER_DEFECTO,
 } from "@/lib/historias";
 import { obtenerSocket } from "@/lib/socket";
 import { tiempoTranscurrido } from "@/lib/tiempo";
@@ -25,7 +26,7 @@ import { useSession } from "@/context/SessionContext";
 import { Avatar } from "@/components/Avatar";
 import { estiloVisualTexto } from "@/components/Historias/TextoSobreImagen";
 import { estiloVisualMencion } from "@/components/Historias/MencionSobreImagen";
-import { estiloVisualFotoSticker } from "@/components/Historias/FotoStickerSobreImagen";
+import { ContenidoFotoSticker, estiloVisualFotoSticker } from "@/components/Historias/FotoStickerSobreImagen";
 import { PanelSocialHistoria } from "@/components/Historias/PanelSocialHistoria";
 import { PanelEcosHistoria } from "@/components/Historias/PanelEcosHistoria";
 import { useNoAutofill } from "@/lib/useNoAutofill";
@@ -618,18 +619,8 @@ export function VisorHistorias({
                 legible arriba, sin importar en qué posición haya quedado
                 cada foto. */}
             {parsearFotosSticker(historia.fotosSticker).map((s, i) => (
-              <div
-                key={i}
-                style={estiloVisualFotoSticker(s.x, s.y, s.escala, s.rotacion)}
-                className="flex flex-col gap-2 rounded-[2px] bg-white p-2 pb-4 shadow-[0_10px_24px_rgba(0,0,0,0.45)]"
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={s.url}
-                  alt=""
-                  style={{ width: 116, height: 116 }}
-                  className="rounded-[1px] object-cover"
-                />
+              <div key={i} style={estiloVisualFotoSticker(s.x, s.y, s.escala, s.rotacion)}>
+                <ContenidoFotoSticker url={s.url} marco={s.marco ?? MARCO_FOTO_STICKER_DEFECTO} />
               </div>
             ))}
             {(() => {

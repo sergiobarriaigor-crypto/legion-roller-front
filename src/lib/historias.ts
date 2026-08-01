@@ -15,17 +15,37 @@ export interface MencionEnHistoria {
 
 export const MAX_MENCIONES_POR_HISTORIA = 5;
 
-// Foto "Polaroid" pegada sobre la imagen (arrastrable/pellizcable/girable,
-// estilo Instagram) — hasta MAX_FOTOS_STICKER_POR_HISTORIA por historia.
+// Foto pegada sobre la imagen (arrastrable/pellizcable/girable, estilo
+// Instagram) — hasta MAX_FOTOS_STICKER_POR_HISTORIA por historia. `marco` es
+// opcional para que las historias creadas antes de este campo (todas eran
+// "polaroid" por ser el único estilo que existía) sigan mostrándose igual;
+// ver MARCO_FOTO_STICKER_DEFECTO.
 export interface FotoStickerHistoria {
   url: string;
   x: number;
   y: number;
   escala: number;
   rotacion: number;
+  marco?: MarcoFotoStickerId;
 }
 
 export const MAX_FOTOS_STICKER_POR_HISTORIA = 3;
+
+export type MarcoFotoStickerId = "polaroid" | "redondeado" | "circular" | "sinmarco";
+
+export interface MarcoFotoStickerOpcion {
+  id: MarcoFotoStickerId;
+  nombre: string;
+}
+
+export const MARCOS_FOTO_STICKER: MarcoFotoStickerOpcion[] = [
+  { id: "polaroid", nombre: "Polaroid" },
+  { id: "redondeado", nombre: "Redondeado" },
+  { id: "circular", nombre: "Círculo" },
+  { id: "sinmarco", nombre: "Sin marco" },
+];
+
+export const MARCO_FOTO_STICKER_DEFECTO: MarcoFotoStickerId = "polaroid";
 
 // Duración máxima de un video de historia — compartida entre EditorHistoria
 // (valida archivos elegidos desde Galería) y CamaraHistoria (corta la
@@ -176,7 +196,8 @@ export function serializarFotosSticker(fotos: FotoStickerHistoria[]): string {
 export function parsearFotosSticker(json: string | null | undefined): FotoStickerHistoria[] {
   if (!json) return [];
   try {
-    return JSON.parse(json) as FotoStickerHistoria[];
+    const fotos = JSON.parse(json) as FotoStickerHistoria[];
+    return fotos.map((f) => ({ ...f, marco: f.marco ?? MARCO_FOTO_STICKER_DEFECTO }));
   } catch {
     return [];
   }
