@@ -515,7 +515,13 @@ export function BurbujaMensaje({
       </div>
 
       {!compacto && mensaje.reacciones.length > 0 && (
-        <div className="-mt-1 flex gap-1">
+        // z-10 explícito: esta fila se pinta pegada al borde inferior de la
+        // burbuja (-mt-1, "asomándose" un poco por debajo, mismo look que
+        // Instagram/WhatsApp) — sin un z-index propio, quedaba a merced del
+        // orden implícito del DOM y en algunos casos la esquina de la
+        // burbuja terminaba tapando el borde de la reacción en vez de al
+        // revés.
+        <div className="relative z-10 -mt-1 flex gap-1">
           {Object.entries(
             mensaje.reacciones.reduce<Record<string, number>>((acc, r) => {
               acc[r.emoji] = (acc[r.emoji] ?? 0) + 1;
