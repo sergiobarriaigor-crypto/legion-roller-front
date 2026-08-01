@@ -25,7 +25,7 @@ import { obtenerSocket } from "@/lib/socket";
 import { tiempoTranscurrido } from "@/lib/tiempo";
 import { useSession } from "@/context/SessionContext";
 import { Avatar } from "@/components/Avatar";
-import { estiloVisualTexto } from "@/components/Historias/TextoSobreImagen";
+import { estiloAnclaTexto, estiloVisualTexto } from "@/components/Historias/TextoSobreImagen";
 import { estiloVisualMencion } from "@/components/Historias/MencionSobreImagen";
 import { ContenidoFotoSticker, estiloVisualFotoSticker } from "@/components/Historias/FotoStickerSobreImagen";
 import { PanelSocialHistoria } from "@/components/Historias/PanelSocialHistoria";
@@ -636,7 +636,11 @@ export function VisorHistorias({
             {(() => {
               const estilo = parsearEstiloTexto(historia.textoEstilo);
               if (estilo) {
-                return <div style={estiloVisualTexto(estilo)}>{estilo.contenido}</div>;
+                return (
+                  <div style={estiloAnclaTexto(estilo)}>
+                    <div style={estiloVisualTexto(estilo)}>{estilo.contenido}</div>
+                  </div>
+                );
               }
               // Compatibilidad: historias creadas antes de este editor de texto
               // solo tienen el campo plano, sin posición/estilo — se muestran

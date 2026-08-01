@@ -533,6 +533,8 @@ export function EditorHistoria({
               <TextoSobreImagen
                 estilo={estiloTexto}
                 onChange={setEstiloTexto}
+                onQuitar={() => setEstiloTexto(null)}
+                onArrastreCambia={onArrastreCambia}
                 contenedorRef={contenedorMediaRef}
               />
             )}

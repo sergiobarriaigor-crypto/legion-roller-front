@@ -2,6 +2,7 @@
 
 import { useRef, type CSSProperties, type RefObject } from "react";
 import type { EstiloTextoHistoria } from "@/lib/historias";
+import { UMBRAL_TACHO_Y_FRACCION } from "@/components/Historias/ZonaEliminarArrastre";
 
 const ESCALA_MINIMA = 0.4;
 const ESCALA_MAXIMA = 3;
@@ -14,17 +15,43 @@ const MARGEN_SUPERIOR = 250 / 1920;
 const MARGEN_INFERIOR = 250 / 1920;
 const MARGEN_LATERAL = 60 / 1080;
 
-// Estilo visual (posición, tamaño, rotación, tipografía, color, alineación,
-// fondo/sombra) — se usa igual en el editor (interactivo) y en el visor
-// (solo lectura), así ambos se ven idénticos.
+// Ancla invisible del mismo tamaño que el contenedor entero (photo/video),
+// desplazada por `transform` (nunca por `left/top` en porcentaje) hasta el
+// punto x,y — ver por qué en el comentario de estiloVisualTexto.
+export function estiloAnclaTexto(estilo: EstiloTextoHistoria): CSSProperties {
+  return {
+    position: "absolute",
+    inset: 0,
+    transform: `translate(${estilo.x * 100}%, ${estilo.y * 100}%)`,
+    pointerEvents: "none",
+  };
+}
+
+// Estilo visual (tamaño, rotación, tipografía, color, alineación, fondo/
+// sombra) — se usa igual en el editor (interactivo) y en el visor (solo
+// lectura), así ambos se ven idénticos. Va SIEMPRE anidado dentro de un div
+// con estiloAnclaTexto (que ya lo movió al punto x,y correcto), por eso acá
+// alcanza con left:0/top:0 fijos.
+//
+// Importante: nunca poner `left: x%` directamente en este elemento. El texto
+// no tiene ancho fijo (crece con el contenido, ver maxWidth abajo), y para un
+// elemento posicionado con `left` en porcentaje y ancho automático, el
+// navegador calcula el espacio disponible para el salto de línea como
+// "ancho del contenedor menos left" — es decir, dependería de en qué x está
+// en cada momento. Arrastrar el texto hacia un borde iría achicando ese
+// espacio disponible en vivo, partiendo el texto en más líneas mientras se
+// mueve. Con la ancla de arriba (posicionada por transform, no por left), el
+// contenedor de ESTE elemento siempre tiene el ancho completo de la foto,
+// constante sin importar hacia dónde se arrastre.
 export function estiloVisualTexto(estilo: EstiloTextoHistoria): CSSProperties {
   const tieneFondo = estilo.fondo !== "ninguno";
   return {
     position: "absolute",
-    left: `${estilo.x * 100}%`,
-    top: `${estilo.y * 100}%`,
+    left: 0,
+    top: 0,
     transform: `translate(-50%, -50%) rotate(${estilo.rotacion}deg) scale(${estilo.escala})`,
     transformOrigin: "center",
+    pointerEvents: "auto",
     fontFamily: estilo.fuente,
     color: estilo.color,
     textAlign: estilo.alineacion,
@@ -60,15 +87,23 @@ function distanciaYAngulo(p1: { x: number; y: number }, p2: { x: number; y: numb
 export function TextoSobreImagen({
   estilo,
   onChange,
+  onQuitar,
+  onArrastreCambia,
   contenedorRef,
   interactivo = true,
 }: {
   estilo: EstiloTextoHistoria;
   onChange?: (estilo: EstiloTextoHistoria) => void;
+  onQuitar?: () => void;
+  // Se dispara mientras se arrastra con un dedo (no durante el pellizco):
+  // (activo, sobreTacho) — el editor lo usa para mostrar/resaltar el tacho de
+  // basura. Al soltar sobre el tacho se llama a onQuitar en vez de mover.
+  onArrastreCambia?: (activo: boolean, sobreTacho: boolean) => void;
   contenedorRef: RefObject<HTMLElement | null>;
   interactivo?: boolean;
 }) {
   const punterosRef = useRef(new Map<number, { x: number; y: number }>());
+  const sobreTachoRef = useRef(false);
   const gestoRef = useRef<{
     modo: "arrastrar" | "pellizcar" | null;
     offsetX: number;
@@ -129,6 +164,8 @@ export function TextoSobreImagen({
       const p = [...punterosRef.current.values()][0];
       const nuevoX = p.x / rect.width - gestoRef.current.offsetX;
       const nuevoY = p.y / rect.height - gestoRef.current.offsetY;
+      sobreTachoRef.current = nuevoY > UMBRAL_TACHO_Y_FRACCION;
+      onArrastreCambia?.(true, sobreTachoRef.current);
       onChange({
         ...estilo,
         x: Math.min(1 - MARGEN_LATERAL, Math.max(MARGEN_LATERAL, nuevoX)),
@@ -150,7 +187,16 @@ export function TextoSobreImagen({
   function onPointerUp(e: React.PointerEvent) {
     punterosRef.current.delete(e.pointerId);
     if (punterosRef.current.size === 0) {
+      const fueArrastre = gestoRef.current.modo === "arrastrar";
       gestoRef.current.modo = null;
+      if (fueArrastre && sobreTachoRef.current) {
+        sobreTachoRef.current = false;
+        onArrastreCambia?.(false, false);
+        onQuitar?.();
+        return;
+      }
+      sobreTachoRef.current = false;
+      onArrastreCambia?.(false, false);
     } else if (punterosRef.current.size === 1) {
       // Queda un solo dedo tras soltar uno de los dos: retoma el arrastre
       // desde la posición actual, para que el texto no salte de golpe.
@@ -159,18 +205,20 @@ export function TextoSobreImagen({
   }
 
   return (
-    <div
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
-      style={{
-        ...estiloVisualTexto(estilo),
-        cursor: interactivo ? "grab" : undefined,
-        touchAction: interactivo ? "none" : undefined,
-      }}
-    >
-      {estilo.contenido}
+    <div style={estiloAnclaTexto(estilo)}>
+      <div
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        style={{
+          ...estiloVisualTexto(estilo),
+          cursor: interactivo ? "grab" : undefined,
+          touchAction: interactivo ? "none" : undefined,
+        }}
+      >
+        {estilo.contenido}
+      </div>
     </div>
   );
 }
