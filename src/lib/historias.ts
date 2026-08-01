@@ -53,6 +53,12 @@ export const MARCO_FOTO_STICKER_DEFECTO: MarcoFotoStickerId = "polaroid";
 // el mismo límite.
 export const DURACION_MAXIMA_VIDEO_HISTORIA_SEG = 30;
 
+// Duración de una historia-foto (sin sonido propio) en pantalla — compartida
+// entre EditorHistoria (para saber si una canción elegida dura más que la
+// historia y hace falta elegir el fragmento) y VisorHistorias (temporizador
+// de avance automático).
+export const DURACION_FOTO_HISTORIA_SEG = 5;
+
 // Distinto de un comentario: un Eco queda FIJO sobre la imagen para
 // cualquiera que abra la historia (no solo quien la vea en vivo), sin hilo
 // de respuestas ni reacciones propias.
@@ -82,6 +88,7 @@ export interface Historia {
   fotosSticker: string | null;
   musicaUrl: string | null;
   musicaNombre: string | null;
+  musicaInicioSeg: number | null;
   ubicacion: string | null;
   menciones: MencionEnHistoria[];
   mencionSinVer: boolean;
@@ -155,6 +162,7 @@ export interface CrearHistoriaInput {
   fotosSticker?: string;
   musicaUrl?: string;
   musicaNombre?: string;
+  musicaInicioSeg?: number;
   ubicacion?: string;
   menciones?: MencionInput[];
 }

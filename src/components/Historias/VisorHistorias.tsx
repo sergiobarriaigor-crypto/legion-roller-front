@@ -19,6 +19,7 @@ import {
   parsearFotosSticker,
   toggleReaccionHistoria,
   MARCO_FOTO_STICKER_DEFECTO,
+  DURACION_FOTO_HISTORIA_SEG,
 } from "@/lib/historias";
 import { obtenerSocket } from "@/lib/socket";
 import { tiempoTranscurrido } from "@/lib/tiempo";
@@ -32,7 +33,7 @@ import { PanelEcosHistoria } from "@/components/Historias/PanelEcosHistoria";
 import { useNoAutofill } from "@/lib/useNoAutofill";
 import { compartirConLink } from "@/lib/compartir";
 
-const DURACION_FOTO_MS = 5000;
+const DURACION_FOTO_MS = DURACION_FOTO_HISTORIA_SEG * 1000;
 const UMBRAL_SWIPE_CIERRE_PX = 80;
 const UMBRAL_HOLD_MS = 200;
 const DURACION_BURBUJA_MS = 3000;
@@ -606,7 +607,16 @@ export function VisorHistorias({
                 historia es un video, su audio original queda silenciado
                 arriba para que solo suene esta pista. */}
             {historia.musicaUrl && (
-              <audio ref={musicaRef} key={historia.id} src={historia.musicaUrl} autoPlay loop />
+              <audio
+                ref={musicaRef}
+                key={historia.id}
+                src={historia.musicaUrl}
+                autoPlay
+                loop
+                onLoadedMetadata={(e) => {
+                  if (historia.musicaInicioSeg) e.currentTarget.currentTime = historia.musicaInicioSeg;
+                }}
+              />
             )}
 
             {historia.ubicacion && (

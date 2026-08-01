@@ -3,21 +3,34 @@
 import { useEffect, useRef, useState } from "react";
 import { IconPlayerPause, IconPlayerPlay, IconX } from "@tabler/icons-react";
 import { CANCIONES_HISTORIA, GENEROS_MUSICA, type CancionHistoria, type GeneroMusica } from "@/lib/musicaHistorias";
+import { SelectorInicioMusica } from "@/components/Historias/SelectorInicioMusica";
+
+// Margen para no disparar el paso de recorte por diferencias mínimas de
+// redondeo entre la duración real del archivo y duracionHistoriaSeg.
+const MARGEN_SEG = 0.25;
 
 // Selector de música del catálogo propio de la app — chips de género +
 // lista con vista previa (un solo audio compartido, se corta solo al
 // elegir otra pista o cerrar). Elegir una fila selecciona esa canción y
-// cierra, igual dinámica que el sticker de música de Instagram.
+// cierra, igual dinámica que el sticker de música de Instagram — salvo que,
+// si la canción dura más que la historia, antes se pide elegir el fragmento
+// (ver SelectorInicioMusica).
 export function SelectorMusicaHistoria({
+  duracionHistoriaSeg,
   onSeleccionar,
   onCerrar,
 }: {
-  onSeleccionar: (cancion: CancionHistoria) => void;
+  duracionHistoriaSeg: number;
+  onSeleccionar: (cancion: CancionHistoria, inicioSeg: number) => void;
   onCerrar: () => void;
 }) {
   const [genero, setGenero] = useState<GeneroMusica>(GENEROS_MUSICA[0].id);
   const [sonando, setSonando] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const [cancionParaRecortar, setCancionParaRecortar] = useState<{
+    cancion: CancionHistoria;
+    duracion: number;
+  } | null>(null);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -37,6 +50,34 @@ export function SelectorMusicaHistoria({
     audio.src = cancion.archivo;
     audio.play().catch(() => {});
     setSonando(cancion.id);
+  }
+
+  function elegir(cancion: CancionHistoria) {
+    audioRef.current?.pause();
+    setSonando(null);
+    const sonda = new Audio(cancion.archivo);
+    sonda.preload = "metadata";
+    sonda.addEventListener("loadedmetadata", () => {
+      if (Number.isFinite(sonda.duration) && sonda.duration > duracionHistoriaSeg + MARGEN_SEG) {
+        setCancionParaRecortar({ cancion, duracion: sonda.duration });
+      } else {
+        onSeleccionar(cancion, 0);
+      }
+    });
+    sonda.addEventListener("error", () => onSeleccionar(cancion, 0));
+  }
+
+  if (cancionParaRecortar) {
+    return (
+      <SelectorInicioMusica
+        url={cancionParaRecortar.cancion.archivo}
+        nombre={cancionParaRecortar.cancion.nombre}
+        duracionTotal={cancionParaRecortar.duracion}
+        duracionVentanaSeg={duracionHistoriaSeg}
+        onConfirmar={(inicioSeg) => onSeleccionar(cancionParaRecortar.cancion, inicioSeg)}
+        onCancelar={() => setCancionParaRecortar(null)}
+      />
+    );
   }
 
   const cancionesDelGenero = CANCIONES_HISTORIA.filter((c) => c.genero === genero);
@@ -90,7 +131,7 @@ export function SelectorMusicaHistoria({
               </button>
               <button
                 type="button"
-                onClick={() => onSeleccionar(c)}
+                onClick={() => elegir(c)}
                 className="min-w-0 flex-1 text-left"
               >
                 <p className="truncate text-sm font-medium text-text-primary">{c.nombre}</p>

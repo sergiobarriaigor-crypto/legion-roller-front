@@ -10,6 +10,7 @@ import {
   MAX_MENCIONES_POR_HISTORIA,
   MAX_FOTOS_STICKER_POR_HISTORIA,
   DURACION_MAXIMA_VIDEO_HISTORIA_SEG,
+  DURACION_FOTO_HISTORIA_SEG,
   MARCO_FOTO_STICKER_DEFECTO,
   type EstiloTextoHistoria,
   type MarcoFotoStickerId,
@@ -110,7 +111,14 @@ export function EditorHistoria({
     setArrastreSobreTacho(sobreTacho);
   }
   const inputStickerRef = useRef<HTMLInputElement>(null);
-  const [musica, setMusica] = useState<{ url: string; nombre: string } | null>(null);
+  const [musica, setMusica] = useState<{ url: string; nombre: string; inicioSeg: number } | null>(null);
+  // Duración real de la foto/video que se está publicando — la usa el
+  // selector de música para saber si la canción elegida dura más que la
+  // historia y hace falta pedir el fragmento (ver SelectorInicioMusica).
+  // Siempre queda al día antes de que el botón de música sea tocable: se fija
+  // junto con previewUrl en los 3 caminos que lo setean (foto, video directo,
+  // video recortado).
+  const [duracionMediaSeg, setDuracionMediaSeg] = useState(DURACION_FOTO_HISTORIA_SEG);
   const [mostrarSelectorMusica, setMostrarSelectorMusica] = useState(false);
   const audioPreviaRef = useRef<HTMLAudioElement>(null);
   const [mostrarSelectorMencion, setMostrarSelectorMencion] = useState(false);
@@ -136,7 +144,12 @@ export function EditorHistoria({
       return;
     }
     audio.src = musica.url;
+    const alCargarMetadatos = () => {
+      if (musica.inicioSeg) audio.currentTime = musica.inicioSeg;
+    };
+    audio.addEventListener("loadedmetadata", alCargarMetadatos);
     audio.play().catch(() => {});
+    return () => audio.removeEventListener("loadedmetadata", alCargarMetadatos);
   }, [musica]);
 
   // Ubicación opcional: se autodetecta una vez al abrir el editor, geocodificando
@@ -169,6 +182,7 @@ export function EditorHistoria({
     if (!esVideo) {
       setPreviewUrl(url);
       setTipo("foto");
+      setDuracionMediaSeg(DURACION_FOTO_HISTORIA_SEG);
       return () => URL.revokeObjectURL(url);
     }
 
@@ -204,6 +218,7 @@ export function EditorHistoria({
       }
       setPreviewUrl(url);
       setTipo("video");
+      setDuracionMediaSeg(video.duration);
     };
     video.onerror = marcarNoLeible;
     video.src = url;
@@ -305,6 +320,7 @@ export function EditorHistoria({
             : undefined,
           musicaUrl: musica?.url,
           musicaNombre: musica?.nombre,
+          musicaInicioSeg: musica?.inicioSeg || undefined,
           ubicacion,
           menciones: menciones.length
             ? menciones.map((m) => ({ miembroId: m.miembroId, x: m.x, y: m.y, escala: m.escala }))
@@ -484,9 +500,10 @@ export function EditorHistoria({
 
             {mostrarSelectorMusica && (
               <SelectorMusicaHistoria
+                duracionHistoriaSeg={duracionMediaSeg}
                 onCerrar={() => setMostrarSelectorMusica(false)}
-                onSeleccionar={(c) => {
-                  setMusica({ url: c.archivo, nombre: c.nombre });
+                onSeleccionar={(c, inicioSeg) => {
+                  setMusica({ url: c.archivo, nombre: c.nombre, inicioSeg });
                   setMostrarSelectorMusica(false);
                 }}
               />
@@ -655,10 +672,11 @@ export function EditorHistoria({
         <VideoTrimmer
           archivo={archivoInicial}
           duracionMaxima={DURACION_MAXIMA_VIDEO_HISTORIA_SEG}
-          onConfirmar={(blob) => {
+          onConfirmar={(blob, duracionSeg) => {
             setPreviewUrl(URL.createObjectURL(blob));
             setVideoRecortadoBlob(blob);
             setTipo("video");
+            setDuracionMediaSeg(duracionSeg);
             setMostrarRecorte(false);
           }}
           onCancelar={onClose}
