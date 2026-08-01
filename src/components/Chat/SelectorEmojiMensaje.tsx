@@ -31,6 +31,13 @@ export function SelectorEmojiMensaje({
           theme={Theme.DARK}
           width="100%"
           height={380}
+          // La librería intenta enfocar el buscador solo al montarse
+          // (autoFocusSearch, default true) — en Android un foco puesto así
+          // (no directamente por un toque del usuario) no despliega el
+          // teclado, obligando a tocar el campo a mano para recién ahí poder
+          // escribir. Se desactiva: el usuario toca el buscador cuando
+          // quiere usarlo, con un toque real el teclado sí aparece.
+          autoFocusSearch={false}
           onEmojiClick={(data: EmojiClickData) => onElegir(data.emoji)}
         />
       </div>
