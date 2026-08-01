@@ -58,6 +58,30 @@ const IMAGEN_CHAT_GRUPAL = "/avatar-chat-grupal.png";
 // Alto máximo del campo de texto antes de que empiece a scrollear por dentro
 // en vez de seguir creciendo (~5-6 líneas).
 const ALTURA_MAX_TEXTAREA = 120;
+// Mismo criterio que las notas de voz (2 min) e Historias (30s): un tope
+// razonable para no depender solo del límite de tamaño de /uploads (40MB),
+// que con buena calidad de cámara se puede alcanzar en pocos segundos.
+const DURACION_MAX_VIDEO_CHAT_SEG = 60;
+
+// Lee la duración real del video antes de subirlo (igual que CamaraHistoria/
+// SelectorMusicaHistoria hacen con audio): un <video> descartable con la
+// metadata basta, no hace falta reproducirlo.
+function leerDuracionVideo(archivo: File): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(archivo);
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    video.onloadedmetadata = () => {
+      URL.revokeObjectURL(url);
+      resolve(video.duration);
+    };
+    video.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("No se pudo leer el video"));
+    };
+    video.src = url;
+  });
+}
 
 interface OtroParticipante {
   id: number;
@@ -373,8 +397,22 @@ export default function ConversacionPage() {
     if (inputVideoRef.current) inputVideoRef.current.value = "";
     if (!archivo || !token) return;
     setMostrarAdjuntos(false);
-    setSubida({ etiqueta: "Subiendo video...", pct: 0 });
     setErrorAdjunto("");
+
+    try {
+      const duracionSeg = await leerDuracionVideo(archivo);
+      if (duracionSeg > DURACION_MAX_VIDEO_CHAT_SEG) {
+        setErrorAdjunto(
+          `El video dura ${Math.round(duracionSeg)}s. El máximo permitido en el chat es ${DURACION_MAX_VIDEO_CHAT_SEG}s.`,
+        );
+        return;
+      }
+    } catch {
+      // Si no se puede leer la duración (formato raro, etc.) se sigue con la
+      // subida — queda el límite de tamaño de /uploads (40MB) de respaldo.
+    }
+
+    setSubida({ etiqueta: "Subiendo video...", pct: 0 });
     try {
       const res = await apiUploadConProgreso<{ url: string }>("/uploads", archivo, token, archivo.name, (pct) =>
         setSubida({ etiqueta: "Subiendo video...", pct }),
