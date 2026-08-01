@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { IconCheck, IconPlayerPause, IconPlayerPlay, IconX } from "@tabler/icons-react";
 
 function formatearTiempo(seg: number): string {
@@ -8,6 +8,37 @@ function formatearTiempo(seg: number): string {
   const min = Math.floor(s / 60);
   const resto = String(s % 60).padStart(2, "0");
   return `${min}:${resto}`;
+}
+
+const CANTIDAD_BARRAS_ONDA = 80;
+
+// Decodifica el archivo con Web Audio API y reduce las muestras a
+// CANTIDAD_BARRAS_ONDA valores de amplitud (0..1, pico por bloque) — mismo
+// criterio que las miniaturas de VideoTrimmer, pero para audio no hace falta
+// ninguna librería nueva, el navegador ya sabe leer PCM crudo.
+async function generarFormaOnda(url: string): Promise<number[]> {
+  const respuesta = await fetch(url);
+  const arrayBuffer = await respuesta.arrayBuffer();
+  const contexto = new AudioContext();
+  try {
+    const audioBuffer = await contexto.decodeAudioData(arrayBuffer);
+    const datos = audioBuffer.getChannelData(0);
+    const tamanoBloque = Math.max(1, Math.floor(datos.length / CANTIDAD_BARRAS_ONDA));
+    const barras: number[] = [];
+    for (let i = 0; i < CANTIDAD_BARRAS_ONDA; i++) {
+      let pico = 0;
+      const inicioBloque = i * tamanoBloque;
+      for (let j = 0; j < tamanoBloque; j++) {
+        const valor = Math.abs(datos[inicioBloque + j] ?? 0);
+        if (valor > pico) pico = valor;
+      }
+      barras.push(pico);
+    }
+    const picoGlobal = Math.max(...barras, 0.01);
+    return barras.map((b) => b / picoGlobal);
+  } finally {
+    contexto.close();
+  }
 }
 
 // Aparece cuando la canción elegida dura más que la historia — Instagram deja
@@ -38,6 +69,24 @@ export function SelectorInicioMusica({
   const inicioMaximo = Math.max(0, duracionTotal - duracionVentanaSeg);
   const [inicio, setInicio] = useState(0);
   const [reproduciendo, setReproduciendo] = useState(false);
+  // Mejora progresiva: la ventana ya es arrastrable con la barra lisa desde
+  // el primer render — la forma de onda solo se agrega encima apenas termina
+  // de decodificarse (o nunca, si el navegador no puede leer este audio).
+  const [forma, setForma] = useState<number[] | null>(null);
+
+  useEffect(() => {
+    let cancelado = false;
+    generarFormaOnda(url)
+      .then((barras) => {
+        if (!cancelado) setForma(barras);
+      })
+      .catch(() => {
+        // Sin forma de onda: se queda la barra lisa, que ya es funcional.
+      });
+    return () => {
+      cancelado = true;
+    };
+  }, [url]);
 
   function moverVentana(clientX: number) {
     const track = trackRef.current;
@@ -118,8 +167,19 @@ export function SelectorInicioMusica({
             onPointerMove={onPointerMove}
             onPointerUp={detenerArrastre}
             onPointerLeave={detenerArrastre}
-            className="relative h-10 flex-1 touch-none rounded-app bg-bg-accent"
+            className="relative h-10 flex-1 touch-none overflow-hidden rounded-app bg-bg-accent"
           >
+            {forma && (
+              <div className="absolute inset-0 flex items-center gap-px px-1">
+                {forma.map((v, i) => (
+                  <div
+                    key={i}
+                    className="min-h-[2px] flex-1 rounded-full bg-text-secondary/50"
+                    style={{ height: `${Math.max(10, v * 100)}%` }}
+                  />
+                ))}
+              </div>
+            )}
             <div
               onPointerDown={onPointerDown}
               className="absolute inset-y-0 cursor-grab touch-none rounded-app border-2 border-fill-primary bg-fill-primary/30 active:cursor-grabbing"
