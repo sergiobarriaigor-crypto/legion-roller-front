@@ -242,13 +242,14 @@ export default function ConversacionPage() {
     cerrarMenuMensaje();
   }
 
-  // El contenedor "card" de los mensajes no tiene overflow propio en la
-  // práctica (crece para mostrar todo su contenido): el que realmente hace
-  // scroll es el wrapper de SwipeNavigator, un ancestro fuera de esta
-  // pantalla. `scrollIntoView` en el formulario de envío (el último elemento
-  // de la página) resuelve esto sin tener que asumir cuál ancestro scrollea.
+  // El contenedor de mensajes tiene su propio scroll interno (overflow-y-auto
+  // real, ver contenedorRef más abajo) — se baja directo por scrollTop en vez
+  // de scrollIntoView: es inmediato (sin animación "smooth" compitiendo con
+  // el redimensionado del viewport cuando el teclado se abre/cierra) y no
+  // depende de qué ancestro decida scrollear.
   function scrollAlFondo() {
-    formRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+    const el = contenedorRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
   }
 
   // Solo baja cuando llegaron mensajes nuevos de verdad — y nunca mientras el
@@ -269,6 +270,21 @@ export default function ConversacionPage() {
   useEffect(() => {
     if (respondiendoA) scrollAlFondo();
   }, [respondiendoA]);
+
+  // Al abrir/cerrar el teclado del celular, el navegador redimensiona el
+  // viewport visual — sin esto, la posición de scroll (en píxeles) no
+  // cambia, pero como el área visible sí se achica/agranda, el último
+  // mensaje deja de quedar a la vista y la conversación "salta" hacia
+  // mensajes anteriores. Escuchar el resize del viewport visual (el evento
+  // real detrás del cambio, no un timeout adivinado) y volver a fondo
+  // resuelve esto tanto al enfocar el compositor como al salir de él.
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    const alRedimensionar = () => scrollAlFondo();
+    viewport.addEventListener("resize", alRedimensionar);
+    return () => viewport.removeEventListener("resize", alRedimensionar);
+  }, []);
 
   // Posiciona la barra flotante de acciones pegada al mensaje presionado, en
   // vez de la hoja inferior anterior que oscurecía toda la conversación. Se
