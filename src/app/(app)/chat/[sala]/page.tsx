@@ -556,7 +556,6 @@ export default function ConversacionPage() {
         >
           <IconCloud size={22} />
         </button>
-        {mostrarClima && <VisorClima token={token} onCerrar={() => setMostrarClima(false)} />}
         <button
           type="button"
           onClick={() => setMostrarAlbum(true)}
@@ -569,7 +568,7 @@ export default function ConversacionPage() {
     );
     return () => setChatHeader(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [otro, sala, titulo, estadoTexto, mostrarClima, token]);
+  }, [otro, sala, titulo, estadoTexto]);
 
   return (
     <div ref={raizRef} className="relative flex h-full flex-col gap-3">
@@ -996,6 +995,14 @@ export default function ConversacionPage() {
       {mostrarAlbum && (
         <AlbumChatPanel sala={sala} token={token} onCerrar={() => setMostrarAlbum(false)} />
       )}
+
+      {/* Mismo criterio que los demás paneles de pantalla completa (Álbum,
+          Cámara Express, etc.): se renderiza acá, no dentro del JSX del
+          encabezado (setChatHeader) — ese header tiene su propio contexto de
+          apilamiento (z-10), así que un z-50 adentro suyo queda "atrapado"
+          y puede terminar detrás de otros elementos de la página (ej. las
+          reacciones de los mensajes) en vez de cubrir toda la pantalla. */}
+      {mostrarClima && <VisorClima token={token} onCerrar={() => setMostrarClima(false)} />}
 
       {mostrarCamaraExpress && (
         <CamaraHistoria
