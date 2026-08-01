@@ -275,15 +275,25 @@ export default function ConversacionPage() {
   // viewport visual — sin esto, la posición de scroll (en píxeles) no
   // cambia, pero como el área visible sí se achica/agranda, el último
   // mensaje deja de quedar a la vista y la conversación "salta" hacia
-  // mensajes anteriores. Escuchar el resize del viewport visual (el evento
-  // real detrás del cambio, no un timeout adivinado) y volver a fondo
-  // resuelve esto tanto al enfocar el compositor como al salir de él.
+  // mensajes anteriores. Escuchar el resize del viewport visual resuelve
+  // esto, pero hay que esperar un toque (con setTimeout, no llamarlo directo
+  // dentro del propio evento "resize") — ajustar el scroll en el mismo tick
+  // en que Android todavía está mostrando el teclado le hace competencia a
+  // esa animación y en algunos equipos el teclado directamente no llega a
+  // abrirse.
   useEffect(() => {
     const viewport = window.visualViewport;
     if (!viewport) return;
-    const alRedimensionar = () => scrollAlFondo();
+    let idPendiente: ReturnType<typeof setTimeout> | null = null;
+    const alRedimensionar = () => {
+      if (idPendiente) clearTimeout(idPendiente);
+      idPendiente = setTimeout(scrollAlFondo, 80);
+    };
     viewport.addEventListener("resize", alRedimensionar);
-    return () => viewport.removeEventListener("resize", alRedimensionar);
+    return () => {
+      viewport.removeEventListener("resize", alRedimensionar);
+      if (idPendiente) clearTimeout(idPendiente);
+    };
   }, []);
 
   // Posiciona la barra flotante de acciones pegada al mensaje presionado, en
