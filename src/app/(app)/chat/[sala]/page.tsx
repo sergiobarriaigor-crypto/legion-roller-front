@@ -23,6 +23,7 @@ import {
 } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
 import { apiGet, apiUploadConProgreso, ApiError } from "@/lib/api";
+import { comprimirFotoChat } from "@/lib/comprimirImagen";
 import { obtenerSocket } from "@/lib/socket";
 import { tiempoTranscurrido } from "@/lib/tiempo";
 import type { PuntoGps } from "@/lib/geo";
@@ -332,7 +333,18 @@ export default function ConversacionPage() {
     setSubida({ etiqueta: "Subiendo foto...", pct: 0 });
     setErrorAdjunto("");
     try {
-      const res = await apiUploadConProgreso<{ url: string }>("/uploads", archivo, token, archivo.name, (pct) =>
+      // Se comprime antes de subir (misma razón que Historias): una foto de
+      // cámara sin tocar pesa varios MB, y el chat la muestra siempre chica.
+      // Si la compresión falla (formato raro, etc.) se sube el original.
+      let paraSubir: Blob = archivo;
+      let nombreArchivo = archivo.name;
+      try {
+        paraSubir = await comprimirFotoChat(archivo);
+        nombreArchivo = archivo.name.replace(/\.\w+$/, "") + ".jpg";
+      } catch {
+        // sigue con el archivo original
+      }
+      const res = await apiUploadConProgreso<{ url: string }>("/uploads", paraSubir, token, nombreArchivo, (pct) =>
         setSubida({ etiqueta: "Subiendo foto...", pct }),
       );
       await enviar({ adjuntoTipo: "foto", adjuntoUrl: res.url });
