@@ -114,6 +114,7 @@ export default function ConversacionPage() {
   const formRef = useRef<HTMLFormElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const cantidadAnteriorRef = useRef(0);
+  const composerEnfocadoRef = useRef(false);
   const propioEscribiendoRef = useRef(false);
   const pausaEscribiendoRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputFotoRef = useRef<HTMLInputElement>(null);
@@ -250,9 +251,13 @@ export default function ConversacionPage() {
     formRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
   }
 
-  // Solo baja cuando llegaron mensajes nuevos de verdad.
+  // Solo baja cuando llegaron mensajes nuevos de verdad — y nunca mientras el
+  // compositor tiene el foco (con el teclado del celular abierto), porque
+  // forzar un scroll ahí hace que Android cierre el teclado solo a mitad de
+  // escritura (el mensaje nuevo puede ser de cualquiera del grupo, no solo
+  // el propio, así que esto pasaba aunque uno no estuviera enviando nada).
   useEffect(() => {
-    if (mensajes.length > cantidadAnteriorRef.current) {
+    if (mensajes.length > cantidadAnteriorRef.current && !composerEnfocadoRef.current) {
       scrollAlFondo();
     }
     cantidadAnteriorRef.current = mensajes.length;
@@ -657,6 +662,12 @@ export default function ConversacionPage() {
               {...noAutofillMensaje}
               placeholder="Escribe un mensaje..."
               value={texto}
+              onFocus={() => {
+                composerEnfocadoRef.current = true;
+              }}
+              onBlur={() => {
+                composerEnfocadoRef.current = false;
+              }}
               onChange={(e) => {
                 e.target.style.height = "auto";
                 e.target.style.height = `${Math.min(e.target.scrollHeight, ALTURA_MAX_TEXTAREA)}px`;
