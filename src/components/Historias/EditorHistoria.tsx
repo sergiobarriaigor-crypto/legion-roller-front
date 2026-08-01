@@ -25,6 +25,7 @@ import { MencionSobreImagen } from "@/components/Historias/MencionSobreImagen";
 import { SelectorMencion } from "@/components/Historias/SelectorMencion";
 import { FotoStickerSobreImagen } from "@/components/Historias/FotoStickerSobreImagen";
 import { SelectorMarcoFotoSticker } from "@/components/Historias/SelectorMarcoFotoSticker";
+import { ZonaEliminarArrastre } from "@/components/Historias/ZonaEliminarArrastre";
 import { SelectorMusicaHistoria } from "@/components/Historias/SelectorMusicaHistoria";
 import { VideoTrimmer } from "@/components/VideoTrimmer";
 
@@ -100,6 +101,14 @@ export function EditorHistoria({
   // Id de la foto-sticker cuyo selector de marco está abierto (se abre con un
   // toque corto sobre ella, ver onTocar en FotoStickerSobreImagen).
   const [marcoAbiertoId, setMarcoAbiertoId] = useState<string | null>(null);
+  // Tacho de basura para eliminar arrastrando (foto-sticker o mención) —
+  // compartido entre ambos tipos porque solo se arrastra uno a la vez.
+  const [arrastreActivo, setArrastreActivo] = useState(false);
+  const [arrastreSobreTacho, setArrastreSobreTacho] = useState(false);
+  function onArrastreCambia(activo: boolean, sobreTacho: boolean) {
+    setArrastreActivo(activo);
+    setArrastreSobreTacho(sobreTacho);
+  }
   const inputStickerRef = useRef<HTMLInputElement>(null);
   const [musica, setMusica] = useState<{ url: string; nombre: string } | null>(null);
   const [mostrarSelectorMusica, setMostrarSelectorMusica] = useState(false);
@@ -517,6 +526,7 @@ export function EditorHistoria({
                 }
                 onQuitar={() => quitarSticker(s.id)}
                 onTocar={() => setMarcoAbiertoId((prev) => (prev === s.id ? null : s.id))}
+                onArrastreCambia={onArrastreCambia}
                 contenedorRef={contenedorMediaRef}
               />
             ))}
@@ -544,9 +554,12 @@ export function EditorHistoria({
                 onQuitar={() =>
                   setMenciones((prev) => prev.filter((p) => p.miembroId !== m.miembroId))
                 }
+                onArrastreCambia={onArrastreCambia}
                 contenedorRef={contenedorMediaRef}
               />
             ))}
+
+            <ZonaEliminarArrastre activo={arrastreActivo} sobreTacho={arrastreSobreTacho} />
 
             {mostrarSelectorMencion && (
               <SelectorMencion

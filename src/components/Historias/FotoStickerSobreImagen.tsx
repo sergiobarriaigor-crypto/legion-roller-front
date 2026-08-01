@@ -1,8 +1,8 @@
 "use client";
 
 import { useRef, type CSSProperties, type RefObject } from "react";
-import { IconX } from "@tabler/icons-react";
 import { type MarcoFotoStickerId } from "@/lib/historias";
+import { UMBRAL_TACHO_Y_FRACCION } from "@/components/Historias/ZonaEliminarArrastre";
 
 const ESCALA_MINIMA = 0.5;
 const ESCALA_MAXIMA = 2.5;
@@ -120,6 +120,7 @@ export function FotoStickerSobreImagen({
   onCambiar,
   onQuitar,
   onTocar,
+  onArrastreCambia,
   contenedorRef,
   interactivo = true,
 }: {
@@ -134,11 +135,16 @@ export function FotoStickerSobreImagen({
   // Se dispara con un toque corto (sin arrastre ni pellizco) — el editor lo
   // usa para abrir el selector de marco, sin chocar con mover/escalar/girar.
   onTocar?: () => void;
+  // Se dispara mientras se arrastra con un dedo (no durante el pellizco):
+  // (activo, sobreTacho) — el editor lo usa para mostrar/resaltar el tacho de
+  // basura. Al soltar sobre el tacho se llama a onQuitar en vez de mover.
+  onArrastreCambia?: (activo: boolean, sobreTacho: boolean) => void;
   contenedorRef: RefObject<HTMLElement | null>;
   interactivo?: boolean;
 }) {
   const punterosRef = useRef(new Map<number, { x: number; y: number }>());
   const tapRef = useRef<{ x: number; y: number; huboPellizco: boolean } | null>(null);
+  const sobreTachoRef = useRef(false);
   const gestoRef = useRef<{
     modo: "arrastrar" | "pellizcar" | null;
     offsetX: number;
@@ -201,6 +207,8 @@ export function FotoStickerSobreImagen({
       const p = [...punterosRef.current.values()][0];
       const nuevoX = p.x / rect.width - gestoRef.current.offsetX;
       const nuevoY = p.y / rect.height - gestoRef.current.offsetY;
+      sobreTachoRef.current = nuevoY > UMBRAL_TACHO_Y_FRACCION;
+      onArrastreCambia?.(true, sobreTachoRef.current);
       onCambiar({
         x: Math.min(1, Math.max(0, nuevoX)),
         y: Math.min(1, Math.max(0, nuevoY)),
@@ -223,9 +231,18 @@ export function FotoStickerSobreImagen({
   function onPointerUp(e: React.PointerEvent) {
     punterosRef.current.delete(e.pointerId);
     if (punterosRef.current.size === 0) {
+      const fueArrastre = gestoRef.current.modo === "arrastrar";
       gestoRef.current.modo = null;
       const inicioTap = tapRef.current;
       tapRef.current = null;
+      if (fueArrastre && sobreTachoRef.current) {
+        sobreTachoRef.current = false;
+        onArrastreCambia?.(false, false);
+        onQuitar?.();
+        return;
+      }
+      sobreTachoRef.current = false;
+      onArrastreCambia?.(false, false);
       if (interactivo && onTocar && inicioTap && !inicioTap.huboPellizco) {
         const distancia = Math.hypot(e.clientX - inicioTap.x, e.clientY - inicioTap.y);
         if (distancia < UMBRAL_TAP_PX) onTocar();
@@ -250,19 +267,6 @@ export function FotoStickerSobreImagen({
       }}
     >
       <ContenidoFotoSticker url={url} marco={marco} />
-      {interactivo && onQuitar && (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onQuitar();
-          }}
-          aria-label="Quitar foto"
-          className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/70 text-white"
-        >
-          <IconX size={14} />
-        </button>
-      )}
     </div>
   );
 }

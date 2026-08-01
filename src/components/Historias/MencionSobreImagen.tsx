@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, type CSSProperties, type RefObject } from "react";
-import { IconX } from "@tabler/icons-react";
+import { UMBRAL_TACHO_Y_FRACCION } from "@/components/Historias/ZonaEliminarArrastre";
 
 const ESCALA_MINIMA = 0.6;
 const ESCALA_MAXIMA = 2.5;
@@ -31,6 +31,7 @@ export function MencionSobreImagen({
   escala,
   onCambiar,
   onQuitar,
+  onArrastreCambia,
   contenedorRef,
   interactivo = true,
 }: {
@@ -40,10 +41,15 @@ export function MencionSobreImagen({
   escala: number;
   onCambiar?: (valores: { x: number; y: number; escala: number }) => void;
   onQuitar?: () => void;
+  // Se dispara mientras se arrastra con un dedo (no durante el pellizco):
+  // (activo, sobreTacho) — el editor lo usa para mostrar/resaltar el tacho de
+  // basura. Al soltar sobre el tacho se llama a onQuitar en vez de mover.
+  onArrastreCambia?: (activo: boolean, sobreTacho: boolean) => void;
   contenedorRef: RefObject<HTMLElement | null>;
   interactivo?: boolean;
 }) {
   const punterosRef = useRef(new Map<number, { x: number; y: number }>());
+  const sobreTachoRef = useRef(false);
   const gestoRef = useRef<{
     modo: "arrastrar" | "pellizcar" | null;
     offsetX: number;
@@ -91,6 +97,8 @@ export function MencionSobreImagen({
       const p = [...punterosRef.current.values()][0];
       const nuevoX = p.x / rect.width - gestoRef.current.offsetX;
       const nuevoY = p.y / rect.height - gestoRef.current.offsetY;
+      sobreTachoRef.current = nuevoY > UMBRAL_TACHO_Y_FRACCION;
+      onArrastreCambia?.(true, sobreTachoRef.current);
       onCambiar({ x: Math.min(1, Math.max(0, nuevoX)), y: Math.min(1, Math.max(0, nuevoY)), escala });
     } else if (gestoRef.current.modo === "pellizcar" && punterosRef.current.size === 2) {
       const [p1, p2] = [...punterosRef.current.values()];
@@ -106,7 +114,16 @@ export function MencionSobreImagen({
   function onPointerUp(e: React.PointerEvent) {
     punterosRef.current.delete(e.pointerId);
     if (punterosRef.current.size === 0) {
+      const fueArrastre = gestoRef.current.modo === "arrastrar";
       gestoRef.current.modo = null;
+      if (fueArrastre && sobreTachoRef.current) {
+        sobreTachoRef.current = false;
+        onArrastreCambia?.(false, false);
+        onQuitar?.();
+        return;
+      }
+      sobreTachoRef.current = false;
+      onArrastreCambia?.(false, false);
     } else if (punterosRef.current.size === 1) {
       // Queda un solo dedo tras soltar uno de los dos: retoma el arrastre
       // desde la posición actual, para que la pegatina no salte de golpe.
@@ -129,19 +146,6 @@ export function MencionSobreImagen({
     >
       <span className="text-text-accent">@</span>
       {nombre}
-      {interactivo && onQuitar && (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onQuitar();
-          }}
-          aria-label={`Quitar mención a ${nombre}`}
-          className="ml-1 flex h-4 w-4 items-center justify-center rounded-full bg-white/20"
-        >
-          <IconX size={10} />
-        </button>
-      )}
     </div>
   );
 }
