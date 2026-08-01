@@ -90,6 +90,15 @@ const KM_MOVIMIENTO_SIGNIFICATIVO = 0.03; // ~30 metros
 const MIN_AVISO_INACTIVIDAD = 25; // dentro del rango pedido (20 a 30 min)
 const MIN_CIERRE_AUTOMATICO = 10;
 
+// Retomar el modo Exploración: un solo salto de GPS que supere el umbral no
+// alcanza para asumir que el usuario "empezó a patinar" — en interiores, o con
+// GPS aproximado (Wi-Fi/IP, como en un navegador de escritorio sin chip GPS),
+// una lectura puntual puede superarlo estando completamente quieto. Se exige
+// que el desplazamiento se sostenga por unos segundos (mismo criterio que
+// revisarVelocidadSospechosa con la velocidad sostenida) antes de mover la
+// cámara y sacar al usuario del modo Exploración.
+const MS_MOVIMIENTO_SOSTENIDO_EXPLORACION = 6000;
+
 // Anti-trampa: si la velocidad entre dos puntos grabados se mantiene arriba de
 // este umbral de forma sostenida (sin bajar ni un momento), lo más probable es
 // que la persona ande en auto con el modo activo, no patinando. 35 km/h es más
@@ -436,6 +445,9 @@ export function MapaView() {
   const inicioTramoRapidoRef = useRef<number | null>(null);
   const avisoVelocidadRef = useRef(false);
   const necesitaCentrarInicialRef = useRef(false);
+  // Igual que inicioTramoRapidoRef, pero para el desplazamiento que retoma el
+  // seguimiento del mapa tras el modo Exploración (ver registrarMovimiento).
+  const inicioDesplazamientoExploracionRef = useRef<number | null>(null);
   // Rodadas cercanas (asistencia confirmada): al activar "Estoy en Ruta" se
   // revisa una sola vez, con el primer fix GPS, si hay alguna rodada donde el
   // usuario marcó "Voy" dentro de la ventana horaria y radio de 2 km (ver
@@ -511,11 +523,26 @@ export function MapaView() {
       }
       // Modo "Exploración": si el usuario arrastró el mapa a mano (seguimiento
       // apagado) y recién ahora se detecta que empezó a desplazarse de verdad
-      // (no solo el ruido normal del GPS), se retoma el seguimiento solo.
+      // (no solo el ruido normal del GPS), se retoma el seguimiento solo — pero
+      // recién cuando ese desplazamiento se sostiene por
+      // MS_MOVIMIENTO_SOSTENIDO_EXPLORACION, no ante la primera lectura que
+      // supera el umbral (ver constante arriba).
       if (!siguiendoRef.current && mapRef.current) {
-        mapRef.current.flyTo([punto.lat, punto.lon], mapRef.current.getZoom());
-        marcarSiguiendo(true);
+        if (inicioDesplazamientoExploracionRef.current === null) {
+          inicioDesplazamientoExploracionRef.current = Date.now();
+        } else if (
+          Date.now() - inicioDesplazamientoExploracionRef.current >=
+          MS_MOVIMIENTO_SOSTENIDO_EXPLORACION
+        ) {
+          mapRef.current.flyTo([punto.lat, punto.lon], mapRef.current.getZoom());
+          marcarSiguiendo(true);
+          inicioDesplazamientoExploracionRef.current = null;
+        }
       }
+    } else {
+      // La lectura no superó el umbral: si venía acumulando tiempo sostenido,
+      // era ruido puntual del GPS, no un desplazamiento real. Se reinicia.
+      inicioDesplazamientoExploracionRef.current = null;
     }
   }
 
@@ -1091,6 +1118,7 @@ export function MapaView() {
 
   function centrarEnMiUbicacion() {
     exploracionManualActiva = false;
+    inicioDesplazamientoExploracionRef.current = null;
     // Sin un modo activo, `posicion` está vacío (privacidad primero); en ese
     // caso se usa la última posición GPS real que sí se conoce igual (ver
     // efecto de centrado por GPS más arriba), para que el botón funcione
@@ -1114,6 +1142,7 @@ export function MapaView() {
     function detenerSeguimiento() {
       marcarSiguiendo(false);
       exploracionManualActiva = true;
+      inicioDesplazamientoExploracionRef.current = null;
     }
     // Guarda continuamente dónde quedó la cámara (propia o de exploración) en
     // `ultimaVistaMapa`, para que si SwipeNavigator desmonta esta pantalla al
