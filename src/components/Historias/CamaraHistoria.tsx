@@ -62,10 +62,16 @@ export function CamaraHistoria({
   onCapturado,
   onCerrar,
   onPermisoBloqueado,
+  soloFoto = false,
 }: {
   onCapturado: (archivo: File) => void;
   onCerrar: () => void;
   onPermisoBloqueado: () => void;
+  // Usado desde el chat (adjuntar "Captura Express"): oculta el selector
+  // Foto/Video, dejando solo el modo foto — el chat ya tiene su propio
+  // adjunto de video separado (selector de archivo nativo), no hace falta
+  // duplicar ese camino acá.
+  soloFoto?: boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -392,7 +398,7 @@ export function CamaraHistoria({
             </div>
           )}
 
-          {!grabando && (
+          {!grabando && !soloFoto && (
             <div className="flex gap-1 rounded-full bg-black/40 p-1">
               <button
                 type="button"

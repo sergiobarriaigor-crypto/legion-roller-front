@@ -48,6 +48,7 @@ import { VisorClima } from "@/components/Chat/VisorClima";
 import { AlbumChatPanel } from "@/components/Chat/AlbumChatPanel";
 import { CrearEncuestaModal } from "@/components/Chat/CrearEncuestaModal";
 import { useGrabadorAudio, soportaGrabarAudio } from "@/components/Chat/GrabadorNotaVoz";
+import { CamaraHistoria, soportaCamaraEnVivo } from "@/components/Historias/CamaraHistoria";
 import { Avatar } from "@/components/Avatar";
 import { useNoAutofill } from "@/lib/useNoAutofill";
 
@@ -101,6 +102,7 @@ export default function ConversacionPage() {
   const [mensajeAReaccionar, setMensajeAReaccionar] = useState<MensajeChat | null>(null);
   const [copiado, setCopiado] = useState(false);
   const [mostrarAdjuntos, setMostrarAdjuntos] = useState(false);
+  const [mostrarCamaraExpress, setMostrarCamaraExpress] = useState(false);
   const [mostrarClima, setMostrarClima] = useState(false);
   const [mostrarUbicacion, setMostrarUbicacion] = useState(false);
   const [mostrarRuta, setMostrarRuta] = useState(false);
@@ -325,11 +327,8 @@ export default function ConversacionPage() {
     if (textareaRef.current) textareaRef.current.style.height = "";
   }
 
-  async function onElegirFoto(e: React.ChangeEvent<HTMLInputElement>) {
-    const archivo = e.target.files?.[0];
-    if (inputFotoRef.current) inputFotoRef.current.value = "";
-    if (!archivo || !token) return;
-    setMostrarAdjuntos(false);
+  async function subirYEnviarFoto(archivo: File) {
+    if (!token) return;
     setSubida({ etiqueta: "Subiendo foto...", pct: 0 });
     setErrorAdjunto("");
     try {
@@ -342,6 +341,19 @@ export default function ConversacionPage() {
     } finally {
       setSubida(null);
     }
+  }
+
+  async function onElegirFoto(e: React.ChangeEvent<HTMLInputElement>) {
+    const archivo = e.target.files?.[0];
+    if (inputFotoRef.current) inputFotoRef.current.value = "";
+    if (!archivo) return;
+    setMostrarAdjuntos(false);
+    await subirYEnviarFoto(archivo);
+  }
+
+  function onCapturaExpress(archivo: File) {
+    setMostrarCamaraExpress(false);
+    subirYEnviarFoto(archivo);
   }
 
   async function onElegirVideo(e: React.ChangeEvent<HTMLInputElement>) {
@@ -839,6 +851,18 @@ export default function ConversacionPage() {
             >
               Foto
             </button>
+            {soportaCamaraEnVivo() && (
+              <button
+                type="button"
+                onClick={() => {
+                  setMostrarAdjuntos(false);
+                  setMostrarCamaraExpress(true);
+                }}
+                className="rounded-app px-3 py-2.5 text-left text-sm text-text-primary active:bg-white/5"
+              >
+                Captura Express
+              </button>
+            )}
             <button
               type="button"
               onClick={() => {
@@ -921,6 +945,19 @@ export default function ConversacionPage() {
 
       {mostrarAlbum && (
         <AlbumChatPanel sala={sala} token={token} onCerrar={() => setMostrarAlbum(false)} />
+      )}
+
+      {mostrarCamaraExpress && (
+        <CamaraHistoria
+          soloFoto
+          onCapturado={onCapturaExpress}
+          onCerrar={() => setMostrarCamaraExpress(false)}
+          onPermisoBloqueado={() =>
+            setErrorAdjunto(
+              "Cámara bloqueada: actívala en ⋮ (arriba a la derecha) → Información del sitio → Permisos → Cámara → Permitir, y vuelve a intentar.",
+            )
+          }
+        />
       )}
 
       {mostrarEncuesta && (
