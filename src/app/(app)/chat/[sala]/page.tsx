@@ -670,6 +670,7 @@ export default function ConversacionPage() {
               placeholder="Escribe un mensaje..."
               value={texto}
               onFocus={() => {
+                noAutofillMensaje.onFocus();
                 composerEnfocadoRef.current = true;
               }}
               onBlur={() => {
