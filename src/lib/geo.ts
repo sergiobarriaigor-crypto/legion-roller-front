@@ -27,11 +27,22 @@ export function distanciaTotalKm(puntos: PuntoGps[]): number {
   return total;
 }
 
-// Ningún patinador real supera esto — un tramo que lo implique es un salto de
-// GPS (o, en pruebas, un punto simulado sin tiempo real entre medio), no una
-// velocidad real. Se descarta ese tramo en vez de mostrar un número absurdo
-// que además desborda su casilla en la ficha y en la tarjeta de compartir.
-const VELOCIDAD_PLAUSIBLE_MAX_KMH = 80;
+// Ni el patinador más rápido del club sostiene esto ni en la bajada más
+// pronunciada — un tramo que lo implique es un salto de GPS (frecuente cerca
+// de la costa/cerros, por reflejo de señal), no una velocidad real. 80 km/h
+// era demasiado permisivo (pensado para descartar saltos tipo teletransporte,
+// no ruido normal de GPS) y dejaba pasar picos falsos de 40-50 km/h en
+// recorridos totalmente planos. Se descarta ese tramo en vez de mostrar un
+// número absurdo que además desborda su casilla en la ficha y en la tarjeta
+// de compartir.
+const VELOCIDAD_PLAUSIBLE_MAX_KMH = 45;
+
+// Intervalo mínimo entre dos puntos para confiar en la velocidad calculada
+// entre ellos. Con un intervalo muy corto, el error normal del GPS (unos
+// pocos metros) pesa proporcionalmente mucho más que el movimiento real y
+// puede inflar la velocidad implícita sin que haya habido ningún salto de
+// posición grande.
+const DT_MINIMO_CONFIABLE_SEG = 2;
 
 // Velocidad máxima entre dos puntos consecutivos (km/h), usada en la ficha de
 // detalle de "Mis rutas". Como los puntos vienen decimados desde el backend,
@@ -40,7 +51,7 @@ export function velocidadMaximaKmH(puntos: PuntoGps[]): number {
   let maxima = 0;
   for (let i = 1; i < puntos.length; i++) {
     const dtSeg = (puntos[i].timestamp - puntos[i - 1].timestamp) / 1000;
-    if (dtSeg <= 0) continue;
+    if (dtSeg < DT_MINIMO_CONFIABLE_SEG) continue;
     const distKm = distanciaHaversineKm(puntos[i - 1], puntos[i]);
     const kmh = (distKm / dtSeg) * 3600;
     if (kmh > maxima && kmh <= VELOCIDAD_PLAUSIBLE_MAX_KMH) maxima = kmh;
