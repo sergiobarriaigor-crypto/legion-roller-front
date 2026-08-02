@@ -108,11 +108,23 @@ function calcularTilesNecesarios(centroPxX: number, centroPxY: number, zoom: num
   return tiles;
 }
 
-// "@2x" pide la variante de doble resolución del mismo tile (512x512 en vez
-// de 256x256 cubriendo la misma zona) — sin esto, el mapa se veía pixelado
-// al exportar la tarjeta a resolución retina (ver ESCALA más abajo).
-async function cargarTileComoImagen(zoom: number, x: number, y: number): Promise<HTMLImageElement | null> {
-  const url = `https://basemaps.cartocdn.com/dark_all/${zoom}/${x}/${y}@2x.png`;
+// Mismas dos capas satelitales que usa el mapa en vivo (MapaView.tsx): Esri
+// World Imagery (la foto satelital en sí) + Reference/World_Boundaries_and_Places
+// (calles/nombres transparente encima, para no perder la orientación) — ambas
+// gratis y sin API key. A diferencia de Carto, Esri no ofrece una variante
+// "@2x" de mayor resolución; el tile de 256px se estira al doble (ESCALA) al
+// dibujarlo, se ve un poco menos nítido que antes pero es la misma calidad
+// que ya se ve en el mapa satelital dentro de la app.
+const TILE_SATELITE_URL =
+  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+const TILE_ETIQUETAS_URL =
+  "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}";
+
+function urlTile(plantilla: string, zoom: number, x: number, y: number): string {
+  return plantilla.replace("{z}", String(zoom)).replace("{y}", String(y)).replace("{x}", String(x));
+}
+
+async function cargarTileComoImagen(url: string): Promise<HTMLImageElement | null> {
   try {
     const res = await fetch(url);
     if (!res.ok) return null;
@@ -141,13 +153,13 @@ interface MapaGenerado {
   centroPxY: number;
 }
 
-// Compone el mapa real (tiles oscuros estilo Carto Dark Matter, gratis y sin
-// API key) del recuadro del recorrido en un canvas aparte, para insertarlo
-// como <image> dentro del SVG principal. Los tiles se piden con fetch() (no
-// con <img>), así se pueden convertir a data URL sin "manchar" el canvas
-// final con contenido cross-origin. Si no hay conexión o los tiles no
-// cargan, devuelve null y el llamador usa un mapa vectorial de respaldo —
-// la tarjeta nunca se rompe por esto.
+// Compone el mapa real (satélite Esri + etiquetas, igual que MapaView.tsx)
+// del recuadro del recorrido en un canvas aparte, para insertarlo como
+// <image> dentro del SVG principal. Los tiles se piden con fetch() (no con
+// <img>), así se pueden convertir a data URL sin "manchar" el canvas final
+// con contenido cross-origin. Si no hay conexión o los tiles no cargan,
+// devuelve null y el llamador usa un mapa vectorial de respaldo — la
+// tarjeta nunca se rompe por esto.
 async function generarMapaReal(puntos: PuntoGps[]): Promise<MapaGenerado | null> {
   try {
     const lats = puntos.map((p) => p.lat);
@@ -164,12 +176,17 @@ async function generarMapaReal(puntos: PuntoGps[]): Promise<MapaGenerado | null>
     const tiles = calcularTilesNecesarios(centroPxX, centroPxY, zoom);
     if (tiles.length === 0 || tiles.length > 30) return null;
 
-    const imagenes = await Promise.all(tiles.map((t) => cargarTileComoImagen(zoom, t.x, t.y)));
-    if (imagenes.every((img) => img === null)) return null;
+    const [imagenesBase, imagenesEtiquetas] = await Promise.all([
+      Promise.all(tiles.map((t) => cargarTileComoImagen(urlTile(TILE_SATELITE_URL, zoom, t.x, t.y)))),
+      Promise.all(tiles.map((t) => cargarTileComoImagen(urlTile(TILE_ETIQUETAS_URL, zoom, t.x, t.y)))),
+    ]);
+    if (imagenesBase.every((img) => img === null)) return null;
 
-    // El canvas de composición va al doble de tamaño (los tiles @2x ya vienen
-    // a esa resolución), para que el mapa se vea nítido en la tarjeta final
-    // exportada a resolución retina.
+    // El canvas de composición va al doble de tamaño (ESCALA), para que el
+    // mapa se vea nítido en la tarjeta final exportada a resolución retina
+    // — los tiles satelitales de Esri no tienen variante "@2x" como Carto,
+    // así que acá se estiran al dibujarse (misma nitidez que ya se ve en el
+    // mapa satelital dentro de la app).
     const canvas = document.createElement("canvas");
     canvas.width = MAPA_ANCHO * ESCALA;
     canvas.height = MAPA_ALTO * ESCALA;
@@ -178,8 +195,10 @@ async function generarMapaReal(puntos: PuntoGps[]): Promise<MapaGenerado | null>
     ctx.fillStyle = "#1a1108";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     tiles.forEach((t, i) => {
-      const img = imagenes[i];
-      if (img) ctx.drawImage(img, t.destX * ESCALA, t.destY * ESCALA, TAM_TILE * ESCALA, TAM_TILE * ESCALA);
+      const base = imagenesBase[i];
+      if (base) ctx.drawImage(base, t.destX * ESCALA, t.destY * ESCALA, TAM_TILE * ESCALA, TAM_TILE * ESCALA);
+      const etiquetas = imagenesEtiquetas[i];
+      if (etiquetas) ctx.drawImage(etiquetas, t.destX * ESCALA, t.destY * ESCALA, TAM_TILE * ESCALA, TAM_TILE * ESCALA);
     });
 
     return { dataUrl: canvas.toDataURL("image/png"), zoom, centroPxX, centroPxY };
