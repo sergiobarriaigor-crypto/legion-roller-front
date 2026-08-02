@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { IconBell, IconBellPlus, IconMessageCircle2 } from "@tabler/icons-react";
+import { IconBell, IconBellPlus, IconMessageCircle2, IconMapPin } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
 import { apiGet } from "@/lib/api";
 import { listarCompartidosSinLeer, type Conversaciones, type CompartidoSinLeer } from "@/lib/chat";
@@ -29,6 +29,7 @@ import {
   marcarRespuestaLeidaImpulsa,
   type RespuestaEmprendedorSinLeer,
 } from "@/lib/emprendedores";
+import { proximaRodada, type RodadaProxima } from "@/lib/publicaciones";
 import { tiempoTranscurrido } from "@/lib/tiempo";
 import { pushDisponible, estaSuscrito, suscribirPush } from "@/lib/push";
 import { SosButton } from "@/components/SosButton";
@@ -47,6 +48,7 @@ export function AppHeader() {
   const [reaccionesAgrupadasPost, setReaccionesAgrupadasPost] = useState<ReaccionPostAgrupadaSinLeer[]>([]);
   const [respuestasSinLeerImpulsa, setRespuestasSinLeerImpulsa] = useState<RespuestaEmprendedorSinLeer[]>([]);
   const [compartidosSinLeer, setCompartidosSinLeer] = useState<CompartidoSinLeer[]>([]);
+  const [rodadaProxima, setRodadaProxima] = useState<RodadaProxima | null>(null);
   const [mostrarLista, setMostrarLista] = useState(false);
   const [mencionAbierta, setMencionAbierta] = useState<Historia | null>(null);
   const [enviando, setEnviando] = useState(false);
@@ -214,6 +216,25 @@ export function AppHeader() {
     return () => clearInterval(intervalo);
   }, [token, sesion?.rol]);
 
+  // Rodada con RSVP sí/tal vez que arranca en los próximos 30 minutos — a
+  // diferencia del push del sistema (que se manda una sola vez), esto se
+  // recalcula en cada consulta y desaparece solo cuando la rodada empieza.
+  useEffect(() => {
+    if (!token || sesion?.rol === "visitante") return;
+
+    async function revisarRodadaProxima() {
+      try {
+        setRodadaProxima(await proximaRodada(token));
+      } catch {
+        // silencioso
+      }
+    }
+
+    revisarRodadaProxima();
+    const intervalo = setInterval(revisarRodadaProxima, 20000);
+    return () => clearInterval(intervalo);
+  }, [token, sesion?.rol]);
+
   // Al tocar la notificación: se marca leída y se abre directo la historia
   // (BarraHistorias.tsx lee estos parámetros y muestra el panel de
   // comentarios con el hilo, resaltando esta respuesta).
@@ -290,6 +311,20 @@ export function AppHeader() {
     }
   }
 
+  // Lleva al mapa centrado en el punto de encuentro real (el mapa ya dibuja
+  // un marcador ahí para cualquier rodada activa/próxima — ver puntosPartida
+  // en MapaView.tsx), no hace falta guardar "leído" en el backend: esto se
+  // recalcula solo y desaparece cuando la rodada empieza.
+  function irARodadaProxima() {
+    if (!rodadaProxima) return;
+    setMostrarLista(false);
+    if (rodadaProxima.puntoLat !== null && rodadaProxima.puntoLon !== null) {
+      router.push(`/mapa?lat=${rodadaProxima.puntoLat}&lon=${rodadaProxima.puntoLon}`);
+    } else {
+      router.push("/mapa");
+    }
+  }
+
   async function responderMencion(aceptar: boolean) {
     if (!mencionAbierta || !token) return;
     setEnviando(true);
@@ -305,6 +340,7 @@ export function AppHeader() {
   }
 
   const totalNotificaciones =
+    (rodadaProxima ? 1 : 0) +
     mencionesPendientes.length +
     respuestasSinLeer.length +
     reaccionesAgrupadas.length +
@@ -390,6 +426,24 @@ export function AppHeader() {
                 </p>
               ) : (
                 <>
+                  {rodadaProxima && (
+                    <button
+                      type="button"
+                      onClick={irARodadaProxima}
+                      className="flex w-full items-start gap-2 rounded-app px-2 py-2 text-left text-sm text-text-primary hover:bg-bg-accent"
+                    >
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-bg-accent text-text-accent">
+                        <IconMapPin size={18} />
+                      </span>
+                      <span className="flex-1">
+                        Tu rodada <strong>{rodadaProxima.titulo}</strong> empieza en{" "}
+                        {rodadaProxima.minutosFaltan} min
+                        <span className="block text-[11px] text-text-secondary">
+                          Toca para ver el punto de encuentro en el mapa
+                        </span>
+                      </span>
+                    </button>
+                  )}
                   {mencionesPendientes.map((h) => (
                     <button
                       key={`mencion-${h.id}`}

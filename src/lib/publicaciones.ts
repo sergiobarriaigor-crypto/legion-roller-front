@@ -93,6 +93,21 @@ export function misAsistenciasEvento(token: string) {
   return apiGet<Record<number, boolean>>("/publicaciones/mis-asistencias-evento", token);
 }
 
+export interface RodadaProxima {
+  id: number;
+  titulo: string;
+  puntoLat: number | null;
+  puntoLon: number | null;
+  puntoEncuentro: string | null;
+  minutosFaltan: number;
+}
+
+// Para la campana: null si no hay ninguna rodada con RSVP sí/tal vez que
+// arranque dentro de los próximos 30 minutos.
+export function proximaRodada(token: string | null) {
+  return apiGet<RodadaProxima | null>("/publicaciones/proxima-rodada", token);
+}
+
 export function confirmarAsistenciaEvento(
   publicacionId: number,
   body: { lat?: number; lon?: number; codigo?: string },

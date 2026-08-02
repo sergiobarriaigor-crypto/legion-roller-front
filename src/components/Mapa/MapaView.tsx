@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -110,6 +111,13 @@ const MS_VELOCIDAD_SOSPECHOSA_SOSTENIDA = 5 * 60 * 1000;
 // Zoom usado para centrar el mapa automáticamente al activar un modo (más cercano
 // que el zoom inicial de la sección 1 del PDF, pensado para ubicarte de un vistazo).
 const ZOOM_CENTRADO_AUTOMATICO = 16;
+
+// Mismo radio que RADIO_ASISTENCIA_KM en mapa.service.ts (backend) — ahí se usa
+// para detectar rodadas cercanas y validar asistencia después de terminar; acá
+// se usa para exigir estar cerca del punto ANTES de dejar activar "Estoy en
+// Ruta" (no hay forma de compartir la constante entre front/back en este
+// proyecto, ver criterio ya usado con HORAS_VIGENCIA_PATINANDO).
+const RADIO_ASISTENCIA_KM = 2;
 
 // Mismo patrón de tap-vs-hold que el botón central del bottom-nav.
 const HOLD_MS_CENTRAR = 1500;
@@ -368,6 +376,19 @@ export function MapaView() {
   const { sesion } = useSession();
   const token = sesion?.token ?? null;
 
+  // Deep-link desde la campana ("tu rodada empieza pronto"): /mapa?lat=..&lon=..
+  // centra la cámara ahí (ver `centro`/`zoomInicial` más abajo para el primer
+  // ingreso, y el efecto de flyTo más abajo para cuando ya se estaba en el
+  // mapa y se vuelve a tocar el aviso).
+  const searchParams = useSearchParams();
+  const latQueryRaw = searchParams.get("lat");
+  const lonQueryRaw = searchParams.get("lon");
+  const latQuery = latQueryRaw !== null ? Number(latQueryRaw) : null;
+  const lonQuery = lonQueryRaw !== null ? Number(lonQueryRaw) : null;
+  const puntoQueryValido =
+    latQuery !== null && lonQuery !== null && !Number.isNaN(latQuery) && !Number.isNaN(lonQuery);
+  const puntoQueryCentradoRef = useRef<string | null>(null);
+
   const [posicion, setPosicion] = useState<{ lat: number; lon: number } | null>(null);
   // Solo true en el montaje realmente inicial de toda la sesión (sin vista de
   // cámara ni posición conocida todavía) — cubre el mapa hasta tener la
@@ -377,6 +398,9 @@ export function MapaView() {
     () => !ultimaVistaMapa && !ultimaPosicionConocida,
   );
   const [errorGeo, setErrorGeo] = useState("");
+  // Mientras se pide el GPS para validar cercanía al punto de la rodada
+  // antes de activar "Estoy en Ruta" (ver unirseARodadaActiva).
+  const [verificandoCercaniaRodada, setVerificandoCercaniaRodada] = useState(false);
   const [otros, setOtros] = useState<OtroMiembro[]>([]);
   const [modo, setModo] = useState<Modo>(null);
   // "Patinar sin mapear": la grabación (grabandoRef) queda en true para
@@ -916,12 +940,53 @@ export function MapaView() {
   // nombre—, así que se activa el modo "ruta" (el único que puede generar
   // asistencia confirmada) y se une directo, sin repetir la detección ni
   // pedir una segunda confirmación.
-  function unirseARodadaActiva() {
-    if (!rodadaActiva) return;
+  function unirseYActivarRuta(rodada: Publicacion) {
     activarModo("ruta");
     necesitaRevisarRodadaRef.current = false;
-    rodadaUnidaIdRef.current = rodadaActiva.id;
-    if (grabacionActivaModulo) grabacionActivaModulo.rodadaUnidaId = rodadaActiva.id;
+    rodadaUnidaIdRef.current = rodada.id;
+    if (grabacionActivaModulo) grabacionActivaModulo.rodadaUnidaId = rodada.id;
+  }
+
+  // Exige estar cerca del punto de encuentro real (marcado por el Admin con
+  // GPS) para poder activar "Estoy en Ruta" — antes esa cercanía solo se
+  // detectaba/validaba después de terminar el recorrido, nunca bloqueaba el
+  // botón. Si la rodada no tiene un punto GPS cargado (quedó solo el texto
+  // libre "puntoEncuentro"), no hay contra qué validar y se activa directo,
+  // como siempre.
+  function unirseARodadaActiva() {
+    if (!rodadaActiva) return;
+    const rodada = rodadaActiva;
+    if (rodada.puntoLat === null || rodada.puntoLon === null) {
+      unirseYActivarRuta(rodada);
+      return;
+    }
+    if (!navigator.geolocation) {
+      setErrorGeo("Tu navegador no soporta geolocalización.");
+      return;
+    }
+    setErrorGeo("");
+    setVerificandoCercaniaRodada(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setVerificandoCercaniaRodada(false);
+        const distanciaKm = distanciaHaversineKm(
+          { lat: pos.coords.latitude, lon: pos.coords.longitude, timestamp: 0 },
+          { lat: rodada.puntoLat as number, lon: rodada.puntoLon as number, timestamp: 0 },
+        );
+        if (distanciaKm > RADIO_ASISTENCIA_KM) {
+          setErrorGeo(
+            `Estás a ${distanciaKm.toFixed(1)} km del punto de encuentro. Acércate (menos de ${RADIO_ASISTENCIA_KM} km) para activar "Estoy en Ruta".`,
+          );
+          return;
+        }
+        unirseYActivarRuta(rodada);
+      },
+      () => {
+        setVerificandoCercaniaRodada(false);
+        setErrorGeo("No pudimos confirmar tu ubicación (revisa los permisos) para validar la cercanía. Inténtalo de nuevo.");
+      },
+      { enableHighAccuracy: true, timeout: 10000 },
+    );
   }
 
   function descartarCandidatasRodada() {
@@ -1096,15 +1161,35 @@ export function MapaView() {
   // plano. Solo se cae a `CENTRO_DEFECTO` en el montaje realmente inicial de
   // toda la sesión, y ese caso queda cubierto por el indicador de carga
   // (`buscandoUbicacionInicial`) mientras se espera la primera respuesta.
-  const centro: [number, number] = ultimaVistaMapa
-    ? [ultimaVistaMapa.lat, ultimaVistaMapa.lon]
-    : ultimaPosicionConocida
-      ? [ultimaPosicionConocida.lat, ultimaPosicionConocida.lon]
-      : posicion
-        ? [posicion.lat, posicion.lon]
-        : CENTRO_DEFECTO;
-  const zoomInicial =
-    ultimaVistaMapa?.zoom ?? (ultimaPosicionConocida ? ZOOM_CENTRADO_AUTOMATICO : 13);
+  const centro: [number, number] = puntoQueryValido
+    ? [latQuery as number, lonQuery as number]
+    : ultimaVistaMapa
+      ? [ultimaVistaMapa.lat, ultimaVistaMapa.lon]
+      : ultimaPosicionConocida
+        ? [ultimaPosicionConocida.lat, ultimaPosicionConocida.lon]
+        : posicion
+          ? [posicion.lat, posicion.lon]
+          : CENTRO_DEFECTO;
+  const zoomInicial = puntoQueryValido
+    ? ZOOM_CENTRADO_AUTOMATICO
+    : (ultimaVistaMapa?.zoom ?? (ultimaPosicionConocida ? ZOOM_CENTRADO_AUTOMATICO : 13));
+
+  // Si ya se estaba en /mapa y se vuelve a tocar el aviso de la campana
+  // (mismos route, nuevos query params — Next no remonta el componente), el
+  // `centro` de arriba (solo usado al crear el <MapContainer>) no alcanza;
+  // hay que mover la cámara a mano. El ref evita repetir el flyTo en cada
+  // render mientras el valor de la URL no cambie. Se trata como una
+  // exploración manual (mismo criterio que arrastrar el mapa) para que no la
+  // pise el seguimiento automático si hay un modo activo en otra pestaña.
+  useEffect(() => {
+    if (!puntoQueryValido || !mapRef.current) return;
+    const clave = `${latQuery},${lonQuery}`;
+    if (puntoQueryCentradoRef.current === clave) return;
+    puntoQueryCentradoRef.current = clave;
+    mapRef.current.flyTo([latQuery as number, lonQuery as number], ZOOM_CENTRADO_AUTOMATICO);
+    marcarSiguiendo(false);
+    exploracionManualActiva = true;
+  }, [latQuery, lonQuery, puntoQueryValido]);
 
   // "Estoy en Ruta" solo se ofrece cuando hay una rodada confirmada ("Voy") y
   // en su ventana horaria — es el único caso donde ese modo tiene sentido
@@ -1516,7 +1601,8 @@ export function MapaView() {
                     <button
                       type="button"
                       onClick={unirseARodadaActiva}
-                      className="w-[45%] transition-transform active:scale-95"
+                      disabled={verificandoCercaniaRodada}
+                      className="w-[45%] transition-transform active:scale-95 disabled:opacity-60"
                     >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
@@ -1527,6 +1613,11 @@ export function MapaView() {
                     </button>
                   )}
                 </div>
+                {verificandoCercaniaRodada && (
+                  <p className="text-center text-xs text-text-secondary">
+                    Verificando tu cercanía al punto de encuentro...
+                  </p>
+                )}
               </>
             ) : (
               <>
