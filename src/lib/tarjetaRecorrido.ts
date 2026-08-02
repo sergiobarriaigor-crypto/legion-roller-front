@@ -1,4 +1,4 @@
-import type { PuntoGps } from "./geo";
+import { distanciaHaversineKm, type PuntoGps } from "./geo";
 import { cargarImagenComoDataUrl } from "./imagenDataUrl";
 
 export interface DatosTarjetaRecorrido {
@@ -201,11 +201,24 @@ function iconoRayo(cx: number, y: number): string {
   return `<g transform="translate(${cx - 15}, ${y})"><path d="M16.5 1L5 18h7l-1.5 11L23 12h-7l1-11z" fill="${DORADO}"/></g>`;
 }
 
+// Estado de un cuadro de la animación del video: qué parte del trazo dibujar
+// y qué valores de distancia/tiempo mostrar en ese instante. Si no se pasa
+// (o se pasa undefined), construirSvg dibuja la tarjeta completa de siempre
+// — así generarTarjetaRecorrido() no cambia en nada.
+interface FrameAnimado {
+  puntosTrazo: PuntoGps[];
+  distanciaKm: number;
+  duracionSeg: number;
+  posicionActual: PuntoGps | null;
+  mostrarFin: boolean;
+}
+
 function construirSvg(
   datos: DatosTarjetaRecorrido,
   logoDataUrl: string | null,
   fondoDataUrl: string | null,
   mapa: MapaGenerado | null,
+  frame?: FrameAnimado,
 ): string {
   const { puntos } = datos;
 
@@ -237,7 +250,10 @@ function construirSvg(
 
   const inicio = puntos[0];
   const fin = puntos[puntos.length - 1];
-  const trazo = puntos.map((p) => `${x(p.lon)},${y(p.lat)}`).join(" ");
+  const puntosTrazo = frame?.puntosTrazo ?? puntos;
+  const trazo = puntosTrazo.map((p) => `${x(p.lon)},${y(p.lat)}`).join(" ");
+  const mostrarFin = frame?.mostrarFin ?? true;
+  const posicionActual = frame?.posicionActual ?? null;
 
   const mapaFondoSvg = mapa
     ? `<image href="${mapa.dataUrl}" x="${MAPA_X}" y="${MAPA_Y}" width="${MAPA_ANCHO}" height="${MAPA_ALTO}" preserveAspectRatio="none"/>`
@@ -247,9 +263,15 @@ function construirSvg(
     ? `<text x="${MAPA_X + MAPA_ANCHO - 8}" y="${MAPA_Y + MAPA_ALTO - 8}" text-anchor="end" font-family="Arial, sans-serif" font-size="9" fill="#8a8177" opacity="0.85">© OpenStreetMap, © CARTO</text>`
     : "";
 
+  // Durante la animación del video, distancia y tiempo van subiendo cuadro a
+  // cuadro (frame.distanciaKm/duracionSeg); vel. promedio y máxima son
+  // propiedades del recorrido completo y no tiene sentido "animarlas", se
+  // muestran ya finales desde el primer cuadro.
+  const distanciaMostrar = frame?.distanciaKm ?? datos.distanciaKm;
+  const duracionMostrar = frame?.duracionSeg ?? datos.duracionSeg;
   const stats = [
-    { valor: `${datos.distanciaKm.toFixed(2)} km`, etiqueta: "DISTANCIA", icono: iconoDistancia },
-    { valor: `${Math.round(datos.duracionSeg / 60)} min`, etiqueta: "TIEMPO TOTAL", icono: iconoTiempo },
+    { valor: `${distanciaMostrar.toFixed(2)} km`, etiqueta: "DISTANCIA", icono: iconoDistancia },
+    { valor: `${Math.round(duracionMostrar / 60)} min`, etiqueta: "TIEMPO TOTAL", icono: iconoTiempo },
     { valor: `${Math.round(datos.velocidadPromedio)} km/h`, etiqueta: "VEL. PROMEDIO", icono: iconoVelocidad },
     { valor: `${Math.round(datos.velocidadMaxima)} km/h`, etiqueta: "VEL. MÁXIMA", icono: iconoRayo },
   ];
@@ -328,7 +350,8 @@ function construirSvg(
         ${mapaFondoSvg}
         <polyline points="${trazo}" fill="none" stroke="${DORADO}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
         <circle cx="${x(inicio.lon)}" cy="${y(inicio.lat)}" r="10" fill="#5fae4e" stroke="#0d0a06" stroke-width="3"/>
-        <circle cx="${x(fin.lon)}" cy="${y(fin.lat)}" r="10" fill="#d8342f" stroke="#0d0a06" stroke-width="3"/>
+        ${mostrarFin ? `<circle cx="${x(fin.lon)}" cy="${y(fin.lat)}" r="10" fill="#d8342f" stroke="#0d0a06" stroke-width="3"/>` : ""}
+        ${posicionActual ? `<circle cx="${x(posicionActual.lon)}" cy="${y(posicionActual.lat)}" r="9" fill="${DORADO}" stroke="#0d0a06" stroke-width="3" filter="url(#resplandorDorado)"/>` : ""}
         ${atribucionSvg}
       </g>
       <rect x="${MAPA_X}" y="${MAPA_Y}" width="${MAPA_ANCHO}" height="${MAPA_ALTO}" rx="14" fill="none" stroke="${DORADO_BORDE}" stroke-width="1.2" opacity="0.8"/>
@@ -381,4 +404,176 @@ export async function generarTarjetaRecorrido(datos: DatosTarjetaRecorrido): Pro
     img.onerror = () => reject(new Error("No se pudo generar la imagen"));
     img.src = svgDataUrl;
   });
+}
+
+export interface OpcionesVideoRecorrido {
+  // Duración de la animación (el trazo dibujándose) — NO la duración real
+  // del recorrido, que puede ser de horas. Pensado para redes sociales, no
+  // para ver el paseo en tiempo real.
+  duracionAnimSeg?: number;
+  // Cuánto se mantiene congelado el último cuadro (con las 4 estadísticas ya
+  // completas) antes de cortar el video, para que alcance a leerse.
+  duracionFinalSeg?: number;
+  fps?: number;
+  onProgreso?: (fraccion: number) => void;
+}
+
+const DURACION_ANIM_SEG_DEFECTO = 6;
+const DURACION_FINAL_SEG_DEFECTO = 2;
+const FPS_DEFECTO = 24;
+
+function elegirMimeTypeVideo(): string {
+  const candidatos = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
+  for (const candidato of candidatos) {
+    if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(candidato)) return candidato;
+  }
+  return "video/webm";
+}
+
+// Dado un instante (0 a 1) de la animación, calcula qué parte real del
+// trazo ya se recorrió — usando los timestamps reales de los puntos (no solo
+// el índice), para que el avance respete los tramos donde se fue más rápido
+// o más lento. `distanciaAcumuladaKm[i]` es la distancia recorrida hasta el
+// punto i (precalculada una sola vez, no en cada cuadro).
+function estadoEnFraccion(
+  datos: DatosTarjetaRecorrido,
+  distanciaAcumuladaKm: number[],
+  fraccion: number,
+): FrameAnimado {
+  const { puntos } = datos;
+  if (fraccion >= 1) {
+    return {
+      puntosTrazo: puntos,
+      distanciaKm: datos.distanciaKm,
+      duracionSeg: datos.duracionSeg,
+      posicionActual: null,
+      mostrarFin: true,
+    };
+  }
+
+  const inicioTs = puntos[0].timestamp;
+  const finTs = puntos[puntos.length - 1].timestamp;
+  const tObjetivo = inicioTs + fraccion * (finTs - inicioTs);
+
+  let i = 0;
+  while (i < puntos.length - 2 && puntos[i + 1].timestamp <= tObjetivo) i++;
+  const actual = puntos[i];
+  const siguiente = puntos[i + 1];
+  const dtTramoMs = siguiente.timestamp - actual.timestamp;
+  const progresoTramo = dtTramoMs > 0 ? Math.min(1, Math.max(0, (tObjetivo - actual.timestamp) / dtTramoMs)) : 0;
+
+  const posicionActual: PuntoGps = {
+    lat: actual.lat + (siguiente.lat - actual.lat) * progresoTramo,
+    lon: actual.lon + (siguiente.lon - actual.lon) * progresoTramo,
+    timestamp: tObjetivo,
+  };
+  const distTramoKm = distanciaAcumuladaKm[i + 1] - distanciaAcumuladaKm[i];
+
+  return {
+    puntosTrazo: [...puntos.slice(0, i + 1), posicionActual],
+    distanciaKm: distanciaAcumuladaKm[i] + distTramoKm * progresoTramo,
+    duracionSeg: fraccion * datos.duracionSeg,
+    posicionActual,
+    mostrarFin: false,
+  };
+}
+
+// Genera un video corto (.webm) del recorrido "dibujándose" sobre el mismo
+// mapa satelital de la tarjeta estática, con la distancia y el tiempo
+// subiendo en vivo — pensado específicamente para compartir en redes
+// sociales (a diferencia de generarTarjetaRecorrido, que da una imagen fija
+// para la ficha/publicación en Post). No reemplaza la tarjeta de imagen,
+// la complementa: usa el mismo mapa/tiles/estilo, solo animado.
+//
+// Como MediaRecorder graba lo que el canvas muestra en tiempo real (no hay
+// forma de "renderizar más rápido que tiempo real" con esta API), esta
+// función tarda aproximadamente duracionAnimSeg + duracionFinalSeg segundos
+// reales en resolver — por eso recibe onProgreso, para poder mostrar un
+// indicador mientras tanto.
+export async function generarVideoRecorrido(
+  datos: DatosTarjetaRecorrido,
+  opciones: OpcionesVideoRecorrido = {},
+): Promise<Blob> {
+  const {
+    duracionAnimSeg = DURACION_ANIM_SEG_DEFECTO,
+    duracionFinalSeg = DURACION_FINAL_SEG_DEFECTO,
+    fps = FPS_DEFECTO,
+    onProgreso,
+  } = opciones;
+
+  if (typeof MediaRecorder === "undefined") {
+    throw new Error("Este navegador no puede generar video.");
+  }
+  if (datos.puntos.length < 2) {
+    throw new Error("El recorrido no tiene suficientes puntos para animar.");
+  }
+
+  const [logoDataUrl, fondoDataUrl, mapa] = await Promise.all([
+    cargarImagenComoDataUrl("/logo-legion-roller-mini.png"),
+    cargarImagenComoDataUrl("/fondo-mis-rutas.jpg"),
+    generarMapaReal(datos.puntos),
+  ]);
+
+  const distanciaAcumuladaKm = [0];
+  for (let i = 1; i < datos.puntos.length; i++) {
+    distanciaAcumuladaKm.push(
+      distanciaAcumuladaKm[i - 1] + distanciaHaversineKm(datos.puntos[i - 1], datos.puntos[i]),
+    );
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = ANCHO * ESCALA;
+  canvas.height = ALTO * ESCALA;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("No se pudo preparar el video.");
+
+  async function dibujarFrame(fraccion: number) {
+    const frame = estadoEnFraccion(datos, distanciaAcumuladaKm, fraccion);
+    const svg = construirSvg(datos, logoDataUrl, fondoDataUrl, mapa, frame);
+    const svgDataUrl = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`;
+    await new Promise<void>((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        ctx!.clearRect(0, 0, canvas.width, canvas.height);
+        ctx!.drawImage(img, 0, 0);
+        resolve();
+      };
+      img.onerror = () => reject(new Error("No se pudo dibujar un cuadro del video."));
+      img.src = svgDataUrl;
+    });
+  }
+
+  // Primer cuadro dibujado ANTES de arrancar a grabar, para no capturar un
+  // instante en blanco mientras carga la primera imagen.
+  await dibujarFrame(0);
+
+  const stream = canvas.captureStream(fps);
+  const mediaRecorder = new MediaRecorder(stream, { mimeType: elegirMimeTypeVideo() });
+  const chunks: BlobPart[] = [];
+  mediaRecorder.ondataavailable = (e) => {
+    if (e.data.size > 0) chunks.push(e.data);
+  };
+  const grabacionLista = new Promise<Blob>((resolve, reject) => {
+    mediaRecorder.onstop = () => resolve(new Blob(chunks, { type: "video/webm" }));
+    mediaRecorder.onerror = () => reject(new Error("Falló la grabación del video."));
+  });
+
+  mediaRecorder.start();
+
+  const totalFrames = Math.round(duracionAnimSeg * fps);
+  const intervaloMs = 1000 / fps;
+  for (let f = 0; f <= totalFrames; f++) {
+    await dibujarFrame(f / totalFrames);
+    onProgreso?.(f / totalFrames);
+    await new Promise((r) => setTimeout(r, intervaloMs));
+  }
+
+  // Cuadro final (con las 4 estadísticas completas) congelado unos segundos
+  // más, para que en redes sociales alcance a leerse antes de que corte.
+  await dibujarFrame(1);
+  await new Promise((r) => setTimeout(r, duracionFinalSeg * 1000));
+
+  mediaRecorder.stop();
+  onProgreso?.(1);
+  return grabacionLista;
 }

@@ -3,10 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import { IconShare, IconUpload } from "@tabler/icons-react";
 import { apiUpload, apiPost, ApiError } from "@/lib/api";
-import { generarTarjetaRecorrido, type DatosTarjetaRecorrido } from "@/lib/tarjetaRecorrido";
+import { generarTarjetaRecorrido, generarVideoRecorrido, type DatosTarjetaRecorrido } from "@/lib/tarjetaRecorrido";
 import { useNoAutofill } from "@/lib/useNoAutofill";
 
 type Estado = "editando" | "publicando";
+type Tab = "imagen" | "video";
 
 export function CompartirRecorridoModal({
   datos,
@@ -31,6 +32,18 @@ export function CompartirRecorridoModal({
   const blobUrlRef = useRef<string | null>(null);
   const generacionIdRef = useRef(0);
   const primeraVezRef = useRef(true);
+
+  // Video para redes sociales: es una pieza aparte (no depende de
+  // título/comentario, que no se dibujan en la tarjeta), se genera una sola
+  // vez bajo demanda al entrar a la pestaña "Video" — a diferencia de la
+  // imagen no se regenera solo, porque tarda varios segundos reales.
+  const [tab, setTab] = useState<Tab>("imagen");
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [videoBlob, setVideoBlob] = useState<Blob | null>(null);
+  const [generandoVideo, setGenerandoVideo] = useState(false);
+  const [progresoVideo, setProgresoVideo] = useState(0);
+  const [errorVideo, setErrorVideo] = useState("");
+  const videoBlobUrlRef = useRef<string | null>(null);
 
   // Genera la tarjeta apenas se abre el modal (sin espera), y la vuelve a
   // generar cuando el usuario cambia el título/comentario, pero con un
@@ -70,8 +83,33 @@ export function CompartirRecorridoModal({
   useEffect(() => {
     return () => {
       if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
+      if (videoBlobUrlRef.current) URL.revokeObjectURL(videoBlobUrlRef.current);
     };
   }, []);
+
+  async function generarVideo() {
+    if (videoBlob || generandoVideo) return;
+    setGenerandoVideo(true);
+    setErrorVideo("");
+    setProgresoVideo(0);
+    try {
+      const nuevoBlob = await generarVideoRecorrido(datos, { onProgreso: setProgresoVideo });
+      if (videoBlobUrlRef.current) URL.revokeObjectURL(videoBlobUrlRef.current);
+      const url = URL.createObjectURL(nuevoBlob);
+      videoBlobUrlRef.current = url;
+      setVideoBlob(nuevoBlob);
+      setVideoUrl(url);
+    } catch {
+      setErrorVideo("No se pudo generar el video en este navegador. Probá desde el celular.");
+    } finally {
+      setGenerandoVideo(false);
+    }
+  }
+
+  function elegirTab(nuevoTab: Tab) {
+    setTab(nuevoTab);
+    if (nuevoTab === "video" && !videoBlob && !generandoVideo) generarVideo();
+  }
 
   async function publicarEnPost() {
     if (!token || !blob) return;
@@ -98,9 +136,12 @@ export function CompartirRecorridoModal({
   }
 
   async function compartirEnRedes() {
-    if (!blob) return;
+    const esVideo = tab === "video";
+    const blobActivo = esVideo ? videoBlob : blob;
+    if (!blobActivo) return;
     setError("");
-    const archivo = new File([blob], "recorrido-legion-roller.png", { type: "image/png" });
+    const nombreArchivo = esVideo ? "recorrido-legion-roller.webm" : "recorrido-legion-roller.png";
+    const archivo = new File([blobActivo], nombreArchivo, { type: esVideo ? "video/webm" : "image/png" });
     const textoCompartir = [titulo.trim(), comentario.trim()].filter(Boolean).join("\n");
 
     try {
@@ -117,10 +158,10 @@ export function CompartirRecorridoModal({
     }
 
     // Si no hay soporte para compartir archivos (navegador de escritorio, etc.),
-    // descargamos la imagen para que el usuario la comparta a mano.
+    // descargamos el archivo para que el usuario lo comparta a mano.
     const enlace = document.createElement("a");
-    enlace.href = URL.createObjectURL(blob);
-    enlace.download = "recorrido-legion-roller.png";
+    enlace.href = URL.createObjectURL(blobActivo);
+    enlace.download = nombreArchivo;
     enlace.click();
     URL.revokeObjectURL(enlace.href);
   }
@@ -137,11 +178,58 @@ export function CompartirRecorridoModal({
       >
         <h2 className="text-sm font-semibold text-text-accent">Compartir recorrido</h2>
 
+        <div className="flex gap-1.5 rounded-app bg-surface-2 p-1">
+          <button
+            type="button"
+            onClick={() => elegirTab("imagen")}
+            className={`flex-1 rounded-app py-1.5 text-xs font-semibold ${
+              tab === "imagen" ? "bg-fill-primary text-on-primary" : "text-text-secondary"
+            }`}
+          >
+            Imagen
+          </button>
+          <button
+            type="button"
+            onClick={() => elegirTab("video")}
+            className={`flex-1 rounded-app py-1.5 text-xs font-semibold ${
+              tab === "video" ? "bg-fill-primary text-on-primary" : "text-text-secondary"
+            }`}
+          >
+            Video
+          </button>
+        </div>
+
         <div className="flex items-center justify-center overflow-hidden rounded-app bg-surface-2" style={{ height: 320 }}>
-          {!previewUrl && <p className="text-xs text-text-secondary">Generando tarjeta...</p>}
-          {previewUrl && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={previewUrl} alt="Vista previa del recorrido" className="h-full w-full object-contain" />
+          {tab === "imagen" && (
+            <>
+              {!previewUrl && <p className="text-xs text-text-secondary">Generando tarjeta...</p>}
+              {previewUrl && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={previewUrl} alt="Vista previa del recorrido" className="h-full w-full object-contain" />
+              )}
+            </>
+          )}
+          {tab === "video" && (
+            <>
+              {generandoVideo && (
+                <p className="px-6 text-center text-xs text-text-secondary">
+                  Generando video... {Math.round(progresoVideo * 100)}%
+                </p>
+              )}
+              {!generandoVideo && errorVideo && (
+                <p className="px-6 text-center text-xs text-fill-warning">{errorVideo}</p>
+              )}
+              {!generandoVideo && !errorVideo && videoUrl && (
+                <video
+                  src={videoUrl}
+                  className="h-full w-full object-contain"
+                  autoPlay
+                  loop
+                  muted
+                  playsInline
+                />
+              )}
+            </>
           )}
         </div>
 
@@ -168,18 +256,20 @@ export function CompartirRecorridoModal({
 
         {error && <p className="text-xs text-fill-warning">{error}</p>}
 
+        {tab === "imagen" && (
+          <button
+            type="button"
+            disabled={cargandoInicial || estado === "publicando" || !blob}
+            onClick={publicarEnPost}
+            className="btn-hero flex items-center justify-center gap-1.5 rounded-app px-4 py-2 text-sm disabled:opacity-50"
+          >
+            <IconUpload size={16} />
+            {estado === "publicando" ? "Publicando..." : "Publicar en Post"}
+          </button>
+        )}
         <button
           type="button"
-          disabled={cargandoInicial || estado === "publicando" || !blob}
-          onClick={publicarEnPost}
-          className="btn-hero flex items-center justify-center gap-1.5 rounded-app px-4 py-2 text-sm disabled:opacity-50"
-        >
-          <IconUpload size={16} />
-          {estado === "publicando" ? "Publicando..." : "Publicar en Post"}
-        </button>
-        <button
-          type="button"
-          disabled={cargandoInicial || !blob}
+          disabled={tab === "imagen" ? cargandoInicial || !blob : generandoVideo || !videoBlob}
           onClick={compartirEnRedes}
           className="flex items-center justify-center gap-1.5 rounded-app border border-border-accent px-4 py-2 text-sm text-text-accent disabled:opacity-50"
         >
