@@ -392,7 +392,7 @@ function construirSvg(
 // dibujar tiles directamente como imágenes cross-origin sin ese paso.
 export async function generarTarjetaRecorrido(datos: DatosTarjetaRecorrido): Promise<Blob> {
   const [logoDataUrl, fondoDataUrl, mapa] = await Promise.all([
-    cargarImagenComoDataUrl("/logo-legion-roller-mini.png"),
+    cargarImagenComoDataUrl("/logo-legion-roller.png"),
     cargarImagenComoDataUrl("/fondo-mis-rutas.jpg"),
     generarMapaReal(datos.puntos),
   ]);
@@ -528,7 +528,7 @@ export async function generarVideoRecorrido(
   }
 
   const [logoDataUrl, fondoDataUrl, mapa] = await Promise.all([
-    cargarImagenComoDataUrl("/logo-legion-roller-mini.png"),
+    cargarImagenComoDataUrl("/logo-legion-roller.png"),
     cargarImagenComoDataUrl("/fondo-mis-rutas.jpg"),
     generarMapaReal(datos.puntos),
   ]);
