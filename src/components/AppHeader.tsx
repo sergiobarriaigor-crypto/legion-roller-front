@@ -319,7 +319,13 @@ export function AppHeader() {
     if (!rodadaProxima) return;
     setMostrarLista(false);
     if (rodadaProxima.puntoLat !== null && rodadaProxima.puntoLon !== null) {
-      router.push(`/mapa?lat=${rodadaProxima.puntoLat}&lon=${rodadaProxima.puntoLon}`);
+      // `t` cambia en cada toque (aunque sea la misma rodada, con el mismo
+      // lat/lon de siempre) para que MapaView.tsx detecte que hay que volver
+      // a centrar la cámara — si no, tocar el aviso una segunda vez no hacía
+      // nada porque la URL quedaba idéntica a la anterior.
+      router.push(
+        `/mapa?lat=${rodadaProxima.puntoLat}&lon=${rodadaProxima.puntoLon}&t=${Date.now()}`,
+      );
     } else {
       router.push("/mapa");
     }

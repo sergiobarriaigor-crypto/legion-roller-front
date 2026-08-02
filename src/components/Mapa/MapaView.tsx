@@ -379,10 +379,15 @@ export function MapaView() {
   // Deep-link desde la campana ("tu rodada empieza pronto"): /mapa?lat=..&lon=..
   // centra la cámara ahí (ver `centro`/`zoomInicial` más abajo para el primer
   // ingreso, y el efecto de flyTo más abajo para cuando ya se estaba en el
-  // mapa y se vuelve a tocar el aviso).
+  // mapa y se vuelve a tocar el aviso). `t` es un valor que cambia en cada
+  // toque de la campana (ver AppHeader.tsx) — sin él, tocar el mismo aviso
+  // dos veces seguidas no volvía a centrar la cámara, porque la URL quedaba
+  // exactamente igual a la anterior (mismo lat/lon) y no había nada que
+  // detectar como "cambio".
   const searchParams = useSearchParams();
   const latQueryRaw = searchParams.get("lat");
   const lonQueryRaw = searchParams.get("lon");
+  const tQuery = searchParams.get("t");
   const latQuery = latQueryRaw !== null ? Number(latQueryRaw) : null;
   const lonQuery = lonQueryRaw !== null ? Number(lonQueryRaw) : null;
   const puntoQueryValido =
@@ -1183,13 +1188,13 @@ export function MapaView() {
   // pise el seguimiento automático si hay un modo activo en otra pestaña.
   useEffect(() => {
     if (!puntoQueryValido || !mapRef.current) return;
-    const clave = `${latQuery},${lonQuery}`;
+    const clave = `${latQuery},${lonQuery},${tQuery ?? ""}`;
     if (puntoQueryCentradoRef.current === clave) return;
     puntoQueryCentradoRef.current = clave;
     mapRef.current.flyTo([latQuery as number, lonQuery as number], ZOOM_CENTRADO_AUTOMATICO);
     marcarSiguiendo(false);
     exploracionManualActiva = true;
-  }, [latQuery, lonQuery, puntoQueryValido]);
+  }, [latQuery, lonQuery, puntoQueryValido, tQuery]);
 
   // "Estoy en Ruta" solo se ofrece cuando hay una rodada confirmada ("Voy") y
   // en su ventana horaria — es el único caso donde ese modo tiene sentido
