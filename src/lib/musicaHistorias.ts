@@ -2,12 +2,12 @@
 // como archivos estáticos en /public/musica (no contenido subido por el
 // usuario, por eso no pasan por /uploads). Ver public/musica/README.md para
 // cómo agregar pistas nuevas.
-export type GeneroMusica = "fiesta" | "rock" | "techno" | "romantica" | "cumbia";
+export type GeneroMusica = "fiesta" | "rock" | "dance" | "romantica" | "cumbia";
 
 export const GENEROS_MUSICA: { id: GeneroMusica; nombre: string }[] = [
   { id: "fiesta", nombre: "Fiesta" },
   { id: "rock", nombre: "Rock" },
-  { id: "techno", nombre: "Techno" },
+  { id: "dance", nombre: "Dance" },
   { id: "romantica", nombre: "Románticas" },
   { id: "cumbia", nombre: "Cumbia" },
 ];
@@ -33,13 +33,13 @@ export const CANCIONES_HISTORIA: CancionHistoria[] = [
   { id: "rock-09", nombre: "Rock Fun", genero: "rock", archivo: "/musica/rock/09-rock-fun.mp3" },
   { id: "rock-10", nombre: "Rock Anthem", genero: "rock", archivo: "/musica/rock/10-rock-anthem.mp3" },
 
-  { id: "techno-01", nombre: "Summer Dance Party", genero: "techno", archivo: "/musica/techno/01-summer-dance-party.mp3" },
-  { id: "techno-02", nombre: "Festival Party", genero: "techno", archivo: "/musica/techno/02-festival-party.mp3" },
-  { id: "techno-03", nombre: "Club Party", genero: "techno", archivo: "/musica/techno/03-club-party.mp3" },
-  { id: "techno-04", nombre: "Party", genero: "techno", archivo: "/musica/techno/04-party.mp3" },
-  { id: "techno-05", nombre: "Dance Party", genero: "techno", archivo: "/musica/techno/05-dance-party.mp3" },
-  { id: "techno-06", nombre: "Rave House Techno", genero: "techno", archivo: "/musica/techno/06-rave-house-techno.mp3" },
-  { id: "techno-07", nombre: "Dance Night", genero: "techno", archivo: "/musica/techno/07-dance-night.mp3" },
+  { id: "dance-01", nombre: "Summer Dance Party", genero: "dance", archivo: "/musica/dance/01-summer-dance-party.mp3" },
+  { id: "dance-02", nombre: "Festival Party", genero: "dance", archivo: "/musica/dance/02-festival-party.mp3" },
+  { id: "dance-03", nombre: "Club Party", genero: "dance", archivo: "/musica/dance/03-club-party.mp3" },
+  { id: "dance-04", nombre: "Party", genero: "dance", archivo: "/musica/dance/04-party.mp3" },
+  { id: "dance-05", nombre: "Dance Party", genero: "dance", archivo: "/musica/dance/05-dance-party.mp3" },
+  { id: "dance-06", nombre: "Rave House Techno", genero: "dance", archivo: "/musica/dance/06-rave-house-techno.mp3" },
+  { id: "dance-07", nombre: "Dance Night", genero: "dance", archivo: "/musica/dance/07-dance-night.mp3" },
 
   { id: "fiesta-01", nombre: "Country Happy", genero: "fiesta", archivo: "/musica/fiesta/01-country-happy.mp3" },
   { id: "fiesta-02", nombre: "Zumba Fiesta", genero: "fiesta", archivo: "/musica/fiesta/02-zumba-fiesta.mp3" },

@@ -12,7 +12,7 @@ contenido de usuarios, es música que la app misma ofrece).
 3. Copiar cada archivo a la subcarpeta de su género:
    - `fiesta/`
    - `rock/`
-   - `techno/`
+   - `dance/`
    - `romantica/`
    - `cumbia/`
 4. Agregar una entrada por cada pista en
