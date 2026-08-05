@@ -1,4 +1,4 @@
-import { apiGet, apiPost } from "./api";
+import { apiGet, apiPatch, apiPost } from "./api";
 
 // Mismas 3 categorías que puede crear cualquier miembro (no solo el Admin) —
 // "rodada"/"evento" también aparecen en el calendario, pero esos vienen del
@@ -69,6 +69,27 @@ export interface CrearActividadInput {
   invitadosIds: number[];
 }
 
+// Igual a CrearActividadInput pero todo opcional — el formulario de edición
+// solo reenvía lo que el usuario cambió.
+export type ActualizarActividadInput = Partial<CrearActividadInput>;
+
+export interface ActividadDetalle {
+  id: number;
+  categoria: string;
+  titulo: string;
+  descripcion: string | null;
+  fecha: string;
+  hora: string | null;
+  puntoEncuentro: string | null;
+  puntoLat: number | null;
+  puntoLon: number | null;
+  fotoUrl: string | null;
+  musicaId: string | null;
+  minutosAvisoCreador: number | null;
+  cancelada: boolean;
+  invitadosIds: number[];
+}
+
 export function listarMesCalendario(
   anio: number,
   mes: number,
@@ -95,4 +116,19 @@ export function responderInvitacion(
 
 export function cancelarActividad(actividadId: number, token: string | null) {
   return apiPost(`/calendario/actividades/${actividadId}/cancelar`, {}, token);
+}
+
+export function obtenerActividad(
+  actividadId: number,
+  token: string | null,
+): Promise<ActividadDetalle> {
+  return apiGet<ActividadDetalle>(`/calendario/actividades/${actividadId}`, token);
+}
+
+export function editarActividad(
+  actividadId: number,
+  datos: ActualizarActividadInput,
+  token: string | null,
+) {
+  return apiPatch(`/calendario/actividades/${actividadId}`, datos, token);
 }

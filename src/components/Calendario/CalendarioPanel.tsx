@@ -5,6 +5,7 @@ import {
   IconCake,
   IconChevronLeft,
   IconChevronRight,
+  IconDotsVertical,
   IconMapPin,
   IconPlus,
   IconX,
@@ -21,6 +22,7 @@ import {
 } from "@/lib/calendario";
 import { Avatar } from "@/components/Avatar";
 import { CrearActividadModal } from "./CrearActividadModal";
+import { EditarActividadModal } from "./EditarActividadModal";
 
 const NOMBRES_MES = [
   "enero", "febrero", "marzo", "abril", "mayo", "junio",
@@ -52,6 +54,8 @@ export function CalendarioPanel({
   const [items, setItems] = useState<ItemCalendario[]>([]);
   const [pendientes, setPendientes] = useState<InvitacionPendiente[]>([]);
   const [mostrarCrear, setMostrarCrear] = useState(false);
+  const [menuAbiertoId, setMenuAbiertoId] = useState<number | null>(null);
+  const [editandoId, setEditandoId] = useState<number | null>(null);
   const [cargando, setCargando] = useState(true);
 
   function recargar() {
@@ -265,14 +269,53 @@ export function CalendarioPanel({
             ) : (
               <div
                 key={`${it.origen}-${it.id}`}
-                className="rounded-app border-l-4 bg-surface-1 p-3"
+                className="relative rounded-app border-l-4 bg-surface-1 p-3"
                 style={{
                   borderColor: it.cancelada ? "#8a8177" : COLOR_CATEGORIA[it.categoria],
                   opacity: it.cancelada ? 0.6 : 1,
                 }}
               >
+                {it.origen === "actividad" && it.esCreador && !it.cancelada && (
+                  <div className="absolute right-2 top-2">
+                    <button
+                      type="button"
+                      onClick={() => setMenuAbiertoId(menuAbiertoId === it.id ? null : it.id)}
+                      aria-label="Más opciones"
+                      className="flex h-6 w-6 items-center justify-center text-text-secondary"
+                    >
+                      <IconDotsVertical size={16} />
+                    </button>
+                    {menuAbiertoId === it.id && (
+                      <>
+                        <div className="fixed inset-0 z-40" onClick={() => setMenuAbiertoId(null)} />
+                        <div className="absolute right-0 top-7 z-50 flex w-36 flex-col overflow-hidden rounded-app border border-border bg-surface-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setMenuAbiertoId(null);
+                              setEditandoId(it.id);
+                            }}
+                            className="px-3 py-2 text-left text-xs text-text-primary active:bg-surface-1"
+                          >
+                            Editar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setMenuAbiertoId(null);
+                              cancelar(it.id);
+                            }}
+                            className="px-3 py-2 text-left text-xs text-fill-warning active:bg-surface-1"
+                          >
+                            Cancelar actividad
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
                 <p
-                  className={`text-sm font-medium text-text-primary ${it.cancelada ? "line-through" : ""}`}
+                  className={`pr-6 text-sm font-medium text-text-primary ${it.cancelada ? "line-through" : ""}`}
                 >
                   {it.titulo}
                 </p>
@@ -292,15 +335,6 @@ export function CalendarioPanel({
                     {it.puntoEncuentro}
                   </p>
                 )}
-                {it.origen === "actividad" && it.esCreador && !it.cancelada && (
-                  <button
-                    type="button"
-                    onClick={() => cancelar(it.id)}
-                    className="mt-2 text-xs text-fill-warning underline"
-                  >
-                    Cancelar actividad
-                  </button>
-                )}
               </div>
             ),
           )}
@@ -317,6 +351,19 @@ export function CalendarioPanel({
             recargar();
           }}
           onCerrar={() => setMostrarCrear(false)}
+        />
+      )}
+
+      {editandoId !== null && (
+        <EditarActividadModal
+          actividadId={editandoId}
+          propioId={propioId}
+          token={token}
+          onGuardada={() => {
+            setEditandoId(null);
+            recargar();
+          }}
+          onCerrar={() => setEditandoId(null)}
         />
       )}
     </div>
