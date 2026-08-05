@@ -35,6 +35,7 @@ export interface ItemCalendario {
   id: number;
   categoria: string;
   titulo: string;
+  descripcion: string | null;
   fecha: string;
   hora: string | null;
   puntoEncuentro: string | null;
@@ -56,6 +57,7 @@ export interface InvitacionPendiente {
 export interface CrearActividadInput {
   categoria: CategoriaActividad;
   titulo: string;
+  descripcion?: string;
   fecha: string;
   hora?: string;
   puntoEncuentro?: string;

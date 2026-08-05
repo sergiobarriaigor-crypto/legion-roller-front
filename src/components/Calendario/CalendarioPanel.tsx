@@ -209,7 +209,9 @@ export function CalendarioPanel({
                 }`}
               >
                 <span
-                  className={`text-xs ${esHoy ? "font-bold text-text-accent" : "text-text-primary"}`}
+                  className={`flex h-5 w-5 shrink-0 items-center justify-center self-start rounded-full text-xs ${
+                    esHoy ? "bg-fill-primary font-bold text-on-primary" : "bg-surface-2 text-text-primary"
+                  }`}
                 >
                   {Number(fecha.slice(-2))}
                 </span>
@@ -279,6 +281,11 @@ export function CalendarioPanel({
                   {it.hora ? ` · ${it.hora}` : ""}
                   {it.cancelada ? " · Cancelada" : ""}
                 </p>
+                {it.descripcion && (
+                  <p className="mt-1 whitespace-pre-wrap text-xs text-text-secondary">
+                    {it.descripcion}
+                  </p>
+                )}
                 {it.puntoEncuentro && (
                   <p className="mt-1 flex items-center gap-1 text-xs text-text-secondary">
                     <IconMapPin size={13} />

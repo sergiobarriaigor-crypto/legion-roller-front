@@ -28,6 +28,7 @@ export function CrearActividadModal({
 }) {
   const [categoria, setCategoria] = useState<CategoriaActividad>("patinada_libre");
   const [titulo, setTitulo] = useState("");
+  const [descripcion, setDescripcion] = useState("");
   const [fecha, setFecha] = useState(fechaInicial);
   const [hora, setHora] = useState("");
   const [puntoEncuentro, setPuntoEncuentro] = useState("");
@@ -51,6 +52,7 @@ export function CrearActividadModal({
         {
           categoria,
           titulo: titulo.trim(),
+          descripcion: descripcion.trim() || undefined,
           fecha,
           hora: hora || undefined,
           puntoEncuentro: puntoEncuentro.trim() || undefined,
@@ -108,19 +110,35 @@ export function CrearActividadModal({
           className="rounded-app border border-border bg-surface-2 px-3 py-2 text-sm text-text-primary outline-none"
         />
 
-        <div className="flex gap-2">
-          <input
-            type="date"
-            value={fecha}
-            onChange={(e) => setFecha(e.target.value)}
-            className="w-1/2 rounded-app border border-border bg-surface-2 px-3 py-2 text-sm text-text-primary outline-none"
-          />
-          <input
-            type="time"
-            value={hora}
-            onChange={(e) => setHora(e.target.value)}
-            className="w-1/2 rounded-app border border-border bg-surface-2 px-3 py-2 text-sm text-text-primary outline-none"
-          />
+        <textarea
+          placeholder="Descripción (opcional)"
+          value={descripcion}
+          maxLength={500}
+          rows={1}
+          onChange={(e) => {
+            setDescripcion(e.target.value);
+            e.target.style.height = "auto";
+            e.target.style.height = `${e.target.scrollHeight}px`;
+          }}
+          className="resize-none overflow-hidden rounded-app border border-border bg-surface-2 px-3 py-2 text-sm text-text-primary outline-none"
+        />
+
+        <div className="flex flex-col gap-1">
+          <p className="text-xs text-text-secondary">Fecha y hora de citación</p>
+          <div className="flex gap-2">
+            <input
+              type="date"
+              value={fecha}
+              onChange={(e) => setFecha(e.target.value)}
+              className="w-1/2 rounded-app border border-border bg-surface-2 px-3 py-2 text-sm text-text-primary outline-none"
+            />
+            <input
+              type="time"
+              value={hora}
+              onChange={(e) => setHora(e.target.value)}
+              className="w-1/2 rounded-app border border-border bg-surface-2 px-3 py-2 text-sm text-text-primary outline-none"
+            />
+          </div>
         </div>
 
         <input
@@ -184,25 +202,29 @@ export function CrearActividadModal({
       </div>
 
       {mostrarInvitados && (
-        <SelectorInvitadosActividad
-          propioId={propioId}
-          token={token}
-          seleccionados={invitadosIds}
-          onCambiar={setInvitadosIds}
-          onCerrar={() => setMostrarInvitados(false)}
-        />
+        <div onClick={(e) => e.stopPropagation()}>
+          <SelectorInvitadosActividad
+            propioId={propioId}
+            token={token}
+            seleccionados={invitadosIds}
+            onCambiar={setInvitadosIds}
+            onCerrar={() => setMostrarInvitados(false)}
+          />
+        </div>
       )}
 
       {mostrarApoyoVisual && (
-        <ApoyoVisualActividad
-          token={token}
-          onListo={(url, musica) => {
-            setFotoUrl(url);
-            setMusicaId(musica);
-            setMostrarApoyoVisual(false);
-          }}
-          onCerrar={() => setMostrarApoyoVisual(false)}
-        />
+        <div onClick={(e) => e.stopPropagation()}>
+          <ApoyoVisualActividad
+            token={token}
+            onListo={(url, musica) => {
+              setFotoUrl(url);
+              setMusicaId(musica);
+              setMostrarApoyoVisual(false);
+            }}
+            onCerrar={() => setMostrarApoyoVisual(false)}
+          />
+        </div>
       )}
     </div>
   );
