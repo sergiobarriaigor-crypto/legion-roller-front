@@ -1,4 +1,4 @@
-import { apiGet, apiPatch, apiPost } from "./api";
+import { apiDelete, apiGet, apiPatch, apiPost } from "./api";
 
 // Categorías que puede crear cualquier miembro (no solo el Admin) —
 // "rodada"/"evento" también aparecen en el calendario, pero esos vienen del
@@ -48,6 +48,7 @@ export interface ItemCalendario {
   puntoEncuentro: string | null;
   fotoUrl: string | null;
   cancelada: boolean;
+  motivoCancelacion: string | null;
   esCreador: boolean;
 }
 
@@ -122,8 +123,16 @@ export function responderInvitacion(
   return apiPost(`/calendario/actividades/${actividadId}/invitacion`, { estado }, token);
 }
 
-export function cancelarActividad(actividadId: number, token: string | null) {
-  return apiPost(`/calendario/actividades/${actividadId}/cancelar`, {}, token);
+export function cancelarActividad(
+  actividadId: number,
+  motivo: string | undefined,
+  token: string | null,
+) {
+  return apiPost(`/calendario/actividades/${actividadId}/cancelar`, { motivo }, token);
+}
+
+export function eliminarActividad(actividadId: number, token: string | null) {
+  return apiDelete(`/calendario/actividades/${actividadId}`, token);
 }
 
 export function obtenerActividad(

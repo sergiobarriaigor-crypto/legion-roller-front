@@ -15,6 +15,7 @@ import {
   misInvitacionesPendientes,
   responderInvitacion,
   cancelarActividad,
+  eliminarActividad,
   ETIQUETA_CATEGORIA,
   COLOR_CATEGORIA,
   type ItemCalendario,
@@ -57,6 +58,11 @@ export function CalendarioPanel({
   const [mostrarCrear, setMostrarCrear] = useState(false);
   const [menuAbiertoId, setMenuAbiertoId] = useState<number | null>(null);
   const [editandoId, setEditandoId] = useState<number | null>(null);
+  const [cancelandoId, setCancelandoId] = useState<number | null>(null);
+  const [motivoCancelar, setMotivoCancelar] = useState("");
+  const [cancelando, setCancelando] = useState(false);
+  const [eliminandoId, setEliminandoId] = useState<number | null>(null);
+  const [eliminando, setEliminando] = useState(false);
   const [fotoAmpliada, setFotoAmpliada] = useState<string | null>(null);
   const [cargando, setCargando] = useState(true);
 
@@ -98,10 +104,29 @@ export function CalendarioPanel({
     recargar();
   }
 
-  async function cancelar(actividadId: number) {
-    if (!token) return;
-    await cancelarActividad(actividadId, token).catch(() => {});
-    recargar();
+  async function confirmarCancelar() {
+    if (!token || cancelandoId === null) return;
+    setCancelando(true);
+    try {
+      await cancelarActividad(cancelandoId, motivoCancelar.trim() || undefined, token);
+      setCancelandoId(null);
+      setMotivoCancelar("");
+      recargar();
+    } finally {
+      setCancelando(false);
+    }
+  }
+
+  async function confirmarEliminar() {
+    if (!token || eliminandoId === null) return;
+    setEliminando(true);
+    try {
+      await eliminarActividad(eliminandoId, token);
+      setEliminandoId(null);
+      recargar();
+    } finally {
+      setEliminando(false);
+    }
   }
 
   const primerDiaSemana = new Date(anio, mes - 1, 1).getDay();
@@ -297,7 +322,7 @@ export function CalendarioPanel({
                   opacity: it.cancelada ? 0.6 : 1,
                 }}
               >
-                {it.origen === "actividad" && it.esCreador && !it.cancelada && (
+                {it.origen === "actividad" && it.esCreador && (
                   <div className="absolute right-2 top-2">
                     <button
                       type="button"
@@ -311,25 +336,39 @@ export function CalendarioPanel({
                       <>
                         <div className="fixed inset-0 z-40" onClick={() => setMenuAbiertoId(null)} />
                         <div className="absolute right-0 top-7 z-50 flex w-36 flex-col overflow-hidden rounded-app border border-border bg-surface-2">
+                          {!it.cancelada && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setMenuAbiertoId(null);
+                                  setEditandoId(it.id);
+                                }}
+                                className="px-3 py-2 text-left text-xs text-text-primary active:bg-surface-1"
+                              >
+                                Editar
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setMenuAbiertoId(null);
+                                  setCancelandoId(it.id);
+                                }}
+                                className="px-3 py-2 text-left text-xs text-fill-warning active:bg-surface-1"
+                              >
+                                Cancelar actividad
+                              </button>
+                            </>
+                          )}
                           <button
                             type="button"
                             onClick={() => {
                               setMenuAbiertoId(null);
-                              setEditandoId(it.id);
+                              setEliminandoId(it.id);
                             }}
-                            className="px-3 py-2 text-left text-xs text-text-primary active:bg-surface-1"
+                            className="px-3 py-2 text-left text-xs text-red-500 active:bg-surface-1"
                           >
-                            Editar
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setMenuAbiertoId(null);
-                              cancelar(it.id);
-                            }}
-                            className="px-3 py-2 text-left text-xs text-fill-warning active:bg-surface-1"
-                          >
-                            Cancelar actividad
+                            Eliminar
                           </button>
                         </div>
                       </>
@@ -361,6 +400,11 @@ export function CalendarioPanel({
                   {it.hora ? ` · ${it.hora}` : ""}
                   {it.cancelada ? " · Cancelada" : ""}
                 </p>
+                {it.cancelada && it.motivoCancelacion && (
+                  <p className="mt-1 text-xs text-text-secondary">
+                    Motivo: {it.motivoCancelacion}
+                  </p>
+                )}
                 {it.descripcion && (
                   <p className="mt-1 whitespace-pre-wrap text-xs text-text-secondary">
                     {it.descripcion}
@@ -406,6 +450,76 @@ export function CalendarioPanel({
 
       {fotoAmpliada && (
         <VisorFotoMensaje url={fotoAmpliada} onCerrar={() => setFotoAmpliada(null)} />
+      )}
+
+      {cancelandoId !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-6">
+          <div className="card flex w-full max-w-xs flex-col gap-3 p-5">
+            <h2 className="text-sm font-semibold text-text-accent">Cancelar actividad</h2>
+            <p className="text-xs text-text-secondary">
+              Los invitados recibirán un aviso de que se canceló. Podés contarles el motivo
+              (opcional).
+            </p>
+            <textarea
+              placeholder="Motivo (opcional)"
+              value={motivoCancelar}
+              maxLength={200}
+              rows={2}
+              onChange={(e) => setMotivoCancelar(e.target.value)}
+              className="resize-none rounded-app border border-border bg-surface-2 px-3 py-2 text-sm text-text-primary outline-none"
+            />
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                disabled={cancelando}
+                onClick={confirmarCancelar}
+                className="rounded-app bg-fill-warning px-4 py-2 text-sm text-on-primary disabled:opacity-50"
+              >
+                {cancelando ? "Cancelando..." : "Sí, cancelar"}
+              </button>
+              <button
+                type="button"
+                disabled={cancelando}
+                onClick={() => {
+                  setCancelandoId(null);
+                  setMotivoCancelar("");
+                }}
+                className="text-xs text-text-secondary underline"
+              >
+                Volver
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {eliminandoId !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-6">
+          <div className="card flex w-full max-w-xs flex-col gap-3 p-5">
+            <h2 className="text-sm font-semibold text-text-accent">Eliminar actividad</h2>
+            <p className="text-xs text-text-secondary">
+              ¿Seguro que quieres eliminar esta actividad? Esta acción no se puede deshacer.
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                disabled={eliminando}
+                onClick={confirmarEliminar}
+                className="rounded-app bg-red-700 px-4 py-2 text-sm text-white disabled:opacity-50"
+              >
+                {eliminando ? "Eliminando..." : "Sí, eliminar"}
+              </button>
+              <button
+                type="button"
+                disabled={eliminando}
+                onClick={() => setEliminandoId(null)}
+                className="text-xs text-text-secondary underline"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
