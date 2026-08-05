@@ -193,30 +193,46 @@ export function CalendarioPanel({
             const diaItems = itemsPorDia.get(fecha) ?? [];
             const esHoy = fecha === hoyStr();
             const esSeleccionado = fecha === diaSeleccionado;
+            const visibles = diaItems.slice(0, 2);
+            const restantes = diaItems.length - visibles.length;
             return (
               <button
                 key={fecha}
                 type="button"
                 onClick={() => setDiaSeleccionado(fecha)}
-                className={`flex flex-col items-center gap-0.5 rounded-app py-1.5 ${
+                style={{
+                  minHeight: "56px",
+                  border: esHoy ? "1px solid var(--border-accent)" : "1px solid transparent",
+                }}
+                className={`flex flex-col items-stretch gap-0.5 rounded-app p-1 text-left ${
                   esSeleccionado ? "bg-bg-accent" : ""
                 }`}
               >
                 <span
-                  className={`text-xs ${esHoy ? "font-bold text-text-accent" : "text-text-primary"}`}
+                  className={`text-[11px] ${esHoy ? "font-bold text-text-accent" : "text-text-primary"}`}
                 >
                   {Number(fecha.slice(-2))}
                 </span>
-                <div className="flex gap-0.5">
-                  {diaItems.slice(0, 3).map((it, idx) => (
-                    <span
-                      key={idx}
-                      className="h-1.5 w-1.5 rounded-full"
-                      style={{
-                        backgroundColor: it.cancelada ? "#8a8177" : COLOR_CATEGORIA[it.categoria],
-                      }}
-                    />
-                  ))}
+                <div className="flex flex-col gap-0.5">
+                  {visibles.map((it, idx) => {
+                    const color = it.cancelada ? "#8a8177" : COLOR_CATEGORIA[it.categoria];
+                    const etiqueta =
+                      it.origen === "cumpleanos" ? it.titulo.replace("Cumpleaños de ", "") : it.titulo;
+                    return (
+                      <span
+                        key={idx}
+                        className={`truncate rounded-[3px] px-1 text-[9px] leading-[13px] ${
+                          it.cancelada ? "line-through" : ""
+                        }`}
+                        style={{ backgroundColor: `${color}33`, color }}
+                      >
+                        {etiqueta}
+                      </span>
+                    );
+                  })}
+                  {restantes > 0 && (
+                    <span className="text-[9px] text-text-secondary">+{restantes} más</span>
+                  )}
                 </div>
               </button>
             );

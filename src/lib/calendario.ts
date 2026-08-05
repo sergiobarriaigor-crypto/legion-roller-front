@@ -13,6 +13,7 @@ export const ETIQUETA_CATEGORIA: Record<string, string> = {
   reunion: "Reunión",
   patinada_libre: "Patinada libre",
   cumpleanos: "Cumpleaños",
+  feriado: "Feriado nacional",
 };
 
 // Un color fijo por categoría — igual en toda la app (puntos del calendario,
@@ -24,12 +25,13 @@ export const COLOR_CATEGORIA: Record<string, string> = {
   reunion: "#9b7fd4",
   patinada_libre: "#4a9de0",
   cumpleanos: "#e07fa8",
+  feriado: "#d9574a",
 };
 
 export const MINUTOS_AVISO_CREADOR_VALIDOS = [30, 60, 120] as const;
 
 export interface ItemCalendario {
-  origen: "publicacion" | "actividad" | "cumpleanos";
+  origen: "publicacion" | "actividad" | "cumpleanos" | "feriado";
   id: number;
   categoria: string;
   titulo: string;
