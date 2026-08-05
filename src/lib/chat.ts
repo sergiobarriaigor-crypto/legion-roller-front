@@ -155,6 +155,9 @@ export interface MiembroSimple {
   id: number;
   nombre: string;
   fotoUrl?: string | null;
+  // Ajuste: "legion" | "comunidad" | null — usado para agrupar visualmente
+  // el selector de invitados del calendario (ver SelectorInvitadosActividad).
+  categoria?: string | null;
 }
 
 // Notificación para la campana: alguien me compartió un post o una ficha de

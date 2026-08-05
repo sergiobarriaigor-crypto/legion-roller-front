@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { IconBell, IconBellPlus, IconMessageCircle2, IconMapPin } from "@tabler/icons-react";
+import { IconBell, IconBellPlus, IconMessageCircle2, IconMapPin, IconCalendar } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
 import { apiGet } from "@/lib/api";
 import { listarCompartidosSinLeer, type Conversaciones, type CompartidoSinLeer } from "@/lib/chat";
@@ -30,6 +30,7 @@ import {
   type RespuestaEmprendedorSinLeer,
 } from "@/lib/emprendedores";
 import { proximaRodada, type RodadaProxima } from "@/lib/publicaciones";
+import { misInvitacionesPendientes, ETIQUETA_CATEGORIA, type InvitacionPendiente } from "@/lib/calendario";
 import { tiempoTranscurrido } from "@/lib/tiempo";
 import { pushDisponible, estaSuscrito, suscribirPush } from "@/lib/push";
 import { SosButton } from "@/components/SosButton";
@@ -49,6 +50,7 @@ export function AppHeader() {
   const [respuestasSinLeerImpulsa, setRespuestasSinLeerImpulsa] = useState<RespuestaEmprendedorSinLeer[]>([]);
   const [compartidosSinLeer, setCompartidosSinLeer] = useState<CompartidoSinLeer[]>([]);
   const [rodadaProxima, setRodadaProxima] = useState<RodadaProxima | null>(null);
+  const [invitacionesActividad, setInvitacionesActividad] = useState<InvitacionPendiente[]>([]);
   const [mostrarLista, setMostrarLista] = useState(false);
   const [mencionAbierta, setMencionAbierta] = useState<Historia | null>(null);
   const [enviando, setEnviando] = useState(false);
@@ -235,6 +237,25 @@ export function AppHeader() {
     return () => clearInterval(intervalo);
   }, [token, sesion?.rol]);
 
+  // Invitaciones a patinadas libres/entrenamientos/reuniones que todavía no
+  // respondiste — mismo criterio "en vivo" que rodadaProxima (desaparece
+  // sola apenas aceptás o rechazás desde el calendario).
+  useEffect(() => {
+    if (!token || sesion?.rol === "visitante") return;
+
+    async function revisarInvitaciones() {
+      try {
+        setInvitacionesActividad(await misInvitacionesPendientes(token));
+      } catch {
+        // silencioso
+      }
+    }
+
+    revisarInvitaciones();
+    const intervalo = setInterval(revisarInvitaciones, 20000);
+    return () => clearInterval(intervalo);
+  }, [token, sesion?.rol]);
+
   // Al tocar la notificación: se marca leída y se abre directo la historia
   // (BarraHistorias.tsx lee estos parámetros y muestra el panel de
   // comentarios con el hilo, resaltando esta respuesta).
@@ -331,6 +352,14 @@ export function AppHeader() {
     }
   }
 
+  // Lleva a Perfil con el calendario ya abierto (perfil/page.tsx interpreta
+  // este mismo parámetro) — responder Aceptar/Rechazar se hace ahí mismo,
+  // no hace falta duplicar esos botones acá en la campana.
+  function irACalendario() {
+    setMostrarLista(false);
+    router.push("/perfil?calendario=1");
+  }
+
   async function responderMencion(aceptar: boolean) {
     if (!mencionAbierta || !token) return;
     setEnviando(true);
@@ -347,6 +376,7 @@ export function AppHeader() {
 
   const totalNotificaciones =
     (rodadaProxima ? 1 : 0) +
+    invitacionesActividad.length +
     mencionesPendientes.length +
     respuestasSinLeer.length +
     reaccionesAgrupadas.length +
@@ -450,6 +480,25 @@ export function AppHeader() {
                       </span>
                     </button>
                   )}
+                  {invitacionesActividad.map((inv) => (
+                    <button
+                      key={`invitacion-${inv.id}`}
+                      type="button"
+                      onClick={irACalendario}
+                      className="flex w-full items-start gap-2 rounded-app px-2 py-2 text-left text-sm text-text-primary hover:bg-bg-accent"
+                    >
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-bg-accent text-text-accent">
+                        <IconCalendar size={18} />
+                      </span>
+                      <span className="flex-1">
+                        {inv.creadorNombre} te invitó a <strong>{inv.titulo}</strong>
+                        <span className="block text-[11px] text-text-secondary">
+                          {ETIQUETA_CATEGORIA[inv.categoria]} · {inv.fecha}
+                          {inv.hora ? ` · ${inv.hora}` : ""} · Toca para responder
+                        </span>
+                      </span>
+                    </button>
+                  ))}
                   {mencionesPendientes.map((h) => (
                     <button
                       key={`mencion-${h.id}`}

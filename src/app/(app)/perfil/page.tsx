@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { IconCheck, IconTarget, IconLock, IconPlayerPlay, IconPhoto } from "@tabler/icons-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { IconCheck, IconTarget, IconLock, IconPlayerPlay, IconPhoto, IconCalendar } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
 import { apiGet, apiPatch, apiPut, apiDelete, ApiError } from "@/lib/api";
 import { CATALOGO_TECNICAS, HITOS_DISTANCIA_KM, formatearDuracion, type MiPerfil } from "@/lib/perfil";
@@ -11,6 +11,8 @@ import type { Post } from "@/lib/posts";
 import { ImageUploadCrop } from "@/components/ImageUploadCrop";
 import { GaleriaPerfil } from "@/components/Perfil/GaleriaPerfil";
 import { Avatar } from "@/components/Avatar";
+import { CalendarioPanel } from "@/components/Calendario/CalendarioPanel";
+import { listarMesCalendario, misInvitacionesPendientes } from "@/lib/calendario";
 import {
   tiempoTranscurrido,
   dentroDeFiltroFecha,
@@ -32,6 +34,7 @@ export default function PerfilPage() {
   const { sesion, logout } = useSession();
   const token = sesion?.token ?? null;
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   const [perfil, setPerfil] = useState<MiPerfil | null>(null);
   const [misPosts, setMisPosts] = useState<Post[]>([]);
@@ -54,6 +57,33 @@ export default function PerfilPage() {
     etiqueta: string;
     paso: 1 | 2;
   } | null>(null);
+
+  const [mostrarCalendario, setMostrarCalendario] = useState(false);
+  const [eventosHoyCalendario, setEventosHoyCalendario] = useState(0);
+
+  // Al tocar el aviso de una invitación en la campana (AppHeader.tsx navega
+  // acá con ?calendario=1), se abre el calendario directo.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (searchParams.get("calendario") === "1") setMostrarCalendario(true);
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (!token) return;
+    const hoy = new Date();
+    const hoyStr = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, "0")}-${String(
+      hoy.getDate(),
+    ).padStart(2, "0")}`;
+    Promise.all([
+      listarMesCalendario(hoy.getFullYear(), hoy.getMonth() + 1, token),
+      misInvitacionesPendientes(token),
+    ])
+      .then(([items, pendientes]) => {
+        const deHoy = items.filter((i) => i.fecha === hoyStr && !i.cancelada).length;
+        setEventosHoyCalendario(deHoy + pendientes.length);
+      })
+      .catch(() => {});
+  }, [token, mostrarCalendario]);
 
   async function cargar() {
     if (!token || !sesion?.id) return;
@@ -174,7 +204,20 @@ export default function PerfilPage() {
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="card -mx-4 flex flex-col items-center gap-3 px-3 py-5">
+      <div className="card relative -mx-4 flex flex-col items-center gap-3 px-3 py-5">
+        <button
+          type="button"
+          onClick={() => setMostrarCalendario(true)}
+          aria-label="Calendario"
+          className="absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-full border border-border-accent bg-bg-accent text-text-accent"
+        >
+          <IconCalendar size={18} />
+          {eventosHoyCalendario > 0 && (
+            <span className="absolute -right-1.5 -top-1.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-fill-primary px-1 text-[11px] font-medium leading-none text-on-primary">
+              {eventosHoyCalendario}
+            </span>
+          )}
+        </button>
         {perfil.fotoUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -599,6 +642,14 @@ export default function PerfilPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {mostrarCalendario && (
+        <CalendarioPanel
+          propioId={sesion?.id}
+          token={token}
+          onCerrar={() => setMostrarCalendario(false)}
+        />
       )}
     </div>
   );
