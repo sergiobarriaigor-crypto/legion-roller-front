@@ -182,18 +182,18 @@ export function CalendarioPanel({
           </button>
         </div>
 
-        <div className="mt-2 grid grid-cols-7 gap-1 text-center text-[11px] text-text-secondary">
+        <div className="mt-2 grid grid-cols-7 gap-1.5 text-center text-xs text-text-secondary">
           {NOMBRES_DIA.map((d, i) => (
             <span key={i}>{d}</span>
           ))}
         </div>
-        <div className="grid grid-cols-7 gap-1">
+        <div className="grid grid-cols-7 gap-1.5">
           {celdas.map((fecha, i) => {
             if (!fecha) return <div key={i} />;
             const diaItems = itemsPorDia.get(fecha) ?? [];
             const esHoy = fecha === hoyStr();
             const esSeleccionado = fecha === diaSeleccionado;
-            const visibles = diaItems.slice(0, 2);
+            const visibles = diaItems.slice(0, 3);
             const restantes = diaItems.length - visibles.length;
             return (
               <button
@@ -201,19 +201,19 @@ export function CalendarioPanel({
                 type="button"
                 onClick={() => setDiaSeleccionado(fecha)}
                 style={{
-                  minHeight: "56px",
+                  minHeight: "76px",
                   border: esHoy ? "1px solid var(--border-accent)" : "1px solid transparent",
                 }}
-                className={`flex flex-col items-stretch gap-0.5 rounded-app p-1 text-left ${
+                className={`flex flex-col items-stretch gap-1 rounded-app p-1.5 text-left ${
                   esSeleccionado ? "bg-bg-accent" : ""
                 }`}
               >
                 <span
-                  className={`text-[11px] ${esHoy ? "font-bold text-text-accent" : "text-text-primary"}`}
+                  className={`text-xs ${esHoy ? "font-bold text-text-accent" : "text-text-primary"}`}
                 >
                   {Number(fecha.slice(-2))}
                 </span>
-                <div className="flex flex-col gap-0.5">
+                <div className="flex flex-col gap-1">
                   {visibles.map((it, idx) => {
                     const color = it.cancelada ? "#8a8177" : COLOR_CATEGORIA[it.categoria];
                     const etiqueta =
@@ -221,7 +221,7 @@ export function CalendarioPanel({
                     return (
                       <span
                         key={idx}
-                        className={`truncate rounded-[3px] px-1 text-[9px] leading-[13px] ${
+                        className={`truncate rounded-[3px] px-1 text-[10px] leading-[14px] ${
                           it.cancelada ? "line-through" : ""
                         }`}
                         style={{ backgroundColor: `${color}33`, color }}
@@ -231,7 +231,7 @@ export function CalendarioPanel({
                     );
                   })}
                   {restantes > 0 && (
-                    <span className="text-[9px] text-text-secondary">+{restantes} más</span>
+                    <span className="text-[10px] text-text-secondary">+{restantes} más</span>
                   )}
                 </div>
               </button>
