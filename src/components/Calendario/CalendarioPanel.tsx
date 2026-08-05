@@ -21,6 +21,7 @@ import {
   type InvitacionPendiente,
 } from "@/lib/calendario";
 import { Avatar } from "@/components/Avatar";
+import { VisorFotoMensaje } from "@/components/Chat/VisorFotoMensaje";
 import { CrearActividadModal } from "./CrearActividadModal";
 import { EditarActividadModal } from "./EditarActividadModal";
 
@@ -56,6 +57,7 @@ export function CalendarioPanel({
   const [mostrarCrear, setMostrarCrear] = useState(false);
   const [menuAbiertoId, setMenuAbiertoId] = useState<number | null>(null);
   const [editandoId, setEditandoId] = useState<number | null>(null);
+  const [fotoAmpliada, setFotoAmpliada] = useState<string | null>(null);
   const [cargando, setCargando] = useState(true);
 
   function recargar() {
@@ -150,12 +152,19 @@ export function CalendarioPanel({
               >
                 <div className="flex gap-3">
                   {inv.fotoUrl && (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={inv.fotoUrl}
-                      alt=""
-                      className="h-14 w-14 shrink-0 rounded-app object-cover"
-                    />
+                    <button
+                      type="button"
+                      onClick={() => setFotoAmpliada(inv.fotoUrl)}
+                      aria-label="Ver foto en pantalla completa"
+                      className="shrink-0"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={inv.fotoUrl}
+                        alt=""
+                        className="h-14 w-14 rounded-app object-cover"
+                      />
+                    </button>
                   )}
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium text-text-primary">{inv.titulo}</p>
@@ -328,12 +337,19 @@ export function CalendarioPanel({
                   </div>
                 )}
                 {it.fotoUrl && (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={it.fotoUrl}
-                    alt=""
-                    className="mb-2 h-32 w-full rounded-app object-cover"
-                  />
+                  <button
+                    type="button"
+                    onClick={() => setFotoAmpliada(it.fotoUrl)}
+                    aria-label="Ver foto en pantalla completa"
+                    className="mb-2 block w-full"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={it.fotoUrl}
+                      alt=""
+                      className="h-32 w-full rounded-app object-cover"
+                    />
+                  </button>
                 )}
                 <p
                   className={`pr-6 text-sm font-medium text-text-primary ${it.cancelada ? "line-through" : ""}`}
@@ -386,6 +402,10 @@ export function CalendarioPanel({
           }}
           onCerrar={() => setEditandoId(null)}
         />
+      )}
+
+      {fotoAmpliada && (
+        <VisorFotoMensaje url={fotoAmpliada} onCerrar={() => setFotoAmpliada(null)} />
       )}
     </div>
   );
