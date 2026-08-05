@@ -1,9 +1,14 @@
 import { apiGet, apiPatch, apiPost } from "./api";
 
-// Mismas 3 categorías que puede crear cualquier miembro (no solo el Admin) —
+// Categorías que puede crear cualquier miembro (no solo el Admin) —
 // "rodada"/"evento" también aparecen en el calendario, pero esos vienen del
 // muro de Comunidad (Publicacion + RSVP), no se crean desde acá.
-export const CATEGORIAS_ACTIVIDAD = ["entrenamiento", "reunion", "patinada_libre"] as const;
+export const CATEGORIAS_ACTIVIDAD = [
+  "reunion",
+  "patinada_libre",
+  "entrenamiento",
+  "otros",
+] as const;
 export type CategoriaActividad = (typeof CATEGORIAS_ACTIVIDAD)[number];
 
 export const ETIQUETA_CATEGORIA: Record<string, string> = {
@@ -12,6 +17,7 @@ export const ETIQUETA_CATEGORIA: Record<string, string> = {
   entrenamiento: "Entrenamiento",
   reunion: "Reunión",
   patinada_libre: "Patinada libre",
+  otros: "Otros",
   cumpleanos: "Cumpleaños",
   feriado: "Feriado nacional",
 };
@@ -24,6 +30,7 @@ export const COLOR_CATEGORIA: Record<string, string> = {
   entrenamiento: "#5fae4e",
   reunion: "#9b7fd4",
   patinada_libre: "#4a9de0",
+  otros: "#8a95a5",
   cumpleanos: "#e07fa8",
   feriado: "#d9574a",
 };
@@ -60,14 +67,14 @@ export interface CrearActividadInput {
   titulo: string;
   descripcion?: string;
   fecha: string;
-  hora?: string;
+  hora: string;
   puntoEncuentro?: string;
   puntoLat?: number;
   puntoLon?: number;
   fotoUrl?: string;
   musicaId?: string;
-  minutosAvisoCreador?: number;
-  invitadosIds: number[];
+  minutosAvisoCreador: number;
+  invitadosIds?: number[];
 }
 
 // Igual a CrearActividadInput pero todo opcional — el formulario de edición

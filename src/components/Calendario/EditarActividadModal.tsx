@@ -64,7 +64,7 @@ export function EditarActividadModal({
   }, [actividadId, token]);
 
   async function guardar() {
-    if (!token || !titulo.trim() || !fecha || invitadosIds.length === 0) return;
+    if (!token || !titulo.trim() || !fecha || !hora || !minutosAvisoCreador) return;
     setGuardando(true);
     setError("");
     try {
@@ -75,11 +75,11 @@ export function EditarActividadModal({
           titulo: titulo.trim(),
           descripcion: descripcion.trim() || undefined,
           fecha,
-          hora: hora || undefined,
+          hora,
           puntoEncuentro: puntoEncuentro.trim() || undefined,
           fotoUrl: fotoUrl ?? undefined,
           musicaId: musicaId ?? undefined,
-          minutosAvisoCreador: minutosAvisoCreador ?? undefined,
+          minutosAvisoCreador,
           invitadosIds,
         },
         token,
@@ -159,6 +159,7 @@ export function EditarActividadModal({
                 />
                 <input
                   type="time"
+                  required
                   value={hora}
                   onChange={(e) => setHora(e.target.value)}
                   className="w-1/2 rounded-app border border-border bg-surface-2 px-3 py-2 text-sm text-text-primary outline-none"
@@ -182,7 +183,7 @@ export function EditarActividadModal({
               className="flex items-center gap-2 rounded-app border border-border bg-surface-2 px-3 py-2 text-sm text-text-primary"
             >
               <IconUsers size={16} className="text-text-accent" />
-              {invitadosIds.length > 0 ? `${invitadosIds.length} invitado(s)` : "Invitar personas"}
+              {invitadosIds.length > 0 ? `${invitadosIds.length} invitado(s)` : "Invitar personas (opcional)"}
             </button>
 
             <button
@@ -195,7 +196,7 @@ export function EditarActividadModal({
             </button>
 
             <div className="flex flex-col gap-1">
-              <p className="text-xs text-text-secondary">Tu recordatorio personal (opcional)</p>
+              <p className="text-xs text-text-secondary">Tiempo de recordatorio</p>
               <div className="flex gap-1.5">
                 {MINUTOS_AVISO_CREADOR_VALIDOS.map((min) => (
                   <button
@@ -218,7 +219,7 @@ export function EditarActividadModal({
 
             <button
               type="button"
-              disabled={!titulo.trim() || !fecha || invitadosIds.length === 0 || guardando}
+              disabled={!titulo.trim() || !fecha || !hora || !minutosAvisoCreador || guardando}
               onClick={guardar}
               className="btn-hero rounded-app px-4 py-2 text-sm disabled:opacity-50"
             >
