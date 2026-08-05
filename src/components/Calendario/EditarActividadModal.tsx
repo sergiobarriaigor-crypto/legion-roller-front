@@ -149,7 +149,7 @@ export function EditarActividadModal({
             />
 
             <div className="flex flex-col gap-1">
-              <p className="text-xs text-text-secondary">Fecha y hora de citación</p>
+              <p className="text-xs text-text-secondary">Fecha y hora de asistencia</p>
               <div className="flex gap-2">
                 <input
                   type="date"

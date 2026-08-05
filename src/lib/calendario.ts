@@ -16,7 +16,7 @@ export const ETIQUETA_CATEGORIA: Record<string, string> = {
   evento: "Evento",
   entrenamiento: "Entrenamiento",
   reunion: "Reunión",
-  patinada_libre: "Patinada libre",
+  patinada_libre: "Patinada",
   otros: "Otros",
   cumpleanos: "Cumpleaños",
   feriado: "Feriado nacional",
