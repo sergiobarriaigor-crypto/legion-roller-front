@@ -2,10 +2,25 @@
 
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { IconCheck, IconTarget, IconLock, IconPlayerPlay, IconPhoto, IconCalendar } from "@tabler/icons-react";
+import {
+  IconCheck,
+  IconTarget,
+  IconLock,
+  IconPlayerPlay,
+  IconPhoto,
+  IconCalendar,
+  IconEyeOff,
+  IconEye,
+} from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
 import { apiGet, apiPatch, apiPut, apiDelete, ApiError } from "@/lib/api";
-import { CATALOGO_TECNICAS, HITOS_DISTANCIA_KM, formatearDuracion, type MiPerfil } from "@/lib/perfil";
+import {
+  CATALOGO_TECNICAS,
+  HITOS_DISTANCIA_KM,
+  formatearDuracion,
+  setModoOculto,
+  type MiPerfil,
+} from "@/lib/perfil";
 import { ETIQUETA_MOTIVO, type MiEmergencia } from "@/lib/emergencias";
 import type { Post } from "@/lib/posts";
 import { ImageUploadCrop } from "@/components/ImageUploadCrop";
@@ -188,6 +203,16 @@ export default function PerfilPage() {
     }
   }
 
+  async function alternarModoOculto() {
+    if (!token || !perfil) return;
+    try {
+      await setModoOculto(!perfil.modoOculto, token);
+      setPerfil({ ...perfil, modoOculto: !perfil.modoOculto });
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "No se pudo cambiar el modo oculto.");
+    }
+  }
+
   async function cancelarEmergencia() {
     if (!token) return;
     try {
@@ -205,6 +230,23 @@ export default function PerfilPage() {
   return (
     <div className="flex flex-col gap-3">
       <div className="card relative -mx-4 flex flex-col items-center gap-3 px-3 py-5">
+        <button
+          type="button"
+          onClick={alternarModoOculto}
+          aria-label={perfil.modoOculto ? "Desactivar modo oculto" : "Activar modo oculto"}
+          title={
+            perfil.modoOculto
+              ? "Modo oculto activado: tu avatar no aparece en el mapa de los demás"
+              : "Activar modo oculto en el mapa"
+          }
+          className={`absolute left-3 top-3 flex h-9 w-9 items-center justify-center rounded-full border ${
+            perfil.modoOculto
+              ? "border-fill-primary bg-fill-primary text-on-primary"
+              : "border-border-accent bg-bg-accent text-text-accent"
+          }`}
+        >
+          {perfil.modoOculto ? <IconEyeOff size={18} /> : <IconEye size={18} />}
+        </button>
         <button
           type="button"
           onClick={() => setMostrarCalendario(true)}

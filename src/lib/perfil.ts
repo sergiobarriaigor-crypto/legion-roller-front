@@ -1,4 +1,4 @@
-import { apiDelete, apiGet, apiPost } from "@/lib/api";
+import { apiDelete, apiGet, apiPost, apiPut } from "@/lib/api";
 
 export interface StatsPerfil {
   kmOficiales: number;
@@ -41,7 +41,17 @@ export interface MiPerfil {
   mejorDistanciaRuta: number;
   tecnicas: string[];
   estado: EstadoPerfil | null;
+  modoOculto: boolean;
   reconocimientos: Reconocimiento[];
+}
+
+// Modo oculto: mientras está activo, el avatar no aparece en el mapa de los
+// demás miembros ni en el panel de Patinadores Activos (ver mapa.service.ts
+// patinandoAhora) -- el GPS y la grabación de ruta siguen funcionando igual,
+// y uno se sigue viendo a sí mismo en su propio mapa. Un SOS activo siempre
+// se sigue mostrando a todos, sin excepción.
+export function setModoOculto(activo: boolean, token: string | null) {
+  return apiPut<{ modoOculto: boolean }>("/perfil/modo-oculto", { activo }, token);
 }
 
 // Vista de solo lectura de OTRO miembro (botón "Ver perfil" desde el chat) —
