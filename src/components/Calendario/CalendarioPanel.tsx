@@ -148,11 +148,24 @@ export function CalendarioPanel({
                 className="rounded-app border-l-4 bg-surface-1 p-3"
                 style={{ borderColor: COLOR_CATEGORIA[inv.categoria] }}
               >
-                <p className="text-sm font-medium text-text-primary">{inv.titulo}</p>
-                <p className="text-xs text-text-secondary">
-                  {ETIQUETA_CATEGORIA[inv.categoria]} · {inv.creadorNombre} te invitó · {inv.fecha}
-                  {inv.hora ? ` · ${inv.hora}` : ""}
-                </p>
+                <div className="flex gap-3">
+                  {inv.fotoUrl && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={inv.fotoUrl}
+                      alt=""
+                      className="h-14 w-14 shrink-0 rounded-app object-cover"
+                    />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-text-primary">{inv.titulo}</p>
+                    <p className="text-xs text-text-secondary">
+                      {ETIQUETA_CATEGORIA[inv.categoria]} · {inv.creadorNombre} te invitó ·{" "}
+                      {inv.fecha}
+                      {inv.hora ? ` · ${inv.hora}` : ""}
+                    </p>
+                  </div>
+                </div>
                 <div className="mt-2 flex gap-2">
                   <button
                     type="button"
@@ -313,6 +326,14 @@ export function CalendarioPanel({
                       </>
                     )}
                   </div>
+                )}
+                {it.fotoUrl && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={it.fotoUrl}
+                    alt=""
+                    className="mb-2 h-32 w-full rounded-app object-cover"
+                  />
                 )}
                 <p
                   className={`pr-6 text-sm font-medium text-text-primary ${it.cancelada ? "line-through" : ""}`}

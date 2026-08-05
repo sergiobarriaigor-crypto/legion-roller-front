@@ -51,6 +51,7 @@ export interface InvitacionPendiente {
   titulo: string;
   fecha: string;
   hora: string | null;
+  fotoUrl: string | null;
   creadorNombre: string;
 }
 
