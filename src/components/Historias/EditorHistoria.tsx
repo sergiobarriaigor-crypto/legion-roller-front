@@ -29,6 +29,9 @@ import { ZonaEliminarArrastre } from "@/components/Historias/ZonaEliminarArrastr
 import { SelectorMusicaHistoria } from "@/components/Historias/SelectorMusicaHistoria";
 import { VideoTrimmer } from "@/components/VideoTrimmer";
 
+// Encuadre libre de la foto (mover/pellizcar), mismo tope que ImageUploadCrop.tsx.
+const ZOOM_MAXIMO_FOTO = 3;
+
 const ESTILO_TEXTO_DEFECTO: Omit<EstiloTextoHistoria, "contenido"> = {
   x: 0.5,
   y: 0.5,
@@ -78,6 +81,24 @@ export function EditorHistoria({
 }) {
   const { sesion } = useSession();
   const contenedorMediaRef = useRef<HTMLDivElement>(null);
+
+  // Encuadre libre de la foto: el usuario mueve (1 dedo) y hace zoom
+  // (pellizco, 2 dedos) sobre un canvas propio en vez del <img> estático de
+  // antes -- mismo cálculo "cover" + clamp de pan que ImageUploadCrop.tsx,
+  // pero con el pan guardado como FRACCIÓN del contenedor (no píxeles), para
+  // poder aplicar el mismo valor tal cual sobre el lienzo fijo 1080x1920 de
+  // prepararFotoHistoria al publicar (ver FiltrosFoto.tsx).
+  const canvasFotoRef = useRef<HTMLCanvasElement>(null);
+  const imgFotoRef = useRef<HTMLImageElement | null>(null);
+  const [zoomFoto, setZoomFoto] = useState(1);
+  const [panFotoFrac, setPanFotoFrac] = useState({ x: 0, y: 0 });
+  const punterosFotoRef = useRef(new Map<number, { x: number; y: number }>());
+  const gestoFotoRef = useRef<{
+    modo: "arrastrar" | "pellizcar" | null;
+    ultimoPunto: { x: number; y: number };
+    distanciaInicial: number;
+    zoomInicial: number;
+  }>({ modo: null, ultimoPunto: { x: 0, y: 0 }, distanciaInicial: 0, zoomInicial: 1 });
 
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [tipo, setTipo] = useState<"foto" | "video" | null>(null);
@@ -157,6 +178,8 @@ export function EditorHistoria({
     setError("");
     setFiltro(FILTROS_FOTO[0]);
     setMenciones([]);
+    setZoomFoto(1);
+    setPanFotoFrac({ x: 0, y: 0 });
     const url = URL.createObjectURL(archivoInicial);
     const esVideo = archivoInicial.type.startsWith("video/");
 
@@ -208,6 +231,153 @@ export function EditorHistoria({
       URL.revokeObjectURL(url);
     };
   }, [archivoInicial]);
+
+  function dibujarFoto() {
+    const canvas = canvasFotoRef.current;
+    const img = imgFotoRef.current;
+    if (!canvas || !img) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const cw = canvas.clientWidth;
+    const ch = canvas.clientHeight;
+    if (cw === 0 || ch === 0) return;
+    const dpr = window.devicePixelRatio || 1;
+    const anchoPx = Math.round(cw * dpr);
+    const altoPx = Math.round(ch * dpr);
+    if (canvas.width !== anchoPx || canvas.height !== altoPx) {
+      canvas.width = anchoPx;
+      canvas.height = altoPx;
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cw, ch);
+
+    const baseScale = Math.max(cw / img.naturalWidth, ch / img.naturalHeight);
+    const escala = baseScale * zoomFoto;
+    const anchoDibujo = img.naturalWidth * escala;
+    const altoDibujo = img.naturalHeight * escala;
+    const x = (cw - anchoDibujo) / 2 + panFotoFrac.x * cw;
+    const y = (ch - altoDibujo) / 2 + panFotoFrac.y * ch;
+
+    ctx.filter = filtro.css;
+    ctx.drawImage(img, x, y, anchoDibujo, altoDibujo);
+  }
+
+  // Recorta panDeseado (en fracción del contenedor) para que la foto nunca
+  // deje huecos visibles al zoom actual -- misma idea que limitarPan en
+  // ImageUploadCrop.tsx.
+  function limitarPanFoto(zoomActual: number, panDeseado: { x: number; y: number }) {
+    const canvas = canvasFotoRef.current;
+    const img = imgFotoRef.current;
+    if (!canvas || !img) return panDeseado;
+    const cw = canvas.clientWidth;
+    const ch = canvas.clientHeight;
+    if (cw === 0 || ch === 0) return panDeseado;
+    const baseScale = Math.max(cw / img.naturalWidth, ch / img.naturalHeight);
+    const escala = baseScale * zoomActual;
+    const anchoDibujo = img.naturalWidth * escala;
+    const altoDibujo = img.naturalHeight * escala;
+    const maxXfrac = Math.max(0, (anchoDibujo - cw) / 2) / cw;
+    const maxYfrac = Math.max(0, (altoDibujo - ch) / 2) / ch;
+    return {
+      x: Math.min(maxXfrac, Math.max(-maxXfrac, panDeseado.x)),
+      y: Math.min(maxYfrac, Math.max(-maxYfrac, panDeseado.y)),
+    };
+  }
+
+  // Carga la foto en un <img> propio (no el DOM) para usarlo como fuente del
+  // canvas -- se recarga solo cuando cambia previewUrl, no en cada
+  // zoom/pan/filtro (eso lo redibuja el efecto de abajo con la misma imagen
+  // ya cargada).
+  useEffect(() => {
+    if (tipo !== "foto" || !previewUrl) return;
+    const img = new Image();
+    img.onload = () => {
+      imgFotoRef.current = img;
+      dibujarFoto();
+    };
+    img.src = previewUrl;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tipo, previewUrl]);
+
+  // Redibuja ante cualquier cambio visual (zoom, pan, filtro) y ante cambios
+  // de tamaño del contenedor (rotación de pantalla, etc.) -- mismo criterio
+  // de "cover" + clamp que ImageUploadCrop.tsx, pero contra el tamaño real
+  // del contenedor (acá variable, no un cuadrado fijo de 260px).
+  useEffect(() => {
+    if (tipo !== "foto") return;
+    dibujarFoto();
+    const contenedor = contenedorMediaRef.current;
+    if (!contenedor) return;
+    const observer = new ResizeObserver(() => dibujarFoto());
+    observer.observe(contenedor);
+    return () => observer.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tipo, previewUrl, zoomFoto, panFotoFrac, filtro]);
+
+  function puntoDesdeEventoFoto(e: React.PointerEvent) {
+    const rect = canvasFotoRef.current?.getBoundingClientRect();
+    if (!rect) return { x: 0, y: 0 };
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  }
+
+  // Un dedo mueve (arrastre por delta), dos dedos hacen zoom por relación de
+  // distancias -- igual que el pellizco de TextoSobreImagen.tsx, pero sin la
+  // parte de rotación (la foto no rota).
+  function onPointerDownFoto(e: React.PointerEvent<HTMLCanvasElement>) {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    punterosFotoRef.current.set(e.pointerId, puntoDesdeEventoFoto(e));
+
+    if (punterosFotoRef.current.size === 1) {
+      gestoFotoRef.current.modo = "arrastrar";
+      gestoFotoRef.current.ultimoPunto = [...punterosFotoRef.current.values()][0];
+    } else if (punterosFotoRef.current.size === 2) {
+      const [p1, p2] = [...punterosFotoRef.current.values()];
+      gestoFotoRef.current.modo = "pellizcar";
+      gestoFotoRef.current.distanciaInicial = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+      gestoFotoRef.current.zoomInicial = zoomFoto;
+    }
+  }
+
+  function onPointerMoveFoto(e: React.PointerEvent<HTMLCanvasElement>) {
+    if (!punterosFotoRef.current.has(e.pointerId)) return;
+    punterosFotoRef.current.set(e.pointerId, puntoDesdeEventoFoto(e));
+    const canvas = canvasFotoRef.current;
+    if (!canvas) return;
+    const cw = canvas.clientWidth;
+    const ch = canvas.clientHeight;
+    if (cw === 0 || ch === 0) return;
+
+    if (gestoFotoRef.current.modo === "arrastrar" && punterosFotoRef.current.size === 1) {
+      const p = [...punterosFotoRef.current.values()][0];
+      const dx = p.x - gestoFotoRef.current.ultimoPunto.x;
+      const dy = p.y - gestoFotoRef.current.ultimoPunto.y;
+      gestoFotoRef.current.ultimoPunto = p;
+      setPanFotoFrac((prev) => limitarPanFoto(zoomFoto, { x: prev.x + dx / cw, y: prev.y + dy / ch }));
+    } else if (gestoFotoRef.current.modo === "pellizcar" && punterosFotoRef.current.size === 2) {
+      const [p1, p2] = [...punterosFotoRef.current.values()];
+      const distancia = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+      const factor = distancia / (gestoFotoRef.current.distanciaInicial || 1);
+      const nuevoZoom = Math.min(ZOOM_MAXIMO_FOTO, Math.max(1, gestoFotoRef.current.zoomInicial * factor));
+      setZoomFoto(nuevoZoom);
+      setPanFotoFrac((prev) => limitarPanFoto(nuevoZoom, prev));
+    }
+  }
+
+  function onPointerUpFoto(e: React.PointerEvent<HTMLCanvasElement>) {
+    punterosFotoRef.current.delete(e.pointerId);
+    if (punterosFotoRef.current.size === 1) {
+      gestoFotoRef.current.modo = "arrastrar";
+      gestoFotoRef.current.ultimoPunto = [...punterosFotoRef.current.values()][0];
+    } else {
+      gestoFotoRef.current.modo = null;
+    }
+  }
+
+  function restablecerEncuadre() {
+    setZoomFoto(1);
+    setPanFotoFrac({ x: 0, y: 0 });
+  }
 
   function abrirEdicionTexto() {
     setBorradorTexto(estiloTexto?.contenido ?? "");
@@ -272,7 +442,7 @@ export function EditorHistoria({
         tipo === "video" && videoRecortadoBlob
           ? videoRecortadoBlob
           : tipo === "foto" && previewUrl
-            ? await prepararFotoHistoria(previewUrl, filtro.css)
+            ? await prepararFotoHistoria(previewUrl, filtro.css, { zoom: zoomFoto, panFrac: panFotoFrac })
             : archivoInicial;
       const nombreArchivo = videoRecortadoBlob && archivoASubir === videoRecortadoBlob
         ? "recorte.webm"
@@ -367,12 +537,15 @@ export function EditorHistoria({
                 }}
               />
             ) : (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={previewUrl}
-                alt="Vista previa de la historia"
-                className="h-full w-full object-contain"
-                style={{ filter: filtro.css }}
+              // Canvas interactivo (mover con 1 dedo, zoom con pellizco de 2)
+              // en vez de un <img> estático -- ver dibujarFoto/gestos arriba.
+              <canvas
+                ref={canvasFotoRef}
+                className="h-full w-full touch-none"
+                onPointerDown={onPointerDownFoto}
+                onPointerMove={onPointerMoveFoto}
+                onPointerUp={onPointerUpFoto}
+                onPointerCancel={onPointerUpFoto}
               />
             )}
 
@@ -628,7 +801,18 @@ export function EditorHistoria({
                 );
               })()}
             {tipo === "foto" && (
-              <FiltrosFoto previewUrl={previewUrl} filtroActual={filtro} onCambiar={setFiltro} />
+              <div className="flex items-center gap-2">
+                <FiltrosFoto previewUrl={previewUrl} filtroActual={filtro} onCambiar={setFiltro} />
+                {(zoomFoto !== 1 || panFotoFrac.x !== 0 || panFotoFrac.y !== 0) && (
+                  <button
+                    type="button"
+                    onClick={restablecerEncuadre}
+                    className="shrink-0 text-xs text-text-secondary underline"
+                  >
+                    Restablecer
+                  </button>
+                )}
+              </div>
             )}
             {estiloTexto && (
               <BarraTextoHistoria

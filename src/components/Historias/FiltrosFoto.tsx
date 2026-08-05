@@ -24,13 +24,31 @@ export const FILTROS_FOTO: FiltroFoto[] = [
 export const ANCHO_HISTORIA = 1080;
 export const ALTO_HISTORIA = 1920;
 
+// Encuadre libre elegido por el usuario sobre la foto (mover/pellizcar en
+// EditorHistoria.tsx) — panFrac es una fracción del ancho/alto del lienzo
+// (no píxeles), así el mismo valor sirve tanto para la vista previa en vivo
+// (tamaño de contenedor variable) como para este lienzo fijo de publicación.
+// Los valores por defecto reproducen el comportamiento de siempre (cover
+// centrado, sin mover ni hacer zoom).
+export interface EncuadreFoto {
+  zoom: number;
+  panFrac: { x: number; y: number };
+}
+
+const ENCUADRE_DEFECTO: EncuadreFoto = { zoom: 1, panFrac: { x: 0, y: 0 } };
+
 // Dibuja la imagen en un lienzo 1080x1920 con el filtro CSS "quemado" y
 // devuelve el resultado como Blob JPEG. La foto se escala para CUBRIR todo
 // el lienzo (recortando lo que sobre por los costados o arriba/abajo según
 // corresponda) en vez de dejar franjas negras cuando la relación de aspecto
 // original no es exactamente 9:16 — mismo criterio que Instagram/TikTok:
 // nunca queda con bordes negros, aunque signifique perder un poco de borde.
-export function prepararFotoHistoria(url: string, filtroCss: string): Promise<Blob> {
+// El encuadre (zoom/pan) del usuario se aplica sobre esa misma base "cover".
+export function prepararFotoHistoria(
+  url: string,
+  filtroCss: string,
+  encuadre: EncuadreFoto = ENCUADRE_DEFECTO,
+): Promise<Blob> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
@@ -43,11 +61,12 @@ export function prepararFotoHistoria(url: string, filtroCss: string): Promise<Bl
         return;
       }
 
-      const escala = Math.max(ANCHO_HISTORIA / img.naturalWidth, ALTO_HISTORIA / img.naturalHeight);
+      const baseScale = Math.max(ANCHO_HISTORIA / img.naturalWidth, ALTO_HISTORIA / img.naturalHeight);
+      const escala = baseScale * encuadre.zoom;
       const anchoDestino = img.naturalWidth * escala;
       const altoDestino = img.naturalHeight * escala;
-      const x = (ANCHO_HISTORIA - anchoDestino) / 2;
-      const y = (ALTO_HISTORIA - altoDestino) / 2;
+      const x = (ANCHO_HISTORIA - anchoDestino) / 2 + encuadre.panFrac.x * ANCHO_HISTORIA;
+      const y = (ALTO_HISTORIA - altoDestino) / 2 + encuadre.panFrac.y * ALTO_HISTORIA;
 
       ctx.filter = filtroCss;
       ctx.drawImage(img, x, y, anchoDestino, altoDestino);

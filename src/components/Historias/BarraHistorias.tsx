@@ -11,6 +11,7 @@ import { EditorHistoria } from "@/components/Historias/EditorHistoria";
 import { CamaraHistoria, soportaCamaraEnVivo } from "@/components/Historias/CamaraHistoria";
 import { VisorHistorias } from "@/components/Historias/VisorHistorias";
 import { Toast } from "@/components/Toast";
+import { normalizarOrientacionFoto } from "@/lib/orientacionFoto";
 
 // Barra horizontal de historias arriba del feed de Post, estilo Instagram.
 // Oculta por completo para Visitante (sin token, no hay forma de calcular
@@ -137,10 +138,17 @@ export function BarraHistorias() {
   // cámara vía `capture`, pero en varios Android eso salta la elección y a
   // veces la cámara nativa falla sin dejar caer a Galería); recién elegido el
   // archivo aparece el editor a pantalla completa, sin pantalla intermedia.
-  function onArchivoElegido(e: React.ChangeEvent<HTMLInputElement>) {
+  // Fotos de "Cámara del Dispositivo"/"Elegir de galería" (la app de cámara
+  // nativa o el picker del sistema, a diferencia de "Captura Express" que
+  // sale de un canvas propio y ya viene derecha) pueden traer una bandera
+  // EXIF de orientación que el navegador/WebView no siempre respeta -- se
+  // corrige acá, una sola vez, antes de que el editor la reciba.
+  async function onArchivoElegido(e: React.ChangeEvent<HTMLInputElement>) {
     const archivo = e.target.files?.[0];
-    if (archivo) setArchivoElegido(archivo);
     setMostrarOpcionesOrigen(false);
+    if (!archivo) return;
+    const esVideo = archivo.type.startsWith("video/");
+    setArchivoElegido(esVideo ? archivo : await normalizarOrientacionFoto(archivo));
   }
 
   // "Captura Express": cámara propia dentro de la página (CamaraHistoria,
