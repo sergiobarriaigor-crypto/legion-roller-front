@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { IconRefresh, IconSparkles, IconX } from "@tabler/icons-react";
+import { IconRefresh, IconRotateClockwise2, IconSparkles, IconX } from "@tabler/icons-react";
 import { DURACION_MAXIMA_VIDEO_HISTORIA_SEG } from "@/lib/historias";
 import { ANCHO_HISTORIA, ALTO_HISTORIA, FILTROS_FOTO, type FiltroFoto } from "@/components/Historias/FiltrosFoto";
 import { Toast } from "@/components/Toast";
@@ -75,6 +75,10 @@ function calcularAnguloCorreccion(
   return y > 0 ? 0 : 180;
 }
 
+function sumarAngulos(a: 0 | 90 | 180 | 270, b: 0 | 90 | 180 | 270): 0 | 90 | 180 | 270 {
+  return (((a + b) % 360) as 0 | 90 | 180 | 270);
+}
+
 interface Embellecimiento {
   id: string;
   nombre: string;
@@ -141,10 +145,26 @@ export function CamaraHistoria({
   const idCuadroRef = useRef<number | null>(null);
   // Grados que hay que rotar el cuadro capturado para que quede derecho,
   // según el acelerómetro real del teléfono (no la orientación de la
-  // pantalla) — ver calcularAnguloCorreccion arriba. Va en un ref (no
-  // estado) porque cambia muy seguido y solo se lee al capturar, no hace
-  // falta re-renderizar por cada lectura del sensor.
-  const anguloCorreccionRef = useRef<0 | 90 | 180 | 270>(0);
+  // pantalla) — ver calcularAnguloCorreccion arriba. anguloAutoRef guarda la
+  // lectura cruda del sensor (cambia muy seguido, por eso vive en un ref);
+  // anguloAuto es su reflejo en estado, pero solo se actualiza cuando el
+  // VALOR realmente cambia (no en cada lectura), así alcanza para mostrar en
+  // vivo la corrección sobre la vista previa sin recargar de más.
+  const anguloAutoRef = useRef<0 | 90 | 180 | 270>(0);
+  const [anguloAuto, setAnguloAuto] = useState<0 | 90 | 180 | 270>(0);
+  // El sensor no siempre acierta en todos los equipos (ver comentario de
+  // calcularAnguloCorreccion) -- este es el ajuste manual de emergencia: un
+  // botón que el usuario puede tocar para girar 90° más si la vista previa
+  // se ve mal, sin depender de que el detector automático adivine bien.
+  const [anguloManual, setAnguloManual] = useState<0 | 90 | 180 | 270>(0);
+  // Ángulo realmente aplicado (automático + manual). Vive también en un ref
+  // porque tomarFoto/dibujarCuadro lo necesitan de forma síncrona al
+  // capturar, no en cada render.
+  const anguloEfectivoRef = useRef<0 | 90 | 180 | 270>(0);
+  const anguloEfectivo = sumarAngulos(anguloAuto, anguloManual);
+  useEffect(() => {
+    anguloEfectivoRef.current = anguloEfectivo;
+  }, [anguloEfectivo]);
 
   const [modo, setModo] = useState<"foto" | "video">("foto");
   const [listo, setListo] = useState(false);
@@ -217,7 +237,11 @@ export function CamaraHistoria({
     function alMover(e: DeviceMotionEvent) {
       const g = e.accelerationIncludingGravity;
       if (!g) return;
-      anguloCorreccionRef.current = calcularAnguloCorreccion(g.x, g.y, anguloCorreccionRef.current);
+      const nuevo = calcularAnguloCorreccion(g.x, g.y, anguloAutoRef.current);
+      if (nuevo !== anguloAutoRef.current) {
+        anguloAutoRef.current = nuevo;
+        setAnguloAuto(nuevo);
+      }
     }
     window.addEventListener("devicemotion", alMover);
     return () => window.removeEventListener("devicemotion", alMover);
@@ -260,7 +284,7 @@ export function CamaraHistoria({
   function tomarFoto() {
     const video = videoRef.current;
     if (!video || !video.videoWidth) return;
-    const angulo = anguloCorreccionRef.current;
+    const angulo = anguloEfectivoRef.current;
     const rotado = angulo === 90 || angulo === 270;
     const canvas = document.createElement("canvas");
     canvas.width = rotado ? video.videoHeight : video.videoWidth;
@@ -319,7 +343,7 @@ export function CamaraHistoria({
         // acelerómetro, el ancho/alto "efectivo" (post-rotación) es el que
         // hay que cubrir con el lienzo -- pero el drawImage sigue usando las
         // dimensiones ORIGINALES del video, rotado alrededor del centro.
-        const angulo = anguloCorreccionRef.current;
+        const angulo = anguloEfectivoRef.current;
         const rotado = angulo === 90 || angulo === 270;
         const anchoEfectivo = rotado ? video.videoHeight : video.videoWidth;
         const altoEfectivo = rotado ? video.videoWidth : video.videoHeight;
@@ -396,14 +420,21 @@ export function CamaraHistoria({
         // previa nativa de cualquier celular) — la foto/video que se guarda
         // no queda espejado, porque canvas/MediaRecorder leen el cuadro real
         // de la cámara, no el CSS aplicado acá.
+        //
+        // La rotación (anguloEfectivo) sí se aplica también acá en vivo,
+        // encima del cuadro crudo -- así el usuario ve de entrada si la
+        // corrección automática del acelerómetro acertó o no, en vez de
+        // enterarse recién después de tomar la foto. El encuadre puede verse
+        // recortado/agrandado mientras hay rotación (es solo de vista previa,
+        // no afecta cómo tomarFoto/dibujarCuadro arman el archivo final).
         <video
           ref={videoRef}
           autoPlay
           muted
           playsInline
-          className="absolute inset-0 z-0 h-full w-full object-cover"
+          className="absolute inset-0 z-0 h-full w-full object-cover transition-transform duration-150"
           style={{
-            ...(camaraFrontal ? { transform: "scaleX(-1)" } : null),
+            transform: `${camaraFrontal ? "scaleX(-1) " : ""}rotate(${anguloEfectivo}deg)`,
             filter: filtroCombinado(),
           }}
         />
@@ -430,15 +461,30 @@ export function CamaraHistoria({
           </span>
         )}
         {!error ? (
-          <button
-            type="button"
-            onClick={girarCamara}
-            disabled={!listo || grabando}
-            aria-label="Girar cámara"
-            className="flex h-9 w-9 items-center justify-center rounded-full bg-black/40 text-white disabled:opacity-40"
-          >
-            <IconRefresh size={20} />
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Ajuste manual de emergencia: si el detector automático del
+                acelerómetro adivina mal en este equipo/navegador (pasa en
+                algunos), el usuario ve la vista previa girada acá mismo y
+                puede corregirla a mano, sin depender de otro despliegue. */}
+            <button
+              type="button"
+              onClick={() => setAnguloManual((a) => sumarAngulos(a, 90))}
+              disabled={grabando}
+              aria-label="Girar imagen si se ve mal"
+              className="flex h-9 w-9 items-center justify-center rounded-full bg-black/40 text-white disabled:opacity-40"
+            >
+              <IconRotateClockwise2 size={20} />
+            </button>
+            <button
+              type="button"
+              onClick={girarCamara}
+              disabled={!listo || grabando}
+              aria-label="Girar cámara"
+              className="flex h-9 w-9 items-center justify-center rounded-full bg-black/40 text-white disabled:opacity-40"
+            >
+              <IconRefresh size={20} />
+            </button>
+          </div>
         ) : (
           <div className="w-9" />
         )}
