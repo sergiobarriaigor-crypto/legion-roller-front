@@ -34,17 +34,20 @@ const TIPOS_VIDEO_CANDIDATOS = ["video/webm;codecs=vp9,opus", "video/webm;codecs
 // tiene más gravedad es robusto ante esa inclinación extra, porque no
 // depende de combinar los tres ángulos de Euler a la vez.
 //
-// Nota sobre el signo: la convención de qué signo/eje corresponde a cada
-// lado no es 100% universal entre fabricantes. Confirmado en pruebas reales
-// del usuario: sosteniendo el teléfono en horizontal, el resultado salía
-// "invertido" (180°, la rama de abajo) en vez de rotado de lado (90/270) --
-// evidencia de que en ese equipo/navegador la gravedad de sostener el
-// teléfono de lado se carga sobre el eje Y, no sobre X como se asumió al
-// principio. Por eso el eje que decide "de lado" (90/270) es Y y el que
-// decide "de cabeza" (0/180) es X. Si en otro equipo vuelve a salir al
-// revés, alcanza con cambiar el 90 por 270 (si el problema es de lado) o el
-// 0 por 180 (si el problema es de cabeza) en las líneas de abajo -- no hace
-// falta tocar nada más.
+// Nota sobre el signo: se probó en un momento intercambiar qué eje decide
+// "de lado" (90/270) vs "de cabeza" (0/180) pensando que la convención venía
+// al revés, pero una prueba posterior con un dato preciso del usuario
+// (sosteniendo el teléfono en horizontal con la cámara frontal hacia la
+// izquierda -- una rotación física de 90° antihorario) permitió calcular a
+// mano, con la fórmula estándar de proyección de gravedad sobre los ejes del
+// dispositivo, que la asignación ORIGINAL ya era la correcta: X decide "de
+// lado" (90/270), Y decide "de cabeza" (0/180). El caso que parecía indicar
+// lo contrario ("invertido" sosteniendo de lado) en realidad correspondía al
+// caso especial de abajo (teléfono casi plano apuntando a una mesa), no a un
+// eje mal asignado -- por eso se revirtió el intercambio. Si en otro equipo
+// vuelve a salir al revés, alcanza con cambiar el 90 por 270 (si el problema
+// es de lado) o el 0 por 180 (si el problema es de cabeza) en las líneas de
+// abajo -- no hace falta tocar nada más.
 //
 // Caso especial -- teléfono casi PLANO apuntando hacia abajo/arriba (por
 // ejemplo fotografiando algo en una mesa desde encima, sosteniendo el
@@ -66,10 +69,10 @@ function calcularAnguloCorreccion(
 ): 0 | 90 | 180 | 270 {
   if (x === null || y === null) return anguloAnterior;
   if (Math.hypot(x, y) < UMBRAL_GRAVEDAD_HORIZONTAL_CONFIABLE) return anguloAnterior;
-  if (Math.abs(y) > Math.abs(x)) {
-    return y > 0 ? 90 : 270;
+  if (Math.abs(x) > Math.abs(y)) {
+    return x > 0 ? 90 : 270;
   }
-  return x > 0 ? 0 : 180;
+  return y > 0 ? 0 : 180;
 }
 
 interface Embellecimiento {
