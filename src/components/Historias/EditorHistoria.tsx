@@ -1,7 +1,16 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { IconAt, IconCheck, IconDisc, IconMapPin, IconMusic, IconPhotoPlus, IconX } from "@tabler/icons-react";
+import {
+  IconArrowsMaximize,
+  IconAt,
+  IconCheck,
+  IconDisc,
+  IconMapPin,
+  IconMusic,
+  IconPhotoPlus,
+  IconX,
+} from "@tabler/icons-react";
 import { apiUpload, ApiError } from "@/lib/api";
 import {
   crearHistoria,
@@ -20,7 +29,13 @@ import { useNoAutofill } from "@/lib/useNoAutofill";
 import { useSession } from "@/context/SessionContext";
 import { TextoSobreImagen } from "@/components/Historias/TextoSobreImagen";
 import { BarraTextoHistoria } from "@/components/Historias/BarraTextoHistoria";
-import { FILTROS_FOTO, FiltrosFoto, prepararFotoHistoria, type FiltroFoto } from "@/components/Historias/FiltrosFoto";
+import {
+  FILTROS_FOTO,
+  FiltrosFoto,
+  filtroFondoAjustar,
+  prepararFotoHistoria,
+  type FiltroFoto,
+} from "@/components/Historias/FiltrosFoto";
 import { MencionSobreImagen } from "@/components/Historias/MencionSobreImagen";
 import { SelectorMencion } from "@/components/Historias/SelectorMencion";
 import { FotoStickerSobreImagen } from "@/components/Historias/FotoStickerSobreImagen";
@@ -92,6 +107,13 @@ export function EditorHistoria({
   const imgFotoRef = useRef<HTMLImageElement | null>(null);
   const [zoomFoto, setZoomFoto] = useState(1);
   const [panFotoFrac, setPanFotoFrac] = useState({ x: 0, y: 0 });
+  // "cubrir" (de siempre): llena el marco 9:16 sin bordes negros, recortando
+  // lo que sobre. "ajustar": para fotos horizontales que pierden mucho
+  // contenido en "cubrir" -- se ve la foto COMPLETA, sin recortar, con el
+  // espacio libre relleno con la misma foto de fondo difuminada (estilo
+  // Instagram). En "ajustar" no se puede mover/hacer zoom (no tendría
+  // sentido, ya se ve todo).
+  const [modoEncuadre, setModoEncuadre] = useState<"cubrir" | "ajustar">("cubrir");
   const punterosFotoRef = useRef(new Map<number, { x: number; y: number }>());
   const gestoFotoRef = useRef<{
     modo: "arrastrar" | "pellizcar" | null;
@@ -180,6 +202,7 @@ export function EditorHistoria({
     setMenciones([]);
     setZoomFoto(1);
     setPanFotoFrac({ x: 0, y: 0 });
+    setModoEncuadre("cubrir");
     const url = URL.createObjectURL(archivoInicial);
     const esVideo = archivoInicial.type.startsWith("video/");
 
@@ -252,6 +275,21 @@ export function EditorHistoria({
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, cw, ch);
 
+    if (modoEncuadre === "ajustar") {
+      const escalaFondo = Math.max(cw / img.naturalWidth, ch / img.naturalHeight);
+      const anchoFondo = img.naturalWidth * escalaFondo;
+      const altoFondo = img.naturalHeight * escalaFondo;
+      ctx.filter = filtroFondoAjustar(filtro.css);
+      ctx.drawImage(img, (cw - anchoFondo) / 2, (ch - altoFondo) / 2, anchoFondo, altoFondo);
+
+      const escala = Math.min(cw / img.naturalWidth, ch / img.naturalHeight);
+      const ancho = img.naturalWidth * escala;
+      const alto = img.naturalHeight * escala;
+      ctx.filter = filtro.css;
+      ctx.drawImage(img, (cw - ancho) / 2, (ch - alto) / 2, ancho, alto);
+      return;
+    }
+
     const baseScale = Math.max(cw / img.naturalWidth, ch / img.naturalHeight);
     const escala = baseScale * zoomFoto;
     const anchoDibujo = img.naturalWidth * escala;
@@ -313,7 +351,7 @@ export function EditorHistoria({
     observer.observe(contenedor);
     return () => observer.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tipo, previewUrl, zoomFoto, panFotoFrac, filtro]);
+  }, [tipo, previewUrl, zoomFoto, panFotoFrac, filtro, modoEncuadre]);
 
   function puntoDesdeEventoFoto(e: React.PointerEvent) {
     const rect = canvasFotoRef.current?.getBoundingClientRect();
@@ -325,6 +363,7 @@ export function EditorHistoria({
   // distancias -- igual que el pellizco de TextoSobreImagen.tsx, pero sin la
   // parte de rotación (la foto no rota).
   function onPointerDownFoto(e: React.PointerEvent<HTMLCanvasElement>) {
+    if (modoEncuadre === "ajustar") return;
     e.currentTarget.setPointerCapture(e.pointerId);
     punterosFotoRef.current.set(e.pointerId, puntoDesdeEventoFoto(e));
 
@@ -375,6 +414,12 @@ export function EditorHistoria({
   }
 
   function restablecerEncuadre() {
+    setZoomFoto(1);
+    setPanFotoFrac({ x: 0, y: 0 });
+  }
+
+  function alternarModoEncuadre() {
+    setModoEncuadre((prev) => (prev === "cubrir" ? "ajustar" : "cubrir"));
     setZoomFoto(1);
     setPanFotoFrac({ x: 0, y: 0 });
   }
@@ -442,7 +487,11 @@ export function EditorHistoria({
         tipo === "video" && videoRecortadoBlob
           ? videoRecortadoBlob
           : tipo === "foto" && previewUrl
-            ? await prepararFotoHistoria(previewUrl, filtro.css, { zoom: zoomFoto, panFrac: panFotoFrac })
+            ? await prepararFotoHistoria(previewUrl, filtro.css, {
+                modo: modoEncuadre,
+                zoom: zoomFoto,
+                panFrac: panFotoFrac,
+              })
             : archivoInicial;
       const nombreArchivo = videoRecortadoBlob && archivoASubir === videoRecortadoBlob
         ? "recorte.webm"
@@ -646,6 +695,26 @@ export function EditorHistoria({
             >
               <IconMusic size={18} />
             </button>
+
+            {/* Quinto control: alterna entre "cubrir" (de siempre, llena el
+                marco recortando) y "ajustar" (foto completa sin recortar,
+                con fondo difuminado) -- útil para fotos horizontales, que en
+                "cubrir" pierden mucho contenido por los costados. */}
+            {tipo === "foto" && (
+              <button
+                type="button"
+                onClick={alternarModoEncuadre}
+                aria-label={
+                  modoEncuadre === "ajustar" ? "Volver a llenar el marco" : "Ajustar foto sin recortar"
+                }
+                title={modoEncuadre === "ajustar" ? "Foto completa (sin recortar)" : "Llenar marco (recorta)"}
+                className={`absolute right-3 top-[11.75rem] z-10 flex h-9 w-9 items-center justify-center rounded-full text-white ${
+                  modoEncuadre === "ajustar" ? "bg-fill-primary" : "bg-black/50"
+                }`}
+              >
+                <IconArrowsMaximize size={18} />
+              </button>
+            )}
             {/* Se escucha en vivo mientras se edita — lo que se oye acá es lo
                 mismo que sonará al publicar (igual criterio que el filtro de
                 color, previsualizado tal cual queda). El <video> de arriba ya

@@ -30,20 +30,34 @@ export const ALTO_HISTORIA = 1920;
 // (tamaño de contenedor variable) como para este lienzo fijo de publicación.
 // Los valores por defecto reproducen el comportamiento de siempre (cover
 // centrado, sin mover ni hacer zoom).
+//
+// modo "cubrir": la foto llena todo el lienzo sin bordes negros, recortando
+// lo que sobre (comportamiento de siempre, con zoom/pan del usuario).
+// modo "ajustar": la foto se ve COMPLETA, sin recortar nada -- para fotos
+// horizontales que perderían mucho contenido en "cubrir". El espacio libre
+// arriba/abajo (o a los costados) se rellena con la misma foto de fondo,
+// agrandada y difuminada, en vez de dejarlo negro liso (igual que Instagram).
 export interface EncuadreFoto {
+  modo: "cubrir" | "ajustar";
   zoom: number;
   panFrac: { x: number; y: number };
 }
 
-const ENCUADRE_DEFECTO: EncuadreFoto = { zoom: 1, panFrac: { x: 0, y: 0 } };
+const ENCUADRE_DEFECTO: EncuadreFoto = { modo: "cubrir", zoom: 1, panFrac: { x: 0, y: 0 } };
+
+// Filtro combinado del fondo en modo "ajustar": el filtro de color elegido +
+// desenfoque + oscurecido, para que el primer plano (la foto completa, nítida)
+// resalte por encima. Se reutiliza igual en la vista previa en vivo
+// (EditorHistoria.tsx) y acá al exportar, para que quede igual a lo que se vio.
+export function filtroFondoAjustar(filtroCss: string): string {
+  const base = filtroCss === "none" ? "" : filtroCss;
+  return `${base} blur(25px) brightness(0.55)`.trim();
+}
 
 // Dibuja la imagen en un lienzo 1080x1920 con el filtro CSS "quemado" y
-// devuelve el resultado como Blob JPEG. La foto se escala para CUBRIR todo
-// el lienzo (recortando lo que sobre por los costados o arriba/abajo según
-// corresponda) en vez de dejar franjas negras cuando la relación de aspecto
-// original no es exactamente 9:16 — mismo criterio que Instagram/TikTok:
-// nunca queda con bordes negros, aunque signifique perder un poco de borde.
-// El encuadre (zoom/pan) del usuario se aplica sobre esa misma base "cover".
+// devuelve el resultado como Blob JPEG. Ver EncuadreFoto arriba para la
+// diferencia entre "cubrir" (de siempre, con zoom/pan) y "ajustar" (foto
+// completa sin recortar, con fondo difuminado).
 export function prepararFotoHistoria(
   url: string,
   filtroCss: string,
@@ -61,15 +75,36 @@ export function prepararFotoHistoria(
         return;
       }
 
-      const baseScale = Math.max(ANCHO_HISTORIA / img.naturalWidth, ALTO_HISTORIA / img.naturalHeight);
-      const escala = baseScale * encuadre.zoom;
-      const anchoDestino = img.naturalWidth * escala;
-      const altoDestino = img.naturalHeight * escala;
-      const x = (ANCHO_HISTORIA - anchoDestino) / 2 + encuadre.panFrac.x * ANCHO_HISTORIA;
-      const y = (ALTO_HISTORIA - altoDestino) / 2 + encuadre.panFrac.y * ALTO_HISTORIA;
+      if (encuadre.modo === "ajustar") {
+        const escalaFondo = Math.max(ANCHO_HISTORIA / img.naturalWidth, ALTO_HISTORIA / img.naturalHeight);
+        const anchoFondo = img.naturalWidth * escalaFondo;
+        const altoFondo = img.naturalHeight * escalaFondo;
+        ctx.filter = filtroFondoAjustar(filtroCss);
+        ctx.drawImage(
+          img,
+          (ANCHO_HISTORIA - anchoFondo) / 2,
+          (ALTO_HISTORIA - altoFondo) / 2,
+          anchoFondo,
+          altoFondo,
+        );
 
-      ctx.filter = filtroCss;
-      ctx.drawImage(img, x, y, anchoDestino, altoDestino);
+        const escala = Math.min(ANCHO_HISTORIA / img.naturalWidth, ALTO_HISTORIA / img.naturalHeight);
+        const ancho = img.naturalWidth * escala;
+        const alto = img.naturalHeight * escala;
+        ctx.filter = filtroCss;
+        ctx.drawImage(img, (ANCHO_HISTORIA - ancho) / 2, (ALTO_HISTORIA - alto) / 2, ancho, alto);
+      } else {
+        const baseScale = Math.max(ANCHO_HISTORIA / img.naturalWidth, ALTO_HISTORIA / img.naturalHeight);
+        const escala = baseScale * encuadre.zoom;
+        const anchoDestino = img.naturalWidth * escala;
+        const altoDestino = img.naturalHeight * escala;
+        const x = (ANCHO_HISTORIA - anchoDestino) / 2 + encuadre.panFrac.x * ANCHO_HISTORIA;
+        const y = (ALTO_HISTORIA - altoDestino) / 2 + encuadre.panFrac.y * ALTO_HISTORIA;
+
+        ctx.filter = filtroCss;
+        ctx.drawImage(img, x, y, anchoDestino, altoDestino);
+      }
+
       canvas.toBlob(
         (blob) => (blob ? resolve(blob) : reject(new Error("No se pudo generar la imagen"))),
         "image/jpeg",
