@@ -21,54 +21,13 @@ const TIPOS_VIDEO_CANDIDATOS = ["video/webm;codecs=vp9,opus", "video/webm;codecs
 // tiene forma de detectar que el teléfono está girado a través de la
 // orientación de la PANTALLA: si el usuario tiene el bloqueo de rotación
 // activado (lo más común), la pantalla nunca gira aunque el teléfono sí, y
-// el cuadro de la cámara queda grabado "acostado". La solución es la misma
-// que usa la cámara nativa: leer el acelerómetro directo, no la orientación
-// de la pantalla.
-//
-// Se usa accelerationIncludingGravity (evento "devicemotion": hacia dónde
-// tira la gravedad en cada eje) en vez de los ángulos beta/gamma del evento
-// "deviceorientation" -- estos últimos se confunden y devuelven un valor
-// erróneo cuando el teléfono, además de estar de lado, también apunta bastante
-// hacia arriba/abajo (por ejemplo al fotografiar algo en una mesa, como en la
-// captura que reportó el usuario). Comparar directamente qué eje (x o y)
-// tiene más gravedad es robusto ante esa inclinación extra, porque no
-// depende de combinar los tres ángulos de Euler a la vez.
-//
-// Nota sobre el signo/eje: en las pruebas reales del usuario, ni la
-// asignación original (X = de lado, Y = de cabeza) ni el cálculo teórico
-// terminaron siendo confiables en su equipo -- distintas tomas dieron
-// resultados contradictorios entre sí. Se dejó fijo Y = de lado (90/270),
-// X = de cabeza (0/180) por pedido explícito del usuario, sabiendo que el
-// detector automático puede seguir sin acertar siempre en todos los
-// equipos; para eso está el botón de rotación manual más abajo, que no
-// depende de este cálculo.
-//
-// Caso especial -- teléfono casi PLANO apuntando hacia abajo/arriba (por
-// ejemplo fotografiando algo en una mesa desde encima, sosteniendo el
-// teléfono en horizontal pero con la cámara mirando al piso): ahí la
-// gravedad queda casi toda en el eje Z (perpendicular a la pantalla), y x/y
-// se acercan a cero -- comparar cuál de los dos es "mayor" en ese momento es
-// básicamente ruido, porque ninguno tiene una lectura confiable. Por eso
-// solo se ACTUALIZA el ángulo cuando la gravedad horizontal (x/y combinada)
-// supera un umbral mínimo; si el teléfono está casi plano, se mantiene el
-// último ángulo confiable en vez de arriesgar un valor sin sentido (esto
-// requiere que en algún momento, al acomodar el encuadre, el teléfono haya
-// pasado por una inclinación más clara -- lo normal al armar una toma).
-const UMBRAL_GRAVEDAD_HORIZONTAL_CONFIABLE = 3; // m/s^2, de ~9.8 totales
-
-function calcularAnguloCorreccion(
-  x: number | null,
-  y: number | null,
-  anguloAnterior: 0 | 90 | 180 | 270,
-): 0 | 90 | 180 | 270 {
-  if (x === null || y === null) return anguloAnterior;
-  if (Math.hypot(x, y) < UMBRAL_GRAVEDAD_HORIZONTAL_CONFIABLE) return anguloAnterior;
-  if (Math.abs(y) > Math.abs(x)) {
-    return y > 0 ? 90 : 270;
-  }
-  return x > 0 ? 0 : 180;
-}
-
+// el cuadro de la cámara queda grabado "acostado". Se probaron varios
+// métodos de detección automática vía acelerómetro (deviceorientation,
+// devicemotion con umbral de confianza, distintas asignaciones de eje), pero
+// ninguno resultó confiable de forma consistente entre pruebas reales en el
+// mismo equipo -- por eso se descartó la detección automática por completo y
+// se dejó solo la corrección MANUAL (botón de girar más abajo), que es 100%
+// predecible sin depender de sensores.
 function sumarAngulos(a: 0 | 90 | 180 | 270, b: 0 | 90 | 180 | 270): 0 | 90 | 180 | 270 {
   return (((a + b) % 360) as 0 | 90 | 180 | 270);
 }
@@ -137,28 +96,10 @@ export function CamaraHistoria({
   const idIntervaloRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const idLimiteRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const idCuadroRef = useRef<number | null>(null);
-  // Grados que hay que rotar el cuadro capturado para que quede derecho,
-  // según el acelerómetro real del teléfono (no la orientación de la
-  // pantalla) — ver calcularAnguloCorreccion arriba. anguloAutoRef guarda la
-  // lectura cruda del sensor (cambia muy seguido, por eso vive en un ref);
-  // anguloAuto es su reflejo en estado, pero solo se actualiza cuando el
-  // VALOR realmente cambia (no en cada lectura), así alcanza para mostrar en
-  // vivo la corrección sobre la vista previa sin recargar de más.
-  const anguloAutoRef = useRef<0 | 90 | 180 | 270>(0);
-  const [anguloAuto, setAnguloAuto] = useState<0 | 90 | 180 | 270>(0);
-  // El sensor no siempre acierta en todos los equipos (ver comentario de
-  // calcularAnguloCorreccion) -- este es el ajuste manual de emergencia: un
-  // botón que el usuario puede tocar para girar 90° más si la vista previa
-  // se ve mal, sin depender de que el detector automático adivine bien.
+  // Grados que hay que rotar el cuadro capturado para que quede derecho --
+  // 100% manual (botón de girar más abajo), sin detección automática (ver
+  // comentario arriba de por qué se descartó el acelerómetro).
   const [anguloManual, setAnguloManual] = useState<0 | 90 | 180 | 270>(0);
-  // Ángulo realmente aplicado (automático + manual). Vive también en un ref
-  // porque tomarFoto/dibujarCuadro lo necesitan de forma síncrona al
-  // capturar, no en cada render.
-  const anguloEfectivoRef = useRef<0 | 90 | 180 | 270>(0);
-  const anguloEfectivo = sumarAngulos(anguloAuto, anguloManual);
-  useEffect(() => {
-    anguloEfectivoRef.current = anguloEfectivo;
-  }, [anguloEfectivo]);
 
   const [modo, setModo] = useState<"foto" | "video">("foto");
   const [listo, setListo] = useState(false);
@@ -214,33 +155,6 @@ export function CamaraHistoria({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // iOS 13+ exige pedir permiso explícito para leer el acelerómetro (debe
-  // pedirse dentro de un gesto del usuario -- abrir la cámara ya lo es). En
-  // Android no existe este paso, `requestPermission` simplemente no existe
-  // ahí y se sigue de largo. Si el permiso se niega o el navegador no
-  // soporta el sensor, el ángulo queda en 0 (comportamiento de siempre, sin
-  // regresión).
-  useEffect(() => {
-    const DeviceMotionEventConCompat = window.DeviceMotionEvent as unknown as {
-      requestPermission?: () => Promise<"granted" | "denied">;
-    };
-    if (typeof DeviceMotionEventConCompat?.requestPermission === "function") {
-      DeviceMotionEventConCompat.requestPermission().catch(() => {});
-    }
-
-    function alMover(e: DeviceMotionEvent) {
-      const g = e.accelerationIncludingGravity;
-      if (!g) return;
-      const nuevo = calcularAnguloCorreccion(g.x, g.y, anguloAutoRef.current);
-      if (nuevo !== anguloAutoRef.current) {
-        anguloAutoRef.current = nuevo;
-        setAnguloAuto(nuevo);
-      }
-    }
-    window.addEventListener("devicemotion", alMover);
-    return () => window.removeEventListener("devicemotion", alMover);
-  }, []);
-
   // Gira entre trasera/frontal soltando la cámara actual ANTES de pedir la
   // otra: casi ningún celular puede tener dos cámaras activas a la vez (un
   // solo chip de cámara), así que pedir la nueva con la vieja todavía
@@ -278,7 +192,7 @@ export function CamaraHistoria({
   function tomarFoto() {
     const video = videoRef.current;
     if (!video || !video.videoWidth) return;
-    const angulo = anguloEfectivoRef.current;
+    const angulo = anguloManual;
     const rotado = angulo === 90 || angulo === 270;
     const canvas = document.createElement("canvas");
     canvas.width = rotado ? video.videoHeight : video.videoWidth;
@@ -337,7 +251,7 @@ export function CamaraHistoria({
         // acelerómetro, el ancho/alto "efectivo" (post-rotación) es el que
         // hay que cubrir con el lienzo -- pero el drawImage sigue usando las
         // dimensiones ORIGINALES del video, rotado alrededor del centro.
-        const angulo = anguloEfectivoRef.current;
+        const angulo = anguloManual;
         const rotado = angulo === 90 || angulo === 270;
         const anchoEfectivo = rotado ? video.videoHeight : video.videoWidth;
         const altoEfectivo = rotado ? video.videoWidth : video.videoHeight;
@@ -415,11 +329,10 @@ export function CamaraHistoria({
         // no queda espejado, porque canvas/MediaRecorder leen el cuadro real
         // de la cámara, no el CSS aplicado acá.
         //
-        // La corrección de rotación (anguloEfectivo) NO se aplica acá en
-        // vivo a propósito -- se probó y quedaba recortada/deforme dentro del
+        // La corrección de rotación (anguloManual) NO se aplica acá en vivo a
+        // propósito -- se probó y quedaba recortada/deforme dentro del
         // encuadre fijo de la vista previa. Solo se aplica al capturar
-        // (tomarFoto/dibujarCuadro), igual que siempre; el botón de rotación
-        // manual de abajo corrige a ciegas si hace falta, sin vista previa.
+        // (tomarFoto/dibujarCuadro), igual que siempre.
         <video
           ref={videoRef}
           autoPlay
@@ -455,15 +368,14 @@ export function CamaraHistoria({
         )}
         {!error ? (
           <div className="flex items-center gap-2">
-            {/* Ajuste manual de emergencia: si el detector automático del
-                acelerómetro adivina mal en este equipo/navegador (pasa en
-                algunos), el usuario ve la vista previa girada acá mismo y
-                puede corregirla a mano, sin depender de otro despliegue. */}
+            {/* Corrección de orientación 100% manual (sin detección
+                automática, ver comentario arriba): gira 90° a la izquierda
+                cada toque. */}
             <button
               type="button"
               onClick={() => setAnguloManual((a) => sumarAngulos(a, 270))}
               disabled={grabando}
-              aria-label="Girar imagen a la izquierda si se ve mal"
+              aria-label="Girar imagen a la izquierda"
               className="flex h-9 w-9 items-center justify-center rounded-full bg-black/40 text-white disabled:opacity-40"
             >
               <IconRotate2 size={20} />
