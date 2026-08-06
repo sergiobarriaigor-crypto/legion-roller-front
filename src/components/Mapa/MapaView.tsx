@@ -19,11 +19,13 @@ import {
 } from "@/lib/rodadas";
 import { ETIQUETA_MOTIVO, type EmergenciaActiva } from "@/lib/emergencias";
 import { salaIndividual } from "@/lib/chat";
+import { obtenerSocket } from "@/lib/socket";
 import { tiempoTranscurrido } from "@/lib/tiempo";
 import { notificarme } from "@/lib/push";
 import { PatinadoresActivosPanel } from "@/components/Mapa/PatinadoresActivosPanel";
 import { MisRutasPanel } from "@/components/Mapa/MisRutasPanel";
 import { ChatFlotante } from "@/components/Mapa/ChatFlotante";
+import { MarcadorAnimado } from "@/components/Mapa/MarcadorAnimado";
 import { useNoAutofill } from "@/lib/useNoAutofill";
 
 const MAX_CARACTERES_RECONOCIMIENTO = 100;
@@ -121,6 +123,16 @@ const RADIO_ASISTENCIA_KM = 2;
 
 // Mismo patrón de tap-vs-hold que el botón central del bottom-nav.
 const HOLD_MS_CENTRAR = 1500;
+
+// Envío de la posición propia mientras hay movimiento real: antes de esto
+// solo existía el heartbeat de 20s (más abajo), así que quien te veía en el
+// mapa notaba tu posición con hasta 20s de retraso sin importar qué tan
+// rápido te movieras. Con este umbral, mientras patinás de verdad, tu
+// posición llega a los demás casi en el momento -- el heartbeat de 20s sigue
+// existiendo tal cual, para el caso de quedarse quieto (acá nunca se
+// dispara porque la distancia no cambia).
+const INTERVALO_MIN_ENVIO_MS = 3000;
+const DISTANCIA_MIN_ENVIO_KM = 0.01; // ~10m
 
 // Capas de mapa disponibles (botón inferior izquierdo): estándar (OpenStreetMap,
 // ya usado en el resto de la app) y satélite (Esri World Imagery, gratis y sin
@@ -464,6 +476,11 @@ export function MapaView() {
   const puntosGrabadosRef = useRef<PuntoGps[]>([]);
   const tokenRef = useRef<string | null>(null);
   const necesitaEnvioInicialRef = useRef(false);
+  // Envío de la posición propia mientras hay movimiento real (ver comentario
+  // junto a INTERVALO_MIN_ENVIO_MS más abajo) -- independiente del heartbeat
+  // de 20s que ya existe (ese solo evita que expire UbicacionActiva).
+  const ultimoEnvioEnRef = useRef(0);
+  const ultimaPosEnviadaRef = useRef<{ lat: number; lon: number } | null>(null);
   const ultimaPosSignificativaRef = useRef<PuntoGps | null>(null);
   const ultimoMovimientoEnRef = useRef<number>(Date.now());
   const avisoInactividadRef = useRef(false);
@@ -692,6 +709,8 @@ export function MapaView() {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setPosicion(null);
       posicionRef.current = null;
+      ultimoEnvioEnRef.current = 0;
+      ultimaPosEnviadaRef.current = null;
       marcarSiguiendo(false);
       return;
     }
@@ -721,6 +740,25 @@ export function MapaView() {
         if (necesitaEnvioInicialRef.current && tokenRef.current) {
           necesitaEnvioInicialRef.current = false;
           apiPost("/mapa/patinando", { ...punto, modo: modoRef.current }, tokenRef.current).catch(() => {});
+          ultimoEnvioEnRef.current = Date.now();
+          ultimaPosEnviadaRef.current = punto;
+        } else if (tokenRef.current) {
+          // Ver INTERVALO_MIN_ENVIO_MS/DISTANCIA_MIN_ENVIO_KM más arriba: esto
+          // es lo que baja la latencia real de "los demás me ven moverme" --
+          // el heartbeat de 20s de abajo sigue existiendo aparte, sin tocar.
+          const ahora = Date.now();
+          const pasoTiempoMinimo = ahora - ultimoEnvioEnRef.current >= INTERVALO_MIN_ENVIO_MS;
+          const distanciaKm = ultimaPosEnviadaRef.current
+            ? distanciaHaversineKm(
+                { ...ultimaPosEnviadaRef.current, timestamp: 0 },
+                { ...punto, timestamp: 0 },
+              )
+            : Infinity;
+          if (pasoTiempoMinimo && distanciaKm >= DISTANCIA_MIN_ENVIO_KM) {
+            ultimoEnvioEnRef.current = ahora;
+            ultimaPosEnviadaRef.current = punto;
+            apiPost("/mapa/patinando", { ...punto, modo: modoRef.current }, tokenRef.current).catch(() => {});
+          }
         }
 
         if (necesitaRevisarRodadaRef.current && tokenRef.current) {
@@ -835,9 +873,44 @@ export function MapaView() {
     }
 
     cargarOtros();
-    const intervalo = setInterval(cargarOtros, 15000);
+    // La sincronización en vivo ahora la hace el socket (ver el próximo
+    // useEffect, evento "mapa:ubicacion"/"mapa:detener") -- este polling
+    // queda solo como respaldo de reconciliación (una desconexión breve del
+    // socket, o alguien que expiró en el backend sin avisar), por eso el
+    // intervalo se alargó bastante respecto al valor original (15s).
+    const intervalo = setInterval(cargarOtros, 45000);
     return () => clearInterval(intervalo);
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, sesion?.id]);
+
+  // Sincronización en vivo de "otros" por WebSocket -- baja la latencia de
+  // ~15s (polling) a casi inmediata. cargarOtros (arriba) sigue haciendo la
+  // carga inicial al montar y la restauración de "mi modo" tras remontar.
+  useEffect(() => {
+    if (!token) return;
+    const socket = obtenerSocket(token);
+
+    function alRecibirUbicacion(actualizado: OtroMiembro) {
+      if (actualizado.miembroId === sesion?.id) return;
+      setOtros((prev) => {
+        const index = prev.findIndex((m) => m.miembroId === actualizado.miembroId);
+        if (index === -1) return [...prev, actualizado];
+        const copia = [...prev];
+        copia[index] = actualizado;
+        return copia;
+      });
+    }
+
+    function alRecibirDetencion({ miembroId }: { miembroId: number }) {
+      setOtros((prev) => prev.filter((m) => m.miembroId !== miembroId));
+    }
+
+    socket.on("mapa:ubicacion", alRecibirUbicacion);
+    socket.on("mapa:detener", alRecibirDetencion);
+    return () => {
+      socket.off("mapa:ubicacion", alRecibirUbicacion);
+      socket.off("mapa:detener", alRecibirDetencion);
+    };
   }, [token, sesion?.id]);
 
   // Etiqueta SOS roja: emergencias activas de otros miembros con ubicación conocida.
@@ -1403,7 +1476,7 @@ export function MapaView() {
             const representante = grupo[0];
             const extra = grupo.length - 1;
             return (
-              <Marker
+              <MarcadorAnimado
                 key={representante.miembroId}
                 position={[representante.lat, representante.lon]}
                 icon={crearIconoAvatar({
@@ -1424,7 +1497,7 @@ export function MapaView() {
                     />
                   </Popup>
                 )}
-              </Marker>
+              </MarcadorAnimado>
             );
           })}
           {puntosPartida.map((p) => (
