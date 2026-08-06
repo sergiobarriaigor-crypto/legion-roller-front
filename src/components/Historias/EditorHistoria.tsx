@@ -9,6 +9,7 @@ import {
   IconMapPin,
   IconMusic,
   IconPhotoPlus,
+  IconRotateClockwise2,
   IconX,
 } from "@tabler/icons-react";
 import { apiUpload, ApiError } from "@/lib/api";
@@ -114,6 +115,11 @@ export function EditorHistoria({
   // Instagram). En "ajustar" no se puede mover/hacer zoom (no tendría
   // sentido, ya se ve todo).
   const [modoEncuadre, setModoEncuadre] = useState<"cubrir" | "ajustar">("cubrir");
+  // Rotación manual (botón "Girar"): red de seguridad para fotos que llegan
+  // giradas sin importar la fuente (Captura Express, cámara nativa o
+  // galería) -- el usuario la corrige acá mismo, sin depender de que ningún
+  // detector automático acierte.
+  const [rotacionManual, setRotacionManual] = useState<0 | 90 | 180 | 270>(0);
   const punterosFotoRef = useRef(new Map<number, { x: number; y: number }>());
   const gestoFotoRef = useRef<{
     modo: "arrastrar" | "pellizcar" | null;
@@ -203,6 +209,7 @@ export function EditorHistoria({
     setZoomFoto(1);
     setPanFotoFrac({ x: 0, y: 0 });
     setModoEncuadre("cubrir");
+    setRotacionManual(0);
     const url = URL.createObjectURL(archivoInicial);
     const esVideo = archivoInicial.type.startsWith("video/");
 
@@ -275,30 +282,43 @@ export function EditorHistoria({
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, cw, ch);
 
+    // Ancho/alto "efectivos" (post-rotación manual): con 90/270 la imagen
+    // ocupa el marco en sentido contrario -- mismo criterio que
+    // dimensionesTransformadas en orientacionFoto.ts.
+    const rotado = rotacionManual === 90 || rotacionManual === 270;
+    const anchoEfectivo = rotado ? img.naturalHeight : img.naturalWidth;
+    const altoEfectivo = rotado ? img.naturalWidth : img.naturalHeight;
+
     if (modoEncuadre === "ajustar") {
-      const escalaFondo = Math.max(cw / img.naturalWidth, ch / img.naturalHeight);
+      const escalaFondo = Math.max(cw / anchoEfectivo, ch / altoEfectivo);
       const anchoFondo = img.naturalWidth * escalaFondo;
       const altoFondo = img.naturalHeight * escalaFondo;
+      ctx.save();
+      ctx.translate(cw / 2, ch / 2);
+      ctx.rotate((rotacionManual * Math.PI) / 180);
       ctx.filter = filtroFondoAjustar(filtro.css);
-      ctx.drawImage(img, (cw - anchoFondo) / 2, (ch - altoFondo) / 2, anchoFondo, altoFondo);
+      ctx.drawImage(img, -anchoFondo / 2, -altoFondo / 2, anchoFondo, altoFondo);
 
-      const escala = Math.min(cw / img.naturalWidth, ch / img.naturalHeight);
+      const escala = Math.min(cw / anchoEfectivo, ch / altoEfectivo);
       const ancho = img.naturalWidth * escala;
       const alto = img.naturalHeight * escala;
       ctx.filter = filtro.css;
-      ctx.drawImage(img, (cw - ancho) / 2, (ch - alto) / 2, ancho, alto);
+      ctx.drawImage(img, -ancho / 2, -alto / 2, ancho, alto);
+      ctx.restore();
       return;
     }
 
-    const baseScale = Math.max(cw / img.naturalWidth, ch / img.naturalHeight);
+    const baseScale = Math.max(cw / anchoEfectivo, ch / altoEfectivo);
     const escala = baseScale * zoomFoto;
     const anchoDibujo = img.naturalWidth * escala;
     const altoDibujo = img.naturalHeight * escala;
-    const x = (cw - anchoDibujo) / 2 + panFotoFrac.x * cw;
-    const y = (ch - altoDibujo) / 2 + panFotoFrac.y * ch;
 
+    ctx.save();
+    ctx.translate(cw / 2 + panFotoFrac.x * cw, ch / 2 + panFotoFrac.y * ch);
+    ctx.rotate((rotacionManual * Math.PI) / 180);
     ctx.filter = filtro.css;
-    ctx.drawImage(img, x, y, anchoDibujo, altoDibujo);
+    ctx.drawImage(img, -anchoDibujo / 2, -altoDibujo / 2, anchoDibujo, altoDibujo);
+    ctx.restore();
   }
 
   // Recorta panDeseado (en fracción del contenedor) para que la foto nunca
@@ -311,10 +331,16 @@ export function EditorHistoria({
     const cw = canvas.clientWidth;
     const ch = canvas.clientHeight;
     if (cw === 0 || ch === 0) return panDeseado;
-    const baseScale = Math.max(cw / img.naturalWidth, ch / img.naturalHeight);
+    // El cuadro delimitador visible tras rotar 90/270 queda con ancho/alto
+    // invertidos respecto a la imagen original -- por eso se clampea contra
+    // las dimensiones "efectivas", igual que en dibujarFoto.
+    const rotado = rotacionManual === 90 || rotacionManual === 270;
+    const anchoEfectivo = rotado ? img.naturalHeight : img.naturalWidth;
+    const altoEfectivo = rotado ? img.naturalWidth : img.naturalHeight;
+    const baseScale = Math.max(cw / anchoEfectivo, ch / altoEfectivo);
     const escala = baseScale * zoomActual;
-    const anchoDibujo = img.naturalWidth * escala;
-    const altoDibujo = img.naturalHeight * escala;
+    const anchoDibujo = anchoEfectivo * escala;
+    const altoDibujo = altoEfectivo * escala;
     const maxXfrac = Math.max(0, (anchoDibujo - cw) / 2) / cw;
     const maxYfrac = Math.max(0, (altoDibujo - ch) / 2) / ch;
     return {
@@ -351,7 +377,7 @@ export function EditorHistoria({
     observer.observe(contenedor);
     return () => observer.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tipo, previewUrl, zoomFoto, panFotoFrac, filtro, modoEncuadre]);
+  }, [tipo, previewUrl, zoomFoto, panFotoFrac, filtro, modoEncuadre, rotacionManual]);
 
   function puntoDesdeEventoFoto(e: React.PointerEvent) {
     const rect = canvasFotoRef.current?.getBoundingClientRect();
@@ -424,6 +450,11 @@ export function EditorHistoria({
     setPanFotoFrac({ x: 0, y: 0 });
   }
 
+  function girarFoto() {
+    setRotacionManual((prev) => (((prev + 90) % 360) as 0 | 90 | 180 | 270));
+    setPanFotoFrac({ x: 0, y: 0 });
+  }
+
   function abrirEdicionTexto() {
     setBorradorTexto(estiloTexto?.contenido ?? "");
     setMostrarInputTexto(true);
@@ -491,6 +522,7 @@ export function EditorHistoria({
                 modo: modoEncuadre,
                 zoom: zoomFoto,
                 panFrac: panFotoFrac,
+                rotacion: rotacionManual,
               })
             : archivoInicial;
       const nombreArchivo = videoRecortadoBlob && archivoASubir === videoRecortadoBlob
@@ -713,6 +745,21 @@ export function EditorHistoria({
                 }`}
               >
                 <IconArrowsMaximize size={18} />
+              </button>
+            )}
+            {/* Sexto control: gira la foto 90° -- red de seguridad manual
+                para cuando llega girada (de cualquier fuente: Captura
+                Express, cámara nativa o galería), sin depender de que
+                ningún detector automático acierte. */}
+            {tipo === "foto" && (
+              <button
+                type="button"
+                onClick={girarFoto}
+                aria-label="Girar foto"
+                title="Girar foto"
+                className="absolute right-3 top-[14.5rem] z-10 flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white"
+              >
+                <IconRotateClockwise2 size={18} />
               </button>
             )}
             {/* Se escucha en vivo mientras se edita — lo que se oye acá es lo

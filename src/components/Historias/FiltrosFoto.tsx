@@ -41,9 +41,18 @@ export interface EncuadreFoto {
   modo: "cubrir" | "ajustar";
   zoom: number;
   panFrac: { x: number; y: number };
+  // Rotación manual (0/90/180/270) que el usuario aplica con el botón de
+  // girar del editor -- red de seguridad para fotos que llegan giradas (de
+  // cualquier fuente) sin depender de que la detección automática acierte.
+  rotacion: 0 | 90 | 180 | 270;
 }
 
-const ENCUADRE_DEFECTO: EncuadreFoto = { modo: "cubrir", zoom: 1, panFrac: { x: 0, y: 0 } };
+const ENCUADRE_DEFECTO: EncuadreFoto = {
+  modo: "cubrir",
+  zoom: 1,
+  panFrac: { x: 0, y: 0 },
+  rotacion: 0,
+};
 
 // Filtro combinado del fondo en modo "ajustar": el filtro de color elegido +
 // desenfoque + oscurecido, para que el primer plano (la foto completa, nítida)
@@ -75,34 +84,44 @@ export function prepararFotoHistoria(
         return;
       }
 
+      // Ancho/alto "efectivos" (post-rotación manual) para los cálculos de
+      // escala -- con 90/270 la imagen ocupa el marco en sentido contrario,
+      // igual que dimensionesTransformadas en orientacionFoto.ts.
+      const rotado = encuadre.rotacion === 90 || encuadre.rotacion === 270;
+      const anchoEfectivo = rotado ? img.naturalHeight : img.naturalWidth;
+      const altoEfectivo = rotado ? img.naturalWidth : img.naturalHeight;
+
       if (encuadre.modo === "ajustar") {
-        const escalaFondo = Math.max(ANCHO_HISTORIA / img.naturalWidth, ALTO_HISTORIA / img.naturalHeight);
+        const escalaFondo = Math.max(ANCHO_HISTORIA / anchoEfectivo, ALTO_HISTORIA / altoEfectivo);
         const anchoFondo = img.naturalWidth * escalaFondo;
         const altoFondo = img.naturalHeight * escalaFondo;
+        ctx.save();
+        ctx.translate(ANCHO_HISTORIA / 2, ALTO_HISTORIA / 2);
+        ctx.rotate((encuadre.rotacion * Math.PI) / 180);
         ctx.filter = filtroFondoAjustar(filtroCss);
-        ctx.drawImage(
-          img,
-          (ANCHO_HISTORIA - anchoFondo) / 2,
-          (ALTO_HISTORIA - altoFondo) / 2,
-          anchoFondo,
-          altoFondo,
-        );
+        ctx.drawImage(img, -anchoFondo / 2, -altoFondo / 2, anchoFondo, altoFondo);
 
-        const escala = Math.min(ANCHO_HISTORIA / img.naturalWidth, ALTO_HISTORIA / img.naturalHeight);
+        const escala = Math.min(ANCHO_HISTORIA / anchoEfectivo, ALTO_HISTORIA / altoEfectivo);
         const ancho = img.naturalWidth * escala;
         const alto = img.naturalHeight * escala;
         ctx.filter = filtroCss;
-        ctx.drawImage(img, (ANCHO_HISTORIA - ancho) / 2, (ALTO_HISTORIA - alto) / 2, ancho, alto);
+        ctx.drawImage(img, -ancho / 2, -alto / 2, ancho, alto);
+        ctx.restore();
       } else {
-        const baseScale = Math.max(ANCHO_HISTORIA / img.naturalWidth, ALTO_HISTORIA / img.naturalHeight);
+        const baseScale = Math.max(ANCHO_HISTORIA / anchoEfectivo, ALTO_HISTORIA / altoEfectivo);
         const escala = baseScale * encuadre.zoom;
         const anchoDestino = img.naturalWidth * escala;
         const altoDestino = img.naturalHeight * escala;
-        const x = (ANCHO_HISTORIA - anchoDestino) / 2 + encuadre.panFrac.x * ANCHO_HISTORIA;
-        const y = (ALTO_HISTORIA - altoDestino) / 2 + encuadre.panFrac.y * ALTO_HISTORIA;
 
+        ctx.save();
+        ctx.translate(
+          ANCHO_HISTORIA / 2 + encuadre.panFrac.x * ANCHO_HISTORIA,
+          ALTO_HISTORIA / 2 + encuadre.panFrac.y * ALTO_HISTORIA,
+        );
+        ctx.rotate((encuadre.rotacion * Math.PI) / 180);
         ctx.filter = filtroCss;
-        ctx.drawImage(img, x, y, anchoDestino, altoDestino);
+        ctx.drawImage(img, -anchoDestino / 2, -altoDestino / 2, anchoDestino, altoDestino);
+        ctx.restore();
       }
 
       canvas.toBlob(
