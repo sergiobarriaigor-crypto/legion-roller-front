@@ -34,11 +34,17 @@ const TIPOS_VIDEO_CANDIDATOS = ["video/webm;codecs=vp9,opus", "video/webm;codecs
 // tiene más gravedad es robusto ante esa inclinación extra, porque no
 // depende de combinar los tres ángulos de Euler a la vez.
 //
-// Nota sobre el signo: la convención de qué signo corresponde a cada lado no
-// es 100% universal entre fabricantes. Si en la práctica algún equipo queda
-// con la corrección invertida, alcanza con cambiar el 90 por 270 (si el
-// problema es de lado) o el 0 por 180 (si el problema es de cabeza) en las
-// líneas de abajo -- no hace falta tocar nada más.
+// Nota sobre el signo: la convención de qué signo/eje corresponde a cada
+// lado no es 100% universal entre fabricantes. Confirmado en pruebas reales
+// del usuario: sosteniendo el teléfono en horizontal, el resultado salía
+// "invertido" (180°, la rama de abajo) en vez de rotado de lado (90/270) --
+// evidencia de que en ese equipo/navegador la gravedad de sostener el
+// teléfono de lado se carga sobre el eje Y, no sobre X como se asumió al
+// principio. Por eso el eje que decide "de lado" (90/270) es Y y el que
+// decide "de cabeza" (0/180) es X. Si en otro equipo vuelve a salir al
+// revés, alcanza con cambiar el 90 por 270 (si el problema es de lado) o el
+// 0 por 180 (si el problema es de cabeza) en las líneas de abajo -- no hace
+// falta tocar nada más.
 //
 // Caso especial -- teléfono casi PLANO apuntando hacia abajo/arriba (por
 // ejemplo fotografiando algo en una mesa desde encima, sosteniendo el
@@ -60,10 +66,10 @@ function calcularAnguloCorreccion(
 ): 0 | 90 | 180 | 270 {
   if (x === null || y === null) return anguloAnterior;
   if (Math.hypot(x, y) < UMBRAL_GRAVEDAD_HORIZONTAL_CONFIABLE) return anguloAnterior;
-  if (Math.abs(x) > Math.abs(y)) {
-    return x > 0 ? 90 : 270;
+  if (Math.abs(y) > Math.abs(x)) {
+    return y > 0 ? 90 : 270;
   }
-  return y > 0 ? 0 : 180;
+  return x > 0 ? 0 : 180;
 }
 
 interface Embellecimiento {
