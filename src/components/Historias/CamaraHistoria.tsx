@@ -34,20 +34,14 @@ const TIPOS_VIDEO_CANDIDATOS = ["video/webm;codecs=vp9,opus", "video/webm;codecs
 // tiene más gravedad es robusto ante esa inclinación extra, porque no
 // depende de combinar los tres ángulos de Euler a la vez.
 //
-// Nota sobre el signo: se probó en un momento intercambiar qué eje decide
-// "de lado" (90/270) vs "de cabeza" (0/180) pensando que la convención venía
-// al revés, pero una prueba posterior con un dato preciso del usuario
-// (sosteniendo el teléfono en horizontal con la cámara frontal hacia la
-// izquierda -- una rotación física de 90° antihorario) permitió calcular a
-// mano, con la fórmula estándar de proyección de gravedad sobre los ejes del
-// dispositivo, que la asignación ORIGINAL ya era la correcta: X decide "de
-// lado" (90/270), Y decide "de cabeza" (0/180). El caso que parecía indicar
-// lo contrario ("invertido" sosteniendo de lado) en realidad correspondía al
-// caso especial de abajo (teléfono casi plano apuntando a una mesa), no a un
-// eje mal asignado -- por eso se revirtió el intercambio. Si en otro equipo
-// vuelve a salir al revés, alcanza con cambiar el 90 por 270 (si el problema
-// es de lado) o el 0 por 180 (si el problema es de cabeza) en las líneas de
-// abajo -- no hace falta tocar nada más.
+// Nota sobre el signo/eje: en las pruebas reales del usuario, ni la
+// asignación original (X = de lado, Y = de cabeza) ni el cálculo teórico
+// terminaron siendo confiables en su equipo -- distintas tomas dieron
+// resultados contradictorios entre sí. Se dejó fijo Y = de lado (90/270),
+// X = de cabeza (0/180) por pedido explícito del usuario, sabiendo que el
+// detector automático puede seguir sin acertar siempre en todos los
+// equipos; para eso está el botón de rotación manual más abajo, que no
+// depende de este cálculo.
 //
 // Caso especial -- teléfono casi PLANO apuntando hacia abajo/arriba (por
 // ejemplo fotografiando algo en una mesa desde encima, sosteniendo el
@@ -69,10 +63,10 @@ function calcularAnguloCorreccion(
 ): 0 | 90 | 180 | 270 {
   if (x === null || y === null) return anguloAnterior;
   if (Math.hypot(x, y) < UMBRAL_GRAVEDAD_HORIZONTAL_CONFIABLE) return anguloAnterior;
-  if (Math.abs(x) > Math.abs(y)) {
-    return x > 0 ? 90 : 270;
+  if (Math.abs(y) > Math.abs(x)) {
+    return y > 0 ? 90 : 270;
   }
-  return y > 0 ? 0 : 180;
+  return x > 0 ? 0 : 180;
 }
 
 function sumarAngulos(a: 0 | 90 | 180 | 270, b: 0 | 90 | 180 | 270): 0 | 90 | 180 | 270 {
@@ -421,20 +415,19 @@ export function CamaraHistoria({
         // no queda espejado, porque canvas/MediaRecorder leen el cuadro real
         // de la cámara, no el CSS aplicado acá.
         //
-        // La rotación (anguloEfectivo) sí se aplica también acá en vivo,
-        // encima del cuadro crudo -- así el usuario ve de entrada si la
-        // corrección automática del acelerómetro acertó o no, en vez de
-        // enterarse recién después de tomar la foto. El encuadre puede verse
-        // recortado/agrandado mientras hay rotación (es solo de vista previa,
-        // no afecta cómo tomarFoto/dibujarCuadro arman el archivo final).
+        // La corrección de rotación (anguloEfectivo) NO se aplica acá en
+        // vivo a propósito -- se probó y quedaba recortada/deforme dentro del
+        // encuadre fijo de la vista previa. Solo se aplica al capturar
+        // (tomarFoto/dibujarCuadro), igual que siempre; el botón de rotación
+        // manual de abajo corrige a ciegas si hace falta, sin vista previa.
         <video
           ref={videoRef}
           autoPlay
           muted
           playsInline
-          className="absolute inset-0 z-0 h-full w-full object-cover transition-transform duration-150"
+          className="absolute inset-0 z-0 h-full w-full object-cover"
           style={{
-            transform: `${camaraFrontal ? "scaleX(-1) " : ""}rotate(${anguloEfectivo}deg)`,
+            ...(camaraFrontal ? { transform: "scaleX(-1)" } : null),
             filter: filtroCombinado(),
           }}
         />
