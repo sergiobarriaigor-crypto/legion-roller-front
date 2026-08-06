@@ -16,6 +16,27 @@ export function soportaCamaraEnVivo(): boolean {
 
 const TIPOS_VIDEO_CANDIDATOS = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
 
+// "Captura Express" (a diferencia de la cámara nativa, que sí sabe la
+// orientación real porque escribe el tag EXIF leyendo el acelerómetro) no
+// tiene forma de detectar que el teléfono está girado a través de la
+// orientación de la PANTALLA: si el usuario tiene el bloqueo de rotación
+// activado (lo más común), la pantalla nunca gira aunque el teléfono sí, y
+// el cuadro de la cámara queda grabado "acostado". La solución es la misma
+// que usa la cámara nativa: leer el acelerómetro directo (DeviceOrientation),
+// no la orientación de la pantalla.
+//
+// Nota sobre el signo: gamma > 0 significa que el teléfono se inclinó hacia
+// la derecha. Si en la práctica algún equipo queda con la corrección
+// invertida (gira para el lado contrario), alcanza con cambiar el 270 por 90
+// y viceversa acá abajo -- no hace falta tocar nada más.
+function calcularAnguloCorreccion(beta: number | null, gamma: number | null): 0 | 90 | 180 | 270 {
+  if (beta === null || gamma === null) return 0;
+  if (Math.abs(gamma) > 45) {
+    return gamma > 0 ? 270 : 90;
+  }
+  return beta < 0 ? 180 : 0;
+}
+
 interface Embellecimiento {
   id: string;
   nombre: string;
@@ -80,6 +101,12 @@ export function CamaraHistoria({
   const idIntervaloRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const idLimiteRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const idCuadroRef = useRef<number | null>(null);
+  // Grados que hay que rotar el cuadro capturado para que quede derecho,
+  // según el acelerómetro real del teléfono (no la orientación de la
+  // pantalla) — ver calcularAnguloCorreccion arriba. Va en un ref (no
+  // estado) porque cambia muy seguido y solo se lee al capturar, no hace
+  // falta re-renderizar por cada lectura del sensor.
+  const anguloCorreccionRef = useRef<0 | 90 | 180 | 270>(0);
 
   const [modo, setModo] = useState<"foto" | "video">("foto");
   const [listo, setListo] = useState(false);
@@ -135,6 +162,27 @@ export function CamaraHistoria({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // iOS 13+ exige pedir permiso explícito para leer el acelerómetro (debe
+  // pedirse dentro de un gesto del usuario -- abrir la cámara ya lo es). En
+  // Android no existe este paso, `requestPermission` simplemente no existe
+  // ahí y se sigue de largo. Si el permiso se niega o el navegador no
+  // soporta el sensor, el ángulo queda en 0 (comportamiento de siempre, sin
+  // regresión).
+  useEffect(() => {
+    const DeviceOrientationEventConCompat = window.DeviceOrientationEvent as unknown as {
+      requestPermission?: () => Promise<"granted" | "denied">;
+    };
+    if (typeof DeviceOrientationEventConCompat?.requestPermission === "function") {
+      DeviceOrientationEventConCompat.requestPermission().catch(() => {});
+    }
+
+    function alOrientar(e: DeviceOrientationEvent) {
+      anguloCorreccionRef.current = calcularAnguloCorreccion(e.beta, e.gamma);
+    }
+    window.addEventListener("deviceorientation", alOrientar);
+    return () => window.removeEventListener("deviceorientation", alOrientar);
+  }, []);
+
   // Gira entre trasera/frontal soltando la cámara actual ANTES de pedir la
   // otra: casi ningún celular puede tener dos cámaras activas a la vez (un
   // solo chip de cámara), así que pedir la nueva con la vieja todavía
@@ -172,13 +220,19 @@ export function CamaraHistoria({
   function tomarFoto() {
     const video = videoRef.current;
     if (!video || !video.videoWidth) return;
+    const angulo = anguloCorreccionRef.current;
+    const rotado = angulo === 90 || angulo === 270;
     const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    canvas.width = rotado ? video.videoHeight : video.videoWidth;
+    canvas.height = rotado ? video.videoWidth : video.videoHeight;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.filter = filtroCombinado();
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    ctx.save();
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.rotate((angulo * Math.PI) / 180);
+    ctx.drawImage(video, -video.videoWidth / 2, -video.videoHeight / 2, video.videoWidth, video.videoHeight);
+    ctx.restore();
     canvas.toBlob(
       (blob) => {
         if (!blob) return;
@@ -221,13 +275,23 @@ export function CamaraHistoria({
     function dibujarCuadro() {
       if (!ctx) return;
       if (video && video.videoWidth) {
-        const escala = Math.max(ANCHO_HISTORIA / video.videoWidth, ALTO_HISTORIA / video.videoHeight);
+        // Igual que en tomarFoto: si el teléfono está girado según el
+        // acelerómetro, el ancho/alto "efectivo" (post-rotación) es el que
+        // hay que cubrir con el lienzo -- pero el drawImage sigue usando las
+        // dimensiones ORIGINALES del video, rotado alrededor del centro.
+        const angulo = anguloCorreccionRef.current;
+        const rotado = angulo === 90 || angulo === 270;
+        const anchoEfectivo = rotado ? video.videoHeight : video.videoWidth;
+        const altoEfectivo = rotado ? video.videoWidth : video.videoHeight;
+        const escala = Math.max(ANCHO_HISTORIA / anchoEfectivo, ALTO_HISTORIA / altoEfectivo);
         const anchoDestino = video.videoWidth * escala;
         const altoDestino = video.videoHeight * escala;
-        const x = (ANCHO_HISTORIA - anchoDestino) / 2;
-        const y = (ALTO_HISTORIA - altoDestino) / 2;
         ctx.filter = filtroCombinado();
-        ctx.drawImage(video, x, y, anchoDestino, altoDestino);
+        ctx.save();
+        ctx.translate(ANCHO_HISTORIA / 2, ALTO_HISTORIA / 2);
+        ctx.rotate((angulo * Math.PI) / 180);
+        ctx.drawImage(video, -anchoDestino / 2, -altoDestino / 2, anchoDestino, altoDestino);
+        ctx.restore();
       } else {
         ctx.fillStyle = "#000000";
         ctx.fillRect(0, 0, ANCHO_HISTORIA, ALTO_HISTORIA);
