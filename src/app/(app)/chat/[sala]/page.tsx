@@ -6,6 +6,8 @@ import Link from "next/link";
 import {
   IconArrowBackUp,
   IconArrowForwardUp,
+  IconBell,
+  IconBellOff,
   IconCheck,
   IconChevronLeft,
   IconCloud,
@@ -26,11 +28,14 @@ import { apiGet, apiUploadConProgreso, ApiError } from "@/lib/api";
 import { comprimirFotoChat } from "@/lib/comprimirImagen";
 import { obtenerSocket } from "@/lib/socket";
 import { tiempoTranscurrido } from "@/lib/tiempo";
+import { pushDisponible, estaSuscrito } from "@/lib/push";
 import type { PuntoGps } from "@/lib/geo";
 import {
+  actualizarSilenciado,
   estadoDeMiembro,
   fijarMensaje,
   mensajesFijados,
+  obtenerSilenciado,
   type Conversaciones,
   type EstadoMiembro,
   type EventoFijado,
@@ -132,6 +137,8 @@ export default function ConversacionPage() {
   const [mostrarUbicacion, setMostrarUbicacion] = useState(false);
   const [mostrarRuta, setMostrarRuta] = useState(false);
   const [mostrarAlbum, setMostrarAlbum] = useState(false);
+  const [silenciado, setSilenciado] = useState(false);
+  const [puedeSilenciar, setPuedeSilenciar] = useState(false);
   const [mostrarEncuesta, setMostrarEncuesta] = useState(false);
   const [fijados, setFijados] = useState<MensajeFijado[]>([]);
   const [subida, setSubida] = useState<{ etiqueta: string; pct: number } | null>(null);
@@ -253,6 +260,33 @@ export default function ConversacionPage() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, sala]);
+
+  useEffect(() => {
+    if (!pushDisponible()) return;
+    let cancelado = false;
+    estaSuscrito().then((suscrito) => {
+      if (cancelado) return;
+      setPuedeSilenciar(suscrito);
+      if (!suscrito || !token) return;
+      obtenerSilenciado(sala, token).then((datos) => {
+        if (!cancelado) setSilenciado(datos.silenciado);
+      });
+    });
+    return () => {
+      cancelado = true;
+    };
+  }, [token, sala]);
+
+  async function alSilenciar() {
+    if (!token) return;
+    const nuevo = !silenciado;
+    setSilenciado(nuevo);
+    try {
+      await actualizarSilenciado(sala, nuevo, token);
+    } catch {
+      setSilenciado(!nuevo);
+    }
+  }
 
   function irAMensaje(mensajeId: number) {
     document.getElementById(`mensaje-${mensajeId}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -548,6 +582,16 @@ export default function ConversacionPage() {
           <h1 className="text-sm font-semibold text-text-accent">{titulo}</h1>
           {estadoTexto && <p className="truncate text-xs text-text-muted">{estadoTexto}</p>}
         </div>
+        {puedeSilenciar && (
+          <button
+            type="button"
+            onClick={alSilenciar}
+            aria-label={silenciado ? "Activar notificaciones" : "Silenciar notificaciones"}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-text-secondary"
+          >
+            {silenciado ? <IconBellOff size={22} /> : <IconBell size={22} />}
+          </button>
+        )}
         <button
           type="button"
           onClick={() => setMostrarClima(true)}
@@ -568,7 +612,7 @@ export default function ConversacionPage() {
     );
     return () => setChatHeader(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [otro, sala, titulo, estadoTexto]);
+  }, [otro, sala, titulo, estadoTexto, puedeSilenciar, silenciado]);
 
   return (
     <div ref={raizRef} className="relative flex h-full flex-col gap-3">

@@ -211,6 +211,18 @@ export function marcarLeido(sala: string, token: string | null) {
   return apiPost<{ ok: true }>(`/chat/mensajes/${sala}/marcar-leido`, {}, token);
 }
 
+export function obtenerSilenciado(sala: string, token: string | null) {
+  return apiGet<{ silenciado: boolean }>(`/chat/mensajes/${sala}/silenciar`, token);
+}
+
+export function actualizarSilenciado(sala: string, silenciado: boolean, token: string | null) {
+  return apiPost<{ ok: true; silenciado: boolean }>(
+    `/chat/mensajes/${sala}/silenciar`,
+    { silenciado },
+    token,
+  );
+}
+
 export function eliminarMensaje(
   mensajeId: number,
   modo: "todos" | "mi",
