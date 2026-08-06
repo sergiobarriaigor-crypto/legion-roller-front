@@ -39,8 +39,27 @@ const TIPOS_VIDEO_CANDIDATOS = ["video/webm;codecs=vp9,opus", "video/webm;codecs
 // con la corrección invertida, alcanza con cambiar el 90 por 270 (si el
 // problema es de lado) o el 0 por 180 (si el problema es de cabeza) en las
 // líneas de abajo -- no hace falta tocar nada más.
-function calcularAnguloCorreccion(x: number | null, y: number | null): 0 | 90 | 180 | 270 {
-  if (x === null || y === null) return 0;
+//
+// Caso especial -- teléfono casi PLANO apuntando hacia abajo/arriba (por
+// ejemplo fotografiando algo en una mesa desde encima, sosteniendo el
+// teléfono en horizontal pero con la cámara mirando al piso): ahí la
+// gravedad queda casi toda en el eje Z (perpendicular a la pantalla), y x/y
+// se acercan a cero -- comparar cuál de los dos es "mayor" en ese momento es
+// básicamente ruido, porque ninguno tiene una lectura confiable. Por eso
+// solo se ACTUALIZA el ángulo cuando la gravedad horizontal (x/y combinada)
+// supera un umbral mínimo; si el teléfono está casi plano, se mantiene el
+// último ángulo confiable en vez de arriesgar un valor sin sentido (esto
+// requiere que en algún momento, al acomodar el encuadre, el teléfono haya
+// pasado por una inclinación más clara -- lo normal al armar una toma).
+const UMBRAL_GRAVEDAD_HORIZONTAL_CONFIABLE = 3; // m/s^2, de ~9.8 totales
+
+function calcularAnguloCorreccion(
+  x: number | null,
+  y: number | null,
+  anguloAnterior: 0 | 90 | 180 | 270,
+): 0 | 90 | 180 | 270 {
+  if (x === null || y === null) return anguloAnterior;
+  if (Math.hypot(x, y) < UMBRAL_GRAVEDAD_HORIZONTAL_CONFIABLE) return anguloAnterior;
   if (Math.abs(x) > Math.abs(y)) {
     return x > 0 ? 90 : 270;
   }
@@ -189,7 +208,7 @@ export function CamaraHistoria({
     function alMover(e: DeviceMotionEvent) {
       const g = e.accelerationIncludingGravity;
       if (!g) return;
-      anguloCorreccionRef.current = calcularAnguloCorreccion(g.x, g.y);
+      anguloCorreccionRef.current = calcularAnguloCorreccion(g.x, g.y, anguloCorreccionRef.current);
     }
     window.addEventListener("devicemotion", alMover);
     return () => window.removeEventListener("devicemotion", alMover);
