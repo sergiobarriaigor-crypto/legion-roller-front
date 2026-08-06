@@ -127,6 +127,21 @@ export const Mapa3D = forwardRef<Mapa3DHandle, Mapa3DProps>(function Mapa3D(
   useEffect(() => {
     if (!containerRef.current) return;
     let mapa: MaplibreMap;
+    // Además del try/catch (que solo cubre el constructor síncrono), se
+    // rastrea si el mapa llegó a terminar de cargar el estilo: en algunos
+    // celulares el WebGL "pasa" el chequeo liviano de soportaWebGL() pero
+    // la inicialización real de MapLibre falla igual (ej. contexto GPU
+    // restringido) -- eso no lanza una excepción, se entera recién por el
+    // evento "error" de forma asíncrona, o a veces ni eso, y antes de este
+    // cambio el usuario se quedaba mirando un mapa en blanco sin ningún
+    // aviso ni vuelta atrás.
+    let terminoDeCargar = false;
+    let yaAvisoFalla = false;
+    function avisarFalla() {
+      if (yaAvisoFalla) return;
+      yaAvisoFalla = true;
+      onError();
+    }
     try {
       mapa = new MaplibreMap({
         container: containerRef.current,
@@ -138,10 +153,11 @@ export const Mapa3D = forwardRef<Mapa3DHandle, Mapa3DProps>(function Mapa3D(
       });
     } catch (err) {
       console.error("No se pudo iniciar el mapa 3D:", err);
-      onError();
+      avisarFalla();
       return;
     }
     mapa.on("load", () => {
+      terminoDeCargar = true;
       setCargado(true);
       mapa.addSource(FUENTE_RUTA, {
         type: "geojson",
@@ -156,7 +172,17 @@ export const Mapa3D = forwardRef<Mapa3DHandle, Mapa3DProps>(function Mapa3D(
     });
     mapa.on("error", (e) => {
       console.error("Error de MapLibre:", e?.error);
+      // Un error antes de terminar de cargar el estilo es fatal (ej. falla
+      // de inicialización de GPU/WebGL) -- uno después de cargado suele ser
+      // solo un tile puntual que no cargó, no hace falta abandonar el modo.
+      if (!terminoDeCargar) avisarFalla();
     });
+    // Red de seguridad final: si ni "load" ni "error" llegan a dispararse
+    // (ej. la petición del estilo se cuelga en una red de celular), no dejar
+    // al usuario mirando un mapa en blanco para siempre.
+    const timeoutSinCarga = setTimeout(() => {
+      if (!terminoDeCargar) avisarFalla();
+    }, 10000);
     mapaRef.current = mapa;
 
     // Capturados acá (no leídos de nuevo dentro del cleanup) porque los
@@ -168,6 +194,7 @@ export const Mapa3D = forwardRef<Mapa3DHandle, Mapa3DProps>(function Mapa3D(
     const marcadoresEmergencia = marcadoresEmergenciaRef.current;
 
     return () => {
+      clearTimeout(timeoutSinCarga);
       for (const m of marcadoresOtros.values()) {
         if (m.raf !== null) cancelAnimationFrame(m.raf);
         m.marker.remove();
@@ -186,8 +213,13 @@ export const Mapa3D = forwardRef<Mapa3DHandle, Mapa3DProps>(function Mapa3D(
       }
       // Punto más importante del componente: sin este remove() se filtra un
       // contexto WebGL cada vez que SwipeNavigator desmonta esta pantalla al
-      // cambiar de pestaña.
-      mapaRef.current?.remove();
+      // cambiar de pestaña. Envuelto en try/catch porque un mapa que falló a
+      // mitad de inicializar puede no soportar un remove() limpio.
+      try {
+        mapaRef.current?.remove();
+      } catch (err) {
+        console.error("Error al limpiar el mapa 3D:", err);
+      }
       mapaRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
