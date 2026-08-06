@@ -2,10 +2,14 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import dynamic from "next/dynamic";
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { IconMaximize, IconX, IconCurrentLocation, IconMap2, IconSatellite, IconMessage2, IconHeartHandshake, IconPlus, IconMinus } from "@tabler/icons-react";
+import { IconMaximize, IconX, IconCurrentLocation, IconMap2, IconSatellite, IconCube3dSphere, IconPlus, IconMinus } from "@tabler/icons-react";
+import type { Mapa3DHandle } from "@/components/Mapa/Mapa3D";
+import { type OtroMiembro, ContenidoPopupMiembro } from "@/components/Mapa/TarjetaMiembroMapa";
+import { htmlPuntoSimple, HTML_PUNTO_PARTIDA, htmlIconoAvatar, TAM_AVATAR } from "@/lib/iconosMapa";
 import { useSession } from "@/context/SessionContext";
 import { apiPost, apiPut, apiGet, apiDelete, ApiError } from "@/lib/api";
 import { distanciaTotalKm, distanciaHaversineKm, type PuntoGps } from "@/lib/geo";
@@ -20,7 +24,6 @@ import {
 import { ETIQUETA_MOTIVO, type EmergenciaActiva } from "@/lib/emergencias";
 import { salaIndividual } from "@/lib/chat";
 import { obtenerSocket } from "@/lib/socket";
-import { tiempoTranscurrido } from "@/lib/tiempo";
 import { notificarme } from "@/lib/push";
 import { PatinadoresActivosPanel } from "@/components/Mapa/PatinadoresActivosPanel";
 import { MisRutasPanel } from "@/components/Mapa/MisRutasPanel";
@@ -148,13 +151,40 @@ const CAPAS_MAPA = {
   },
 } as const;
 
-type CapaMapa = keyof typeof CAPAS_MAPA;
+// "3d" no tiene url/attribution de tile raster (usa un estilo vectorial de
+// MapLibre, ver Mapa3D.tsx) — solo "estandar"/"satelite" indexan CAPAS_MAPA.
+type CapaMapa = keyof typeof CAPAS_MAPA | "3d";
 
 // Capa de referencia (transparente, solo calles/nombres/límites) que se superpone
 // a la vista satélite para no perder la orientación — mismo servicio gratuito de
 // Esri, sin API key, pensado justo para combinarse con World_Imagery.
 const CAPA_ETIQUETAS_SATELITE_URL =
   "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}";
+
+// Cargado solo al tocar "3D" por primera vez (no en cada apertura del Mapa):
+// maplibre-gl pesa varios cientos de KB y no tiene sentido bajarlo si nadie
+// usa ese modo. Mismo patrón de dynamic(ssr:false) que ya usa
+// app/(app)/mapa/page.tsx para este propio MapaView.
+const Mapa3D = dynamic(() => import("@/components/Mapa/Mapa3D").then((m) => m.Mapa3D), {
+  ssr: false,
+  loading: () => (
+    <div className="absolute inset-0 z-[900] flex items-center justify-center bg-page-bg">
+      <div className="h-7 w-7 animate-spin rounded-full border-2 border-border border-t-fill-primary" />
+    </div>
+  ),
+});
+
+// Chequeo liviano (sin importar maplibre-gl) para decidir si se ofrece la
+// opción "3D" en el selector de capas.
+function soportaWebGL(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const c = document.createElement("canvas");
+    return !!(c.getContext("webgl2") || c.getContext("webgl"));
+  } catch {
+    return false;
+  }
+}
 
 type Modo = "patinando" | "ruta" | null;
 
@@ -165,19 +195,10 @@ interface RodadaCercana {
   distanciaKm: number;
 }
 
-function escapeHtml(texto: string) {
-  return texto
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
 function crearIcono(color: string) {
   return L.divIcon({
     className: "",
-    html: `<div style="width:16px;height:16px;border-radius:9999px;background:${color};border:2px solid #171008;box-shadow:0 0 0 2px rgba(201,154,61,0.55);"></div>`,
+    html: htmlPuntoSimple(color),
     iconSize: [16, 16],
     iconAnchor: [8, 8],
   });
@@ -190,17 +211,10 @@ const iconoEmergencia = crearIcono("#D8342F");
 // desde 30 min antes hasta la hora exacta de inicio.
 const iconoPuntoPartida = L.divIcon({
   className: "",
-  html: `<div style="width:22px;height:22px;border-radius:9999px;background:#e7c168;border:2px solid #171008;box-shadow:0 0 8px 2px rgba(231,193,104,0.85);"></div>`,
+  html: HTML_PUNTO_PARTIDA,
   iconSize: [22, 22],
   iconAnchor: [11, 11],
 });
-
-// Colores neón por modo (ajuste de este pedido): verde = en ruta, rojo = solo
-// patinando ahora, para identificar el estado de cada patinador de un vistazo.
-const GLOW_POR_MODO: Record<string, { anillo: string; sombra: string }> = {
-  ruta: { anillo: "#39FF14", sombra: "rgba(57, 255, 20, 0.85)" },
-  patinando: { anillo: "#FF3131", sombra: "rgba(255, 49, 49, 0.85)" },
-};
 
 // Bajo este umbral, dos patinadores se consideran "el mismo punto" del mapa
 // (~15 metros — el ancho de una plaza chica) y se agrupan en un solo marcador
@@ -209,72 +223,28 @@ const UMBRAL_CLUSTER_KM = 0.015;
 
 // Avatar circular (foto o inicial) con burbuja de estado opcional y un borde con
 // brillo (glow) según el modo del miembro, para verse en el mapa mientras
-// comparte su ubicación.
-function crearIconoAvatar({
-  fotoUrl,
-  nombre,
-  estado,
-  modo,
-  masPersonas,
-}: {
+// comparte su ubicación. El HTML en sí (compartido con el modo 3D) vive en
+// @/lib/iconosMapa -- acá solo se envuelve en un L.divIcon.
+function crearIconoAvatar(args: {
   fotoUrl: string | null;
   nombre: string;
   estado?: string | null;
   modo: string;
   masPersonas?: number;
 }) {
-  const TAM = 40;
-  const { anillo, sombra } = GLOW_POR_MODO[modo] ?? GLOW_POR_MODO.patinando;
-  const inicial = escapeHtml((nombre.charAt(0) || "?").toUpperCase());
-  const contenido = fotoUrl
-    ? `<img src="${escapeHtml(fotoUrl)}" style="width:100%;height:100%;object-fit:cover;" />`
-    : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-weight:600;color:#171008;">${inicial}</div>`;
-
-  const burbuja = estado
-    ? `<div style="position:absolute;bottom:${TAM + 6}px;left:50%;transform:translateX(-50%);max-width:110px;background:#171008;color:#f2ead8;font-size:10px;line-height:1.25;padding:4px 8px;border-radius:10px;text-align:center;box-shadow:0 1px 4px rgba(0,0,0,0.4);">${escapeHtml(estado)}</div>`
-    : "";
-
-  // Insignia "+N": cuando este marcador representa a varios patinadores
-  // agrupados por estar en el mismo punto (ver UMBRAL_CLUSTER_KM), en vez de
-  // quedar todos superpuestos e inidentificables se ve uno solo con este
-  // contador — tocarlo abre la lista completa (ver `clusterAbierto`).
-  const insignia = masPersonas
-    ? `<div style="position:absolute;right:-4px;bottom:-4px;min-width:18px;height:18px;padding:0 3px;border-radius:9999px;background:#171008;border:1.5px solid #c99a3d;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#e7c168;">+${masPersonas}</div>`
-    : "";
-
   return L.divIcon({
     className: "",
-    html: `
-      <div style="position:relative;width:${TAM}px;height:${TAM}px;">
-        ${burbuja}
-        <div style="width:${TAM}px;height:${TAM}px;border-radius:9999px;background:#e7c168;border:2px solid ${anillo};box-shadow:0 0 8px 2px ${sombra},0 0 3px 1px ${sombra};overflow:hidden;">
-          ${contenido}
-        </div>
-        ${insignia}
-      </div>
-    `,
-    iconSize: [TAM, TAM],
-    iconAnchor: [TAM / 2, TAM / 2],
+    html: htmlIconoAvatar(args),
+    iconSize: [TAM_AVATAR, TAM_AVATAR],
+    iconAnchor: [TAM_AVATAR / 2, TAM_AVATAR / 2],
   });
 }
 
-interface OtroMiembro {
-  miembroId: number;
-  nombre: string;
-  fotoUrl: string | null;
-  estado: string | null;
-  lat: number;
-  lon: number;
-  modo: string;
-  iniciadoEn: string;
-}
-
-// Tarjeta emergente al tocar la foto de otro patinador en el mapa: solo dos
-// botones (mensaje directo / reconocimiento breve). El formulario de
-// reconocimiento se abre en un modal aparte (no dentro de este Popup de
-// Leaflet) — un Popup se puede cerrar solo por gestos del mapa (clic fuera,
-// reposicionamiento al abrirse el teclado en el celular, etc.), lo que hacía
-// que el formulario desapareciera a mitad de escribir/enviar.
+// Tarjeta emergente al tocar la foto de otro patinador en el mapa: el
+// formulario de reconocimiento se abre en un modal aparte (no dentro de este
+// Popup de Leaflet) — un Popup se puede cerrar solo por gestos del mapa (clic
+// fuera, reposicionamiento al abrirse el teclado en el celular, etc.), lo que
+// hacía que el formulario desapareciera a mitad de escribir/enviar.
 function PopupOtroMiembro({
   miembro,
   onAbrirChat,
@@ -286,42 +256,22 @@ function PopupOtroMiembro({
 }) {
   const map = useMap();
 
-  function manejarAbrirChat() {
+  function manejarAbrirChat(m: OtroMiembro) {
     map.closePopup();
-    onAbrirChat(miembro);
+    onAbrirChat(m);
   }
 
-  function manejarAbrirReconocimiento() {
+  function manejarAbrirReconocimiento(m: OtroMiembro) {
     map.closePopup();
-    onAbrirReconocimiento(miembro);
+    onAbrirReconocimiento(m);
   }
 
   return (
-    <div className="flex items-center gap-2.5 rounded-full border border-border bg-surface-1 py-2 pr-2.5 pl-3">
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-semibold text-text-primary">{miembro.nombre}</p>
-        <p className="text-[10px] text-text-secondary">{tiempoTranscurrido(miembro.iniciadoEn)}</p>
-      </div>
-      <div className="h-8 w-px shrink-0 bg-border" />
-      <div className="flex shrink-0 gap-0.5">
-        <button
-          type="button"
-          aria-label="Enviar mensaje"
-          onClick={manejarAbrirChat}
-          className="flex h-8 w-8 items-center justify-center rounded-full text-amber-text active:bg-amber-bg"
-        >
-          <IconMessage2 size={17} />
-        </button>
-        <button
-          type="button"
-          aria-label="Enviar reconocimiento"
-          onClick={manejarAbrirReconocimiento}
-          className="flex h-8 w-8 items-center justify-center rounded-full text-amber-text active:bg-amber-bg"
-        >
-          <IconHeartHandshake size={17} />
-        </button>
-      </div>
-    </div>
+    <ContenidoPopupMiembro
+      miembro={miembro}
+      onAbrirChat={manejarAbrirChat}
+      onAbrirReconocimiento={manejarAbrirReconocimiento}
+    />
   );
 }
 
@@ -356,31 +306,12 @@ function FilaMiembroCluster({
   onAbrirReconocimiento: (miembro: OtroMiembro) => void;
 }) {
   return (
-    <div className="flex items-center gap-2.5 rounded-full border border-border bg-surface-2 py-2 pr-2.5 pl-3">
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-semibold text-text-primary">{miembro.nombre}</p>
-        <p className="text-[10px] text-text-secondary">{tiempoTranscurrido(miembro.iniciadoEn)}</p>
-      </div>
-      <div className="h-8 w-px shrink-0 bg-border" />
-      <div className="flex shrink-0 gap-0.5">
-        <button
-          type="button"
-          aria-label="Enviar mensaje"
-          onClick={() => onAbrirChat(miembro)}
-          className="flex h-8 w-8 items-center justify-center rounded-full text-amber-text active:bg-amber-bg"
-        >
-          <IconMessage2 size={17} />
-        </button>
-        <button
-          type="button"
-          aria-label="Enviar reconocimiento"
-          onClick={() => onAbrirReconocimiento(miembro)}
-          className="flex h-8 w-8 items-center justify-center rounded-full text-amber-text active:bg-amber-bg"
-        >
-          <IconHeartHandshake size={17} />
-        </button>
-      </div>
-    </div>
+    <ContenidoPopupMiembro
+      miembro={miembro}
+      onAbrirChat={onAbrirChat}
+      onAbrirReconocimiento={onAbrirReconocimiento}
+      fondo="bg-surface-2"
+    />
   );
 }
 
@@ -439,6 +370,12 @@ export function MapaView() {
 
   const [pantallaCompleta, setPantallaCompleta] = useState(false);
   const [capaMapa, setCapaMapa] = useState<CapaMapa>("estandar");
+  const [mostrarSelectorCapa, setMostrarSelectorCapa] = useState(false);
+  const [centroPara3D, setCentroPara3D] = useState<{ lat: number; lon: number; zoom: number } | null>(
+    null,
+  );
+  const [soportaWebGL3D] = useState(soportaWebGL);
+  const mapa3DRef = useRef<Mapa3DHandle | null>(null);
 
   const [miFotoUrl, setMiFotoUrl] = useState<string | null>(null);
   const [miEstadoTexto, setMiEstadoTexto] = useState<string | null>(null);
@@ -1287,9 +1224,39 @@ export function MapaView() {
     // efecto de centrado por GPS más arriba), para que el botón funcione
     // también cuando el usuario solo está mirando el mapa sin "Patinando".
     const punto = posicion ?? ultimaPosicionConocida;
-    if (!punto || !mapRef.current) return;
+    if (!punto) return;
+    if (capaMapa === "3d") {
+      mapa3DRef.current?.centrarEn(punto.lat, punto.lon);
+      return;
+    }
+    if (!mapRef.current) return;
     mapRef.current.flyTo([punto.lat, punto.lon], mapRef.current.getZoom());
     marcarSiguiendo(true);
+  }
+
+  // Traspaso de cámara entre Leaflet y MapLibre para que cambiar de capa no
+  // salte de posición: al entrar a "3d" se lee dónde estaba mirando Leaflet
+  // para arrancar el mapa 3D ahí mismo; al salir, se escribe la cámara de
+  // MapLibre en `ultimaVistaMapa` (la misma variable de módulo que ya usa
+  // este archivo para sobrevivir los remontajes de SwipeNavigator), así el
+  // cálculo de `centro`/`zoomInicial` de más abajo la recoge solo al volver
+  // a montar <MapContainer>.
+  function seleccionarCapa(nueva: CapaMapa) {
+    setMostrarSelectorCapa(false);
+    if (nueva === capaMapa) return;
+    if (capaMapa === "3d") {
+      const camara = mapa3DRef.current?.getCamara();
+      if (camara) ultimaVistaMapa = camara;
+    } else if (nueva === "3d" && mapRef.current) {
+      const c = mapRef.current.getCenter();
+      setCentroPara3D({ lat: c.lat, lon: c.lng, zoom: mapRef.current.getZoom() });
+    }
+    setCapaMapa(nueva);
+  }
+
+  function alFallarMapa3D() {
+    setCapaMapa("estandar");
+    setMensaje("No se pudo cargar el mapa 3D en este dispositivo.");
   }
 
   // Modo "Exploración": apenas el usuario arrastra el mapa a mano (ej. para
@@ -1429,7 +1396,7 @@ export function MapaView() {
   // Color vía estilo inline (no clase de Tailwind) para que gane sin
   // ambigüedad frente a cualquier otra regla de color en cascada.
   const estiloControlesMapa =
-    capaMapa === "satelite"
+    capaMapa === "satelite" || capaMapa === "3d"
       ? { color: "#e7c168", filter: "drop-shadow(0 1px 4px rgba(0,0,0,0.8))" }
       : { color: "#000000", filter: "drop-shadow(0 0 3px rgba(255,255,255,0.9))" };
 
@@ -1443,6 +1410,31 @@ export function MapaView() {
         }
         style={pantallaCompleta ? undefined : { height: 320 }}
       >
+        {capaMapa === "3d" && (
+          <Mapa3D
+            ref={mapa3DRef}
+            centroInicial={
+              centroPara3D ?? { lat: centro[0], lon: centro[1], zoom: zoomInicial }
+            }
+            posicion={posicion}
+            miFotoUrl={miFotoUrl}
+            miNombre={sesion?.nombre ?? "Yo"}
+            miEstadoTexto={miEstadoTexto}
+            miModo={modo}
+            onClickMiMarcador={abrirEditorEstado}
+            gruposOtros={gruposOtros}
+            onAbrirChat={abrirChatCon}
+            onAbrirReconocimiento={abrirReconocimientoPara}
+            onAbrirCluster={(grupo) => setClusterAbierto(grupo)}
+            puntosPartida={puntosPartida}
+            puntosGrabados={puntosGrabados}
+            mapeado={mapeado}
+            emergenciasActivas={emergenciasActivas}
+            pantallaCompleta={pantallaCompleta}
+            onError={alFallarMapa3D}
+          />
+        )}
+        {capaMapa !== "3d" && (
         <MapContainer
           ref={mapRef}
           center={centro}
@@ -1536,6 +1528,7 @@ export function MapaView() {
               </Marker>
             ))}
         </MapContainer>
+        )}
 
         {/* Cubre el mapa (que por debajo ya está en CENTRO_DEFECTO) mientras se
             espera la primera respuesta real del GPS de toda la sesión, para
@@ -1545,6 +1538,13 @@ export function MapaView() {
             <div className="h-7 w-7 animate-spin rounded-full border-2 border-border border-t-fill-primary" />
             <p className="text-sm text-text-secondary">Buscando tu ubicación...</p>
           </div>
+        )}
+
+        {mostrarSelectorCapa && (
+          <div
+            className="absolute inset-0 z-[999]"
+            onClick={() => setMostrarSelectorCapa(false)}
+          />
         )}
 
         {/* Controles del mapa: sin caja/fondo — íconos dorados flotando
@@ -1578,17 +1578,46 @@ export function MapaView() {
             </>
           )}
 
-          <button
-            type="button"
-            aria-label={
-              capaMapa === "estandar" ? "Ver mapa en modo satélite" : "Ver mapa estándar"
-            }
-            onClick={() => setCapaMapa((c) => (c === "estandar" ? "satelite" : "estandar"))}
-            className="flex h-9 w-9 items-center justify-center transition active:scale-90 hover:scale-110"
-            style={estiloControlesMapa}
-          >
-            {capaMapa === "estandar" ? <IconSatellite size={20} /> : <IconMap2 size={20} />}
-          </button>
+          <div className="relative">
+            <button
+              type="button"
+              aria-label="Elegir capa del mapa"
+              onClick={() => setMostrarSelectorCapa((v) => !v)}
+              className="flex h-9 w-9 items-center justify-center transition active:scale-90 hover:scale-110"
+              style={estiloControlesMapa}
+            >
+              {capaMapa === "estandar" && <IconMap2 size={20} />}
+              {capaMapa === "satelite" && <IconSatellite size={20} />}
+              {capaMapa === "3d" && <IconCube3dSphere size={20} />}
+            </button>
+            {mostrarSelectorCapa && (
+              <div className="card absolute bottom-11 right-0 z-10 flex w-36 flex-col gap-0.5 p-1.5">
+                <button
+                  type="button"
+                  onClick={() => seleccionarCapa("estandar")}
+                  className={`flex items-center gap-2 rounded-[var(--radius)] px-2.5 py-1.5 text-left text-xs ${capaMapa === "estandar" ? "bg-amber-bg text-amber-text" : "text-text-secondary"}`}
+                >
+                  <IconMap2 size={16} /> Estándar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => seleccionarCapa("satelite")}
+                  className={`flex items-center gap-2 rounded-[var(--radius)] px-2.5 py-1.5 text-left text-xs ${capaMapa === "satelite" ? "bg-amber-bg text-amber-text" : "text-text-secondary"}`}
+                >
+                  <IconSatellite size={16} /> Satélite
+                </button>
+                {soportaWebGL3D && (
+                  <button
+                    type="button"
+                    onClick={() => seleccionarCapa("3d")}
+                    className={`flex items-center gap-2 rounded-[var(--radius)] px-2.5 py-1.5 text-left text-xs ${capaMapa === "3d" ? "bg-amber-bg text-amber-text" : "text-text-secondary"}`}
+                  >
+                    <IconCube3dSphere size={16} /> 3D
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
           <button
             type="button"
             aria-label={pantallaCompleta ? "Salir de pantalla completa" : "Ver mapa en pantalla completa"}
