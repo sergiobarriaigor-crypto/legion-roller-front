@@ -9,7 +9,7 @@ import {
   IconMapPin,
   IconMusic,
   IconPhotoPlus,
-  IconRotateClockwise2,
+  IconRotate2,
   IconX,
 } from "@tabler/icons-react";
 import { apiUpload, ApiError } from "@/lib/api";
@@ -451,7 +451,8 @@ export function EditorHistoria({
   }
 
   function girarFoto() {
-    setRotacionManual((prev) => (((prev + 90) % 360) as 0 | 90 | 180 | 270));
+    // Gira a la izquierda (antihorario): sumar 270 equivale a restar 90.
+    setRotacionManual((prev) => (((prev + 270) % 360) as 0 | 90 | 180 | 270));
     setPanFotoFrac({ x: 0, y: 0 });
   }
 
@@ -747,19 +748,19 @@ export function EditorHistoria({
                 <IconArrowsMaximize size={18} />
               </button>
             )}
-            {/* Sexto control: gira la foto 90° -- red de seguridad manual
-                para cuando llega girada (de cualquier fuente: Captura
-                Express, cámara nativa o galería), sin depender de que
-                ningún detector automático acierte. */}
+            {/* Sexto control: gira la foto 90° a la izquierda -- red de
+                seguridad manual para cuando llega girada (de cualquier
+                fuente: Captura Express, cámara nativa o galería), sin
+                depender de que ningún detector automático acierte. */}
             {tipo === "foto" && (
               <button
                 type="button"
                 onClick={girarFoto}
-                aria-label="Girar foto"
-                title="Girar foto"
+                aria-label="Girar foto a la izquierda"
+                title="Girar foto a la izquierda"
                 className="absolute right-3 top-[14.5rem] z-10 flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white"
               >
-                <IconRotateClockwise2 size={18} />
+                <IconRotate2 size={18} />
               </button>
             )}
             {/* Se escucha en vivo mientras se edita — lo que se oye acá es lo

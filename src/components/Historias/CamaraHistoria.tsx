@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { IconRefresh, IconRotateClockwise2, IconSparkles, IconX } from "@tabler/icons-react";
+import { IconRefresh, IconRotate2, IconSparkles, IconX } from "@tabler/icons-react";
 import { DURACION_MAXIMA_VIDEO_HISTORIA_SEG } from "@/lib/historias";
 import { ANCHO_HISTORIA, ALTO_HISTORIA, FILTROS_FOTO, type FiltroFoto } from "@/components/Historias/FiltrosFoto";
 import { Toast } from "@/components/Toast";
@@ -461,12 +461,12 @@ export function CamaraHistoria({
                 puede corregirla a mano, sin depender de otro despliegue. */}
             <button
               type="button"
-              onClick={() => setAnguloManual((a) => sumarAngulos(a, 90))}
+              onClick={() => setAnguloManual((a) => sumarAngulos(a, 270))}
               disabled={grabando}
-              aria-label="Girar imagen si se ve mal"
+              aria-label="Girar imagen a la izquierda si se ve mal"
               className="flex h-9 w-9 items-center justify-center rounded-full bg-black/40 text-white disabled:opacity-40"
             >
-              <IconRotateClockwise2 size={20} />
+              <IconRotate2 size={20} />
             </button>
             <button
               type="button"
