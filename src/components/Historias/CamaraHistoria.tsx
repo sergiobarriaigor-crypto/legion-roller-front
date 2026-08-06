@@ -22,19 +22,29 @@ const TIPOS_VIDEO_CANDIDATOS = ["video/webm;codecs=vp9,opus", "video/webm;codecs
 // orientación de la PANTALLA: si el usuario tiene el bloqueo de rotación
 // activado (lo más común), la pantalla nunca gira aunque el teléfono sí, y
 // el cuadro de la cámara queda grabado "acostado". La solución es la misma
-// que usa la cámara nativa: leer el acelerómetro directo (DeviceOrientation),
-// no la orientación de la pantalla.
+// que usa la cámara nativa: leer el acelerómetro directo, no la orientación
+// de la pantalla.
 //
-// Nota sobre el signo: gamma > 0 significa que el teléfono se inclinó hacia
-// la derecha. Si en la práctica algún equipo queda con la corrección
-// invertida (gira para el lado contrario), alcanza con cambiar el 270 por 90
-// y viceversa acá abajo -- no hace falta tocar nada más.
-function calcularAnguloCorreccion(beta: number | null, gamma: number | null): 0 | 90 | 180 | 270 {
-  if (beta === null || gamma === null) return 0;
-  if (Math.abs(gamma) > 45) {
-    return gamma > 0 ? 270 : 90;
+// Se usa accelerationIncludingGravity (evento "devicemotion": hacia dónde
+// tira la gravedad en cada eje) en vez de los ángulos beta/gamma del evento
+// "deviceorientation" -- estos últimos se confunden y devuelven un valor
+// erróneo cuando el teléfono, además de estar de lado, también apunta bastante
+// hacia arriba/abajo (por ejemplo al fotografiar algo en una mesa, como en la
+// captura que reportó el usuario). Comparar directamente qué eje (x o y)
+// tiene más gravedad es robusto ante esa inclinación extra, porque no
+// depende de combinar los tres ángulos de Euler a la vez.
+//
+// Nota sobre el signo: la convención de qué signo corresponde a cada lado no
+// es 100% universal entre fabricantes. Si en la práctica algún equipo queda
+// con la corrección invertida, alcanza con cambiar el 90 por 270 (si el
+// problema es de lado) o el 0 por 180 (si el problema es de cabeza) en las
+// líneas de abajo -- no hace falta tocar nada más.
+function calcularAnguloCorreccion(x: number | null, y: number | null): 0 | 90 | 180 | 270 {
+  if (x === null || y === null) return 0;
+  if (Math.abs(x) > Math.abs(y)) {
+    return x > 0 ? 90 : 270;
   }
-  return beta < 0 ? 180 : 0;
+  return y > 0 ? 0 : 180;
 }
 
 interface Embellecimiento {
@@ -169,18 +179,20 @@ export function CamaraHistoria({
   // soporta el sensor, el ángulo queda en 0 (comportamiento de siempre, sin
   // regresión).
   useEffect(() => {
-    const DeviceOrientationEventConCompat = window.DeviceOrientationEvent as unknown as {
+    const DeviceMotionEventConCompat = window.DeviceMotionEvent as unknown as {
       requestPermission?: () => Promise<"granted" | "denied">;
     };
-    if (typeof DeviceOrientationEventConCompat?.requestPermission === "function") {
-      DeviceOrientationEventConCompat.requestPermission().catch(() => {});
+    if (typeof DeviceMotionEventConCompat?.requestPermission === "function") {
+      DeviceMotionEventConCompat.requestPermission().catch(() => {});
     }
 
-    function alOrientar(e: DeviceOrientationEvent) {
-      anguloCorreccionRef.current = calcularAnguloCorreccion(e.beta, e.gamma);
+    function alMover(e: DeviceMotionEvent) {
+      const g = e.accelerationIncludingGravity;
+      if (!g) return;
+      anguloCorreccionRef.current = calcularAnguloCorreccion(g.x, g.y);
     }
-    window.addEventListener("deviceorientation", alOrientar);
-    return () => window.removeEventListener("deviceorientation", alOrientar);
+    window.addEventListener("devicemotion", alMover);
+    return () => window.removeEventListener("devicemotion", alMover);
   }, []);
 
   // Gira entre trasera/frontal soltando la cámara actual ANTES de pedir la
