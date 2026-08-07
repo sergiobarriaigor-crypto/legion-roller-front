@@ -4,7 +4,13 @@ import { useEffect, useRef, useState } from "react";
 import { IconShare, IconUpload, IconCube3dSphere } from "@tabler/icons-react";
 import { apiUpload, apiPost, ApiError } from "@/lib/api";
 import { generarTarjetaRecorrido, generarVideoRecorrido, type DatosTarjetaRecorrido } from "@/lib/tarjetaRecorrido";
-import { solicitarFlyover, estadoFlyoverPorRecorrido, estadoFlyoverPorId, type EstadoFlyover } from "@/lib/flyover";
+import {
+  solicitarFlyover,
+  estadoFlyoverPorRecorrido,
+  estadoFlyoverPorId,
+  type EstadoFlyover,
+  type EstiloFlyover,
+} from "@/lib/flyover";
 import { useNoAutofill } from "@/lib/useNoAutofill";
 
 type Estado = "editando" | "publicando";
@@ -57,6 +63,7 @@ export function CompartirRecorridoModal({
   const [estadoFlyover, setEstadoFlyover] = useState<EstadoFlyover | null>(null);
   const [cargandoFlyover, setCargandoFlyover] = useState(false);
   const [errorFlyover, setErrorFlyover] = useState("");
+  const [estiloFlyover, setEstiloFlyover] = useState<EstiloFlyover>("edificios");
   const pollingFlyoverRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Genera la tarjeta apenas se abre el modal (sin espera), y la vuelve a
@@ -146,7 +153,7 @@ export function CompartirRecorridoModal({
     setCargandoFlyover(true);
     setErrorFlyover("");
     try {
-      const estado = await solicitarFlyover(recorridoId, token);
+      const estado = await solicitarFlyover(recorridoId, token, estiloFlyover);
       setEstadoFlyover(estado);
       if (estado.estado === "pendiente" || estado.estado === "procesando") {
         iniciarPollingFlyover(estado.id);
@@ -342,11 +349,35 @@ export function CompartirRecorridoModal({
                 <p className="px-6 text-center text-xs text-text-secondary">Un momento...</p>
               )}
               {!cargandoFlyover && !estadoFlyover && !errorFlyover && (
-                <div className="flex flex-col items-center gap-2.5 px-6 text-center">
+                <div className="flex flex-col items-center gap-3 px-6 text-center">
                   <p className="text-xs text-text-secondary">
                     Se genera en el servidor -- funciona en cualquier celular, sin importar si
                     soporta 3D. Tarda 1-3 min; podés cerrar esta ventana y te avisamos cuando esté.
                   </p>
+                  <div className="flex gap-1.5 rounded-app bg-surface-2 p-1">
+                    <button
+                      type="button"
+                      onClick={() => setEstiloFlyover("edificios")}
+                      className={`rounded-app px-3 py-1.5 text-xs font-semibold ${
+                        estiloFlyover === "edificios"
+                          ? "bg-fill-primary text-on-primary"
+                          : "text-text-secondary"
+                      }`}
+                    >
+                      Edificios 3D
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEstiloFlyover("satelital")}
+                      className={`rounded-app px-3 py-1.5 text-xs font-semibold ${
+                        estiloFlyover === "satelital"
+                          ? "bg-fill-primary text-on-primary"
+                          : "text-text-secondary"
+                      }`}
+                    >
+                      Satelital
+                    </button>
+                  </div>
                   <button
                     type="button"
                     onClick={generarFlyover}
