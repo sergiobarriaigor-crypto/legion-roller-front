@@ -1,7 +1,9 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { Capacitor } from "@capacitor/core";
 import { apiUpload, ApiError } from "@/lib/api";
+import { tomarFotoNativa, elegirDeGaleriaNativa } from "@/lib/camaraNativa";
 
 const TAMANO_LIENZO = 260;
 const ZOOM_MAXIMO = 3;
@@ -77,9 +79,7 @@ export function ImageUploadCrop({
     };
   }
 
-  function elegirArchivo(e: React.ChangeEvent<HTMLInputElement>) {
-    const archivo = e.target.files?.[0];
-    if (!archivo) return;
+  function procesarArchivo(archivo: File) {
     setError("");
 
     const url = URL.createObjectURL(archivo);
@@ -92,6 +92,27 @@ export function ImageUploadCrop({
       requestAnimationFrame(() => dibujar(1, { x: 0, y: 0 }));
     };
     img.src = url;
+  }
+
+  function elegirArchivo(e: React.ChangeEvent<HTMLInputElement>) {
+    const archivo = e.target.files?.[0];
+    if (!archivo) return;
+    procesarArchivo(archivo);
+  }
+
+  // Dentro de la app nativa (Capacitor), usar la cámara/galería del sistema
+  // vía @capacitor/camera en vez de los <input type="file"> de abajo -- ver
+  // el comentario en lib/camaraNativa.ts sobre por qué. En la web, estas
+  // funciones no hacen nada (Capacitor.isNativePlatform() es false) y el
+  // click cae directo en los inputs de siempre.
+  async function tomarFotoConCamara() {
+    const archivo = await tomarFotoNativa();
+    if (archivo) procesarArchivo(archivo);
+  }
+
+  async function elegirDeGaleria() {
+    const archivo = await elegirDeGaleriaNativa();
+    if (archivo) procesarArchivo(archivo);
   }
 
   function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
@@ -182,14 +203,16 @@ export function ImageUploadCrop({
           <div className="flex gap-2">
             <button
               type="button"
-              onClick={() => camaraInputRef.current?.click()}
+              onClick={() =>
+                Capacitor.isNativePlatform() ? tomarFotoConCamara() : camaraInputRef.current?.click()
+              }
               className="flex-1 rounded-app border border-border px-4 py-2 text-sm text-text-secondary"
             >
               Tomar foto
             </button>
             <button
               type="button"
-              onClick={() => inputRef.current?.click()}
+              onClick={() => (Capacitor.isNativePlatform() ? elegirDeGaleria() : inputRef.current?.click())}
               className="flex-1 rounded-app border border-border px-4 py-2 text-sm text-text-secondary"
             >
               Elegir de galería
@@ -198,7 +221,7 @@ export function ImageUploadCrop({
         ) : (
           <button
             type="button"
-            onClick={() => inputRef.current?.click()}
+            onClick={() => (Capacitor.isNativePlatform() ? elegirDeGaleria() : inputRef.current?.click())}
             className="rounded-app border border-border px-4 py-2 text-sm text-text-secondary"
           >
             {etiqueta}
