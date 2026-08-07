@@ -9,6 +9,9 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@capacitor/android": "^8.5.0",
+    "@capacitor/cli": "^8.5.0",
+    "@capacitor/core": "^8.5.0",
     "@tabler/icons-react": "^3.44.0",
     "emoji-picker-react": "^4.19.1",
     "leaflet": "^1.9.4",
