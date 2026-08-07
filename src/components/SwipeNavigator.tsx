@@ -76,15 +76,7 @@ export function SwipeNavigator({ children }: { children: ReactNode }) {
 
   return (
     <main
-      // pb-24 (en vez de pb-4 parejo con el resto) para que el último
-      // elemento de una pestaña larga no quede tapado por el botón redondo
-      // del Mapa. Medido en un dispositivo real con ?debug=1 (ver
-      // BottomNav.tsx): con pb-12 (48px) todavía quedaba un solapamiento de
-      // ~23px, porque el botón no solo sube 32px (-mt-[32px]) sino que
-      // además se centra dentro de toda la altura de la barra (nav usa
-      // items-stretch) antes de aplicarse ese margen -- el hueco real
-      // necesario es bastante mayor que el margen negativo por sí solo.
-      className="flex-1 overflow-y-auto px-4 pt-4 pb-24"
+      className="flex-1 overflow-y-auto px-4 py-4"
       onTouchStart={onTouchStart}
       onTouchEnd={onTouchEnd}
     >
