@@ -84,11 +84,27 @@ export function BottomNav() {
       const rect = botonMapaRef.current?.getBoundingClientRect();
       if (!rect) return;
       const cs = botonMapaRef.current ? getComputedStyle(botonMapaRef.current) : null;
+
+      // Busca el último <button> visible que contenga "Cerrar sesión" (sin
+      // acoplar BottomNav a perfil/page.tsx) para medir el hueco real entre
+      // ese botón y el círculo del Mapa.
+      const botones = Array.from(document.querySelectorAll("button"));
+      const cerrarSesion = botones.find((b) => b.textContent?.trim() === "Cerrar sesión");
+      const rectCerrar = cerrarSesion?.getBoundingClientRect();
+
+      const main = document.querySelector("main");
+
       setDebugInfo(
         `viewport ${window.innerWidth}x${window.innerHeight} dpr=${window.devicePixelRatio} ` +
           `fontRoot=${getComputedStyle(document.documentElement).fontSize} | ` +
           `boton rect=${Math.round(rect.width)}x${Math.round(rect.height)} top=${Math.round(rect.top)} bottom=${Math.round(rect.bottom)} | ` +
-          `computed h=${cs?.height} w=${cs?.width} mt=${cs?.marginTop} transform=${cs?.transform}`,
+          `computed h=${cs?.height} w=${cs?.width} mt=${cs?.marginTop} transform=${cs?.transform} | ` +
+          (rectCerrar
+            ? `cerrarSesion top=${Math.round(rectCerrar.top)} bottom=${Math.round(rectCerrar.bottom)} gap=${Math.round(rect.top - rectCerrar.bottom)}`
+            : "cerrarSesion no encontrado en esta pantalla") +
+          (main
+            ? ` | main scrollTop=${Math.round(main.scrollTop)} scrollHeight=${Math.round(main.scrollHeight)} clientHeight=${Math.round(main.clientHeight)}`
+            : ""),
       );
     }
     medir();
