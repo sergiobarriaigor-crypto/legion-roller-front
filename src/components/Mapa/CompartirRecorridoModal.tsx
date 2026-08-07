@@ -206,7 +206,7 @@ export function CompartirRecorridoModal({
           titulo: titulo.trim() || "Mi recorrido en Legión Roller",
           resena: comentario.trim() || "¡Otro recorrido completado! 🛼",
           ubicacion: datos.sector,
-          fotoUrl: subida.url,
+          fotos: [subida.url],
         },
         token,
       );
