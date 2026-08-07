@@ -76,7 +76,11 @@ export function SwipeNavigator({ children }: { children: ReactNode }) {
 
   return (
     <main
-      className="flex-1 overflow-y-auto px-4 py-4"
+      // pb-12 (en vez de pb-4 parejo con el resto) para que el último
+      // elemento de una pestaña larga no quede tapado por el botón redondo
+      // del Mapa, que sobresale 32px por encima de la barra inferior
+      // (-mt-[32px] en BottomNav.tsx).
+      className="flex-1 overflow-y-auto px-4 pt-4 pb-12"
       onTouchStart={onTouchStart}
       onTouchEnd={onTouchEnd}
     >
