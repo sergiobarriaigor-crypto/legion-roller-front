@@ -630,17 +630,18 @@ export default function PerfilPage() {
         );
       })()}
 
-      {/* mb-20 (80px) es a propósito solo acá, no en SwipeNavigator.tsx: ese
+      {/* mb-16 (64px) es a propósito solo acá, no en SwipeNavigator.tsx: ese
           contenedor lo comparten todas las pestañas (Chat incluido), y
           agregarle más aire ahí generaba un hueco enorme bajo la caja de
           texto del Chat. Medido en un dispositivo real (?debug=1 en
           BottomNav.tsx): el botón redondo del Mapa se superpone ~55px sobre
           el último elemento cuando el contenedor solo tiene su padding
-          normal (16px) -- 80px de margen acá deja ~25px de aire real. */}
+          normal (16px) -- 64px de margen acá deja ~8px de aire, ajustado a
+          propósito para que no se vea un hueco grande. */}
       <button
         type="button"
         onClick={logout}
-        className="card mb-20 px-4 py-3 text-sm text-fill-warning"
+        className="card mb-16 px-4 py-3 text-sm text-fill-warning"
       >
         Cerrar sesión
       </button>
