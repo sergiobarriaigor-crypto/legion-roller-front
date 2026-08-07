@@ -238,8 +238,17 @@ function construirSvg(
   fondoDataUrl: string | null,
   mapa: MapaGenerado | null,
   frame?: FrameAnimado,
+  // Margen horizontal entre el borde de la tarjeta y el recuadro "RECORRIDO"
+  // / las casillas de estadísticas -- parametrizado (en vez de usar la
+  // constante PADDING directo) para poder achicarlo solo en la imagen fija
+  // de Post (generarTarjetaRecorrido) sin tocar el video, que sigue usando
+  // el valor de siempre. El mapa (MAPA_X/MAPA_ANCHO) no se toca acá: ya
+  // queda centrado en el canvas sin importar este valor, así que reducirlo
+  // no afecta el tamaño ni la nitidez del mapa, solo el margen decorativo.
+  paddingOverride?: number,
 ): string {
   const { puntos } = datos;
+  const padding = paddingOverride ?? PADDING;
 
   const lats = puntos.map((p) => p.lat);
   const lons = puntos.map((p) => p.lon);
@@ -299,14 +308,14 @@ function construirSvg(
   // encantó ese efecto y pidió repetirlo aquí en vez de un solo bloque con
   // simples líneas separadoras).
   const ESPACIO_ENTRE_CAJAS = 14;
-  const anchoCaja = (ANCHO - PADDING * 2 - ESPACIO_ENTRE_CAJAS * (stats.length - 1)) / stats.length;
+  const anchoCaja = (ANCHO - padding * 2 - ESPACIO_ENTRE_CAJAS * (stats.length - 1)) / stats.length;
   const iconoY = CAJA_STATS_Y + 26;
   const valorY = CAJA_STATS_Y + 102;
   const etiquetaY = CAJA_STATS_Y + 128;
 
   const statsSvg = stats
     .map((s, i) => {
-      const cajaX = PADDING + i * (anchoCaja + ESPACIO_ENTRE_CAJAS);
+      const cajaX = padding + i * (anchoCaja + ESPACIO_ENTRE_CAJAS);
       const cx = cajaX + anchoCaja / 2;
       return `
         <rect x="${cajaX}" y="${CAJA_STATS_Y}" width="${anchoCaja}" height="${CAJA_STATS_ALTO}" rx="16" fill="${FONDO_CAJA}" stroke="${DORADO_BORDE}" stroke-width="1.5" opacity="0.9" filter="url(#resplandorDorado)"/>
@@ -357,8 +366,8 @@ function construirSvg(
       ${marcaSvg}
       <text x="${ANCHO / 2}" y="218" text-anchor="middle" font-family="Arial, sans-serif" font-size="23" font-weight="600" fill="#f2ead8">${escapeXml(datos.fecha)}<tspan fill="${DORADO}"> · </tspan><tspan fill="${GRIS_TEXTO}" font-weight="400" font-size="21">${escapeXml(datos.sector)}</tspan></text>
 
-      <rect x="${PADDING}" y="${CAJA_RECORRIDO_Y}" width="${ANCHO - PADDING * 2}" height="${CAJA_RECORRIDO_ALTO}" rx="18" fill="${FONDO_CAJA}" stroke="${DORADO_BORDE}" stroke-width="1.5" opacity="0.9" filter="url(#resplandorDorado)"/>
-      <rect x="${PADDING}" y="${CAJA_RECORRIDO_Y}" width="${ANCHO - PADDING * 2}" height="${CAJA_RECORRIDO_ALTO}" rx="18" fill="${FONDO_CAJA}" stroke="${DORADO_BORDE}" stroke-width="1.2"/>
+      <rect x="${padding}" y="${CAJA_RECORRIDO_Y}" width="${ANCHO - padding * 2}" height="${CAJA_RECORRIDO_ALTO}" rx="18" fill="${FONDO_CAJA}" stroke="${DORADO_BORDE}" stroke-width="1.5" opacity="0.9" filter="url(#resplandorDorado)"/>
+      <rect x="${padding}" y="${CAJA_RECORRIDO_Y}" width="${ANCHO - padding * 2}" height="${CAJA_RECORRIDO_ALTO}" rx="18" fill="${FONDO_CAJA}" stroke="${DORADO_BORDE}" stroke-width="1.2"/>
 
       <text x="${ANCHO / 2}" y="${CAJA_RECORRIDO_Y + 40}" text-anchor="middle" font-family="Arial, sans-serif" font-size="20" font-weight="700" letter-spacing="2" fill="${DORADO}">RECORRIDO</text>
 
@@ -396,7 +405,13 @@ export async function generarTarjetaRecorrido(datos: DatosTarjetaRecorrido): Pro
     cargarImagenComoDataUrl("/fondo-mis-rutas.jpg"),
     generarMapaReal(datos.puntos),
   ]);
-  const svg = construirSvg(datos, logoDataUrl, fondoDataUrl, mapa);
+  // Margen más chico que el del video (PADDING=50) -- pedido puntual para la
+  // imagen de Post: el marco decorativo (foto de fondo difuminada) entre el
+  // borde de la tarjeta y el recuadro "RECORRIDO" quedaba muy ancho. El mapa
+  // no se toca (MAPA_X ya queda centrado en el canvas sin depender de este
+  // valor), solo se angosta el margen alrededor.
+  const PADDING_IMAGEN = 26;
+  const svg = construirSvg(datos, logoDataUrl, fondoDataUrl, mapa, undefined, PADDING_IMAGEN);
   const svgDataUrl = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`;
 
   return new Promise((resolve, reject) => {
