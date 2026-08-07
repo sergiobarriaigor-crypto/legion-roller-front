@@ -12,6 +12,12 @@ const config: CapacitorConfig = {
     url: 'https://legion-roller-front.vercel.app',
     cleartext: false,
   },
+  // Requisito documentado de @capacitor-community/background-geolocation:
+  // sin esto, Android corta las actualizaciones de ubicación en segundo
+  // plano a los 5 minutos, justo el problema que este plugin busca resolver.
+  android: {
+    useLegacyBridge: true,
+  },
 };
 
 export default config;

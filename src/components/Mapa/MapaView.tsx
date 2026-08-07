@@ -25,6 +25,7 @@ import { ETIQUETA_MOTIVO, type EmergenciaActiva } from "@/lib/emergencias";
 import { salaIndividual } from "@/lib/chat";
 import { obtenerSocket } from "@/lib/socket";
 import { notificarme } from "@/lib/push";
+import { iniciarSeguimientoUbicacion } from "@/lib/geolocacionNativa";
 import { PatinadoresActivosPanel } from "@/components/Mapa/PatinadoresActivosPanel";
 import { MisRutasPanel } from "@/components/Mapa/MisRutasPanel";
 import { ChatFlotante } from "@/components/Mapa/ChatFlotante";
@@ -651,19 +652,14 @@ export function MapaView() {
       marcarSiguiendo(false);
       return;
     }
-    if (!navigator.geolocation) {
-      setErrorGeo("Tu navegador no soporta geolocalización.");
-      return;
-    }
-
-    const watchId = navigator.geolocation.watchPosition(
+    const detener = iniciarSeguimientoUbicacion(
       (pos) => {
-        const punto = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+        const punto = { lat: pos.lat, lon: pos.lon };
         posicionRef.current = punto;
         setPosicion(punto);
         ultimaPosicionConocida = punto;
         setErrorGeo("");
-        registrarMovimiento(punto, pos.coords.accuracy ?? 0);
+        registrarMovimiento(punto, pos.accuracy);
 
         if (grabandoRef.current && !avisoVelocidadRef.current) {
           const puntoGrabado = { ...punto, timestamp: Date.now() };
@@ -722,10 +718,9 @@ export function MapaView() {
         }
       },
       () => setErrorGeo("No se pudo obtener tu ubicación (revisa los permisos)."),
-      { enableHighAccuracy: true, maximumAge: 5000 },
     );
 
-    return () => navigator.geolocation.clearWatch(watchId);
+    return () => detener();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modo]);
 

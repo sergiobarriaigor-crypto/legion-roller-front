@@ -9,9 +9,13 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@capacitor-community/background-geolocation": "^1.2.26",
     "@capacitor/android": "^8.5.0",
+    "@capacitor/camera": "^8.2.2",
     "@capacitor/cli": "^8.5.0",
     "@capacitor/core": "^8.5.0",
+    "@capacitor/geolocation": "^8.2.1",
+    "@capacitor/push-notifications": "^8.1.2",
     "@tabler/icons-react": "^3.44.0",
     "emoji-picker-react": "^4.19.1",
     "leaflet": "^1.9.4",
