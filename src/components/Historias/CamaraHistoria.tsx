@@ -89,6 +89,7 @@ export function CamaraHistoria({
   // duplicar ese camino acá.
   soloFoto?: boolean;
 }) {
+  const contenedorRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const grabadoraRef = useRef<MediaRecorder | null>(null);
@@ -153,6 +154,38 @@ export function CamaraHistoria({
       if (idCuadroRef.current) cancelAnimationFrame(idCuadroRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Bloqueo de orientación mientras la cámara está abierta: sin esto, si el
+  // celular tiene "Girar pantalla automática" activado, el navegador rota
+  // toda esta vista (pensada para formato vertical) al girar el teléfono —
+  // algo aparte y sin relación con el botón manual de "Girar imagen" de más
+  // abajo. El bloqueo del navegador solo funciona en pantalla completa y no
+  // existe en Safari/iOS, así que se ignora en silencio si falla, dejando el
+  // botón manual como respaldo universal.
+  useEffect(() => {
+    // "lock"/"unlock" no están en los tipos DOM de TypeScript (API todavía
+    // no estandarizada, ausente en Safari) — se accede vía un tipo local.
+    const orientacion = screen.orientation as
+      | (ScreenOrientation & { lock?: (o: string) => Promise<void>; unlock?: () => void })
+      | undefined;
+    const contenedor = contenedorRef.current;
+    (async () => {
+      try {
+        // `await undefined` (cuando el método no existe en este navegador)
+        // no lanza excepción -- a diferencia de encadenar `.then()` directo
+        // sobre el resultado de un `?.()`, que si el método no existe deja
+        // `undefined` y revienta al intentar leer `.then` de él.
+        await contenedor?.requestFullscreen?.();
+        await orientacion?.lock?.("portrait");
+      } catch (err) {
+        console.warn("Cámara Express: no se pudo bloquear la orientación", err);
+      }
+    })();
+    return () => {
+      orientacion?.unlock?.();
+      if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+    };
   }, []);
 
   // Gira entre trasera/frontal soltando la cámara actual ANTES de pedir la
@@ -311,7 +344,7 @@ export function CamaraHistoria({
   const progreso = Math.min(1, segundos / DURACION_MAXIMA_VIDEO_HISTORIA_SEG);
 
   return (
-    <div className="fixed inset-0 z-50 bg-black" data-no-swipe>
+    <div ref={contenedorRef} className="fixed inset-0 z-50 bg-black" data-no-swipe>
       {error ? (
         <div className="flex h-full flex-col items-center justify-center gap-4 px-6">
           <p className="text-center text-sm text-fill-warning">{error}</p>
