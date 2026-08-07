@@ -1,21 +1,24 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { IconShare, IconUpload } from "@tabler/icons-react";
+import { IconShare, IconUpload, IconCube3dSphere } from "@tabler/icons-react";
 import { apiUpload, apiPost, ApiError } from "@/lib/api";
 import { generarTarjetaRecorrido, generarVideoRecorrido, type DatosTarjetaRecorrido } from "@/lib/tarjetaRecorrido";
+import { solicitarFlyover, estadoFlyoverPorRecorrido, estadoFlyoverPorId, type EstadoFlyover } from "@/lib/flyover";
 import { useNoAutofill } from "@/lib/useNoAutofill";
 
 type Estado = "editando" | "publicando";
-type Tab = "imagen" | "video";
+type Tab = "imagen" | "video" | "video3d";
 
 export function CompartirRecorridoModal({
   datos,
+  recorridoId,
   token,
   onClose,
   onPublicado,
 }: {
   datos: DatosTarjetaRecorrido;
+  recorridoId: number;
   token: string | null;
   onClose: () => void;
   onPublicado?: () => void;
@@ -44,6 +47,17 @@ export function CompartirRecorridoModal({
   const [progresoVideo, setProgresoVideo] = useState(0);
   const [errorVideo, setErrorVideo] = useState("");
   const videoBlobUrlRef = useRef<string | null>(null);
+
+  // Video 3D (flyover): a diferencia del video de arriba, se renderiza en el
+  // servidor (navegador headless + MapLibre) porque muchos celulares no
+  // soportan WebGL/GPU -- tarda 1-3 min, así que en vez de una barra de
+  // progreso bloqueante se dispara el pedido y se hace polling del estado,
+  // permitiendo que el usuario cierre el modal mientras tanto (el aviso de
+  // "listo" llega igual por push).
+  const [estadoFlyover, setEstadoFlyover] = useState<EstadoFlyover | null>(null);
+  const [cargandoFlyover, setCargandoFlyover] = useState(false);
+  const [errorFlyover, setErrorFlyover] = useState("");
+  const pollingFlyoverRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Genera la tarjeta apenas se abre el modal (sin espera), y la vuelve a
   // generar cuando el usuario cambia el título/comentario, pero con un
@@ -84,8 +98,67 @@ export function CompartirRecorridoModal({
     return () => {
       if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
       if (videoBlobUrlRef.current) URL.revokeObjectURL(videoBlobUrlRef.current);
+      detenerPollingFlyover();
     };
   }, []);
+
+  function detenerPollingFlyover() {
+    if (pollingFlyoverRef.current) {
+      clearInterval(pollingFlyoverRef.current);
+      pollingFlyoverRef.current = null;
+    }
+  }
+
+  function iniciarPollingFlyover(id: number) {
+    detenerPollingFlyover();
+    pollingFlyoverRef.current = setInterval(async () => {
+      if (!token) return;
+      try {
+        const estado = await estadoFlyoverPorId(id, token);
+        setEstadoFlyover(estado);
+        if (estado.estado === "listo" || estado.estado === "error") {
+          detenerPollingFlyover();
+        }
+      } catch {
+        detenerPollingFlyover();
+      }
+    }, 4000);
+  }
+
+  async function consultarEstadoFlyoverInicial() {
+    if (!token) return;
+    setCargandoFlyover(true);
+    try {
+      const estado = await estadoFlyoverPorRecorrido(recorridoId, token);
+      setEstadoFlyover(estado);
+      if (estado && (estado.estado === "pendiente" || estado.estado === "procesando")) {
+        iniciarPollingFlyover(estado.id);
+      }
+    } catch {
+      // Sin video previo (o error de red) -- se deja en null, el usuario puede generar uno nuevo.
+    } finally {
+      setCargandoFlyover(false);
+    }
+  }
+
+  async function generarFlyover() {
+    if (!token || cargandoFlyover) return;
+    setCargandoFlyover(true);
+    setErrorFlyover("");
+    try {
+      const estado = await solicitarFlyover(recorridoId, token);
+      setEstadoFlyover(estado);
+      if (estado.estado === "pendiente" || estado.estado === "procesando") {
+        iniciarPollingFlyover(estado.id);
+      }
+    } catch (err) {
+      setErrorFlyover(
+        err instanceof ApiError ? err.message : "No se pudo iniciar la generación del video 3D.",
+      );
+    } finally {
+      setCargandoFlyover(false);
+    }
+  }
 
   async function generarVideo() {
     if (videoBlob || generandoVideo) return;
@@ -109,6 +182,9 @@ export function CompartirRecorridoModal({
   function elegirTab(nuevoTab: Tab) {
     setTab(nuevoTab);
     if (nuevoTab === "video" && !videoBlob && !generandoVideo) generarVideo();
+    if (nuevoTab === "video3d" && estadoFlyover === null && !cargandoFlyover) {
+      consultarEstadoFlyoverInicial();
+    }
   }
 
   async function publicarEnPost() {
@@ -136,12 +212,31 @@ export function CompartirRecorridoModal({
   }
 
   async function compartirEnRedes() {
-    const esVideo = tab === "video";
-    const blobActivo = esVideo ? videoBlob : blob;
-    if (!blobActivo) return;
     setError("");
-    const nombreArchivo = esVideo ? "recorrido-legion-roller.webm" : "recorrido-legion-roller.png";
-    const archivo = new File([blobActivo], nombreArchivo, { type: esVideo ? "video/webm" : "image/png" });
+
+    let blobActivo: Blob | null;
+    let nombreArchivo: string;
+    let tipoArchivo: string;
+
+    if (tab === "video3d") {
+      if (!estadoFlyover?.videoUrl) return;
+      try {
+        blobActivo = await fetch(estadoFlyover.videoUrl).then((r) => r.blob());
+      } catch {
+        setError("No se pudo descargar el video 3D para compartir.");
+        return;
+      }
+      nombreArchivo = "recorrido-3d-legion-roller.mp4";
+      tipoArchivo = "video/mp4";
+    } else {
+      const esVideo = tab === "video";
+      blobActivo = esVideo ? videoBlob : blob;
+      nombreArchivo = esVideo ? "recorrido-legion-roller.webm" : "recorrido-legion-roller.png";
+      tipoArchivo = esVideo ? "video/webm" : "image/png";
+    }
+    if (!blobActivo) return;
+
+    const archivo = new File([blobActivo], nombreArchivo, { type: tipoArchivo });
     const textoCompartir = [titulo.trim(), comentario.trim()].filter(Boolean).join("\n");
 
     try {
@@ -197,6 +292,16 @@ export function CompartirRecorridoModal({
           >
             Video
           </button>
+          <button
+            type="button"
+            onClick={() => elegirTab("video3d")}
+            className={`flex flex-1 items-center justify-center gap-1 rounded-app py-1.5 text-xs font-semibold ${
+              tab === "video3d" ? "bg-fill-primary text-on-primary" : "text-text-secondary"
+            }`}
+          >
+            <IconCube3dSphere size={13} />
+            3D
+          </button>
         </div>
 
         <div className="flex items-center justify-center overflow-hidden rounded-app bg-surface-2" style={{ height: 320 }}>
@@ -228,6 +333,72 @@ export function CompartirRecorridoModal({
                   muted
                   playsInline
                 />
+              )}
+            </>
+          )}
+          {tab === "video3d" && (
+            <>
+              {cargandoFlyover && (
+                <p className="px-6 text-center text-xs text-text-secondary">Un momento...</p>
+              )}
+              {!cargandoFlyover && !estadoFlyover && !errorFlyover && (
+                <div className="flex flex-col items-center gap-2.5 px-6 text-center">
+                  <p className="text-xs text-text-secondary">
+                    Se genera en el servidor -- funciona en cualquier celular, sin importar si
+                    soporta 3D. Tarda 1-3 min; podés cerrar esta ventana y te avisamos cuando esté.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={generarFlyover}
+                    className="btn-hero rounded-app px-4 py-1.5 text-xs"
+                  >
+                    Generar video 3D
+                  </button>
+                </div>
+              )}
+              {!cargandoFlyover && errorFlyover && (
+                <div className="flex flex-col items-center gap-2.5 px-6 text-center">
+                  <p className="text-xs text-fill-warning">{errorFlyover}</p>
+                  <button
+                    type="button"
+                    onClick={generarFlyover}
+                    className="rounded-app border border-border-accent px-4 py-1.5 text-xs text-text-accent"
+                  >
+                    Reintentar
+                  </button>
+                </div>
+              )}
+              {!cargandoFlyover &&
+                estadoFlyover &&
+                (estadoFlyover.estado === "pendiente" || estadoFlyover.estado === "procesando") && (
+                  <p className="px-6 text-center text-xs text-text-secondary">
+                    Generando tu video 3D... puede tardar 1-3 min. Podés cerrar esta ventana, te
+                    avisamos cuando esté listo.
+                  </p>
+                )}
+              {!cargandoFlyover && estadoFlyover?.estado === "listo" && estadoFlyover.videoUrl && (
+                <video
+                  src={estadoFlyover.videoUrl}
+                  className="h-full w-full object-contain"
+                  autoPlay
+                  loop
+                  muted
+                  playsInline
+                />
+              )}
+              {!cargandoFlyover && estadoFlyover?.estado === "error" && (
+                <div className="flex flex-col items-center gap-2.5 px-6 text-center">
+                  <p className="text-xs text-fill-warning">
+                    {estadoFlyover.errorMsg ?? "No se pudo generar el video 3D."}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={generarFlyover}
+                    className="rounded-app border border-border-accent px-4 py-1.5 text-xs text-text-accent"
+                  >
+                    Reintentar
+                  </button>
+                </div>
               )}
             </>
           )}
@@ -269,7 +440,13 @@ export function CompartirRecorridoModal({
         )}
         <button
           type="button"
-          disabled={tab === "imagen" ? cargandoInicial || !blob : generandoVideo || !videoBlob}
+          disabled={
+            tab === "imagen"
+              ? cargandoInicial || !blob
+              : tab === "video"
+                ? generandoVideo || !videoBlob
+                : estadoFlyover?.estado !== "listo" || !estadoFlyover.videoUrl
+          }
           onClick={compartirEnRedes}
           className="flex items-center justify-center gap-1.5 rounded-app border border-border-accent px-4 py-2 text-sm text-text-accent disabled:opacity-50"
         >

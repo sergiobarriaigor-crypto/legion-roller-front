@@ -255,6 +255,7 @@ function FichaRecorrido({
       {mostrarCompartir && (
         <CompartirRecorridoModal
           token={token}
+          recorridoId={recorrido.id}
           datos={{
             puntos,
             distanciaKm: recorrido.distanciaKm,
