@@ -33,6 +33,63 @@ const CAJA_RECORRIDO_ALTO = 640; // hasta y = 890
 const CAJA_STATS_Y = 920;
 const CAJA_STATS_ALTO = 180; // hasta y = 1100
 
+// Posiciones verticales + padding horizontal como un solo objeto -- permite
+// que generarTarjetaRecorrido() (imagen fija de Post) use una versión más
+// "compacta" sin tocar generarVideoRecorrido(), que sigue usando
+// LAYOUT_DEFECTO (los mismos números de siempre). El ancho/alto del mapa
+// satelital en sí (MAPA_ANCHO/MAPA_ALTO de arriba) no cambia entre layouts
+// -- generarMapaReal() sigue pidiendo los mismos tiles siempre; en el layout
+// compacto la imagen resultante se dibuja apenas más baja (~6%), un ajuste
+// imperceptible, en vez de volver a calcular zoom/tiles.
+interface LayoutTarjeta {
+  alto: number;
+  padding: number;
+  mapaY: number;
+  mapaAlto: number;
+  cajaRecorridoY: number;
+  cajaRecorridoAlto: number;
+  cajaStatsY: number;
+  cajaStatsAlto: number;
+  tamLogo: number;
+  logoY: number;
+  fechaY: number;
+}
+
+const LAYOUT_DEFECTO: LayoutTarjeta = {
+  alto: ALTO,
+  padding: PADDING,
+  mapaY: MAPA_Y,
+  mapaAlto: MAPA_ALTO,
+  cajaRecorridoY: CAJA_RECORRIDO_Y,
+  cajaRecorridoAlto: CAJA_RECORRIDO_ALTO,
+  cajaStatsY: CAJA_STATS_Y,
+  cajaStatsAlto: CAJA_STATS_ALTO,
+  tamLogo: 150,
+  logoY: 32,
+  fechaY: 218,
+};
+
+// Layout usado solo por generarTarjetaRecorrido(): además del margen más
+// angosto ya pedido antes, baja la altura total de 1150 a 1000 -- con el
+// ancho fijo en 800, eso da una proporción 4:5 (0.8), que es exactamente el
+// límite RATIO_MIN que ya usa CarruselFotos.tsx en el feed de Post/Comunidad/
+// Impulsa para decidir cuánto recortar una foto vertical. Con 1150 (0.696)
+// quedaba por debajo de ese límite y el feed recortaba el logo arriba y las
+// estadísticas abajo con object-cover; a 0.8 entra justo, sin recorte.
+const LAYOUT_COMPACTO: LayoutTarjeta = {
+  alto: 1000,
+  padding: 26,
+  mapaY: 255,
+  mapaAlto: 450,
+  cajaRecorridoY: 170,
+  cajaRecorridoAlto: 617,
+  cajaStatsY: 803,
+  cajaStatsAlto: 180,
+  tamLogo: 90,
+  logoY: 16,
+  fechaY: 140,
+};
+
 const DORADO = "#e7c168";
 const DORADO_BORDE = "#c99a3d";
 const GRIS_TEXTO = "#b8ada0";
@@ -238,17 +295,12 @@ function construirSvg(
   fondoDataUrl: string | null,
   mapa: MapaGenerado | null,
   frame?: FrameAnimado,
-  // Margen horizontal entre el borde de la tarjeta y el recuadro "RECORRIDO"
-  // / las casillas de estadísticas -- parametrizado (en vez de usar la
-  // constante PADDING directo) para poder achicarlo solo en la imagen fija
-  // de Post (generarTarjetaRecorrido) sin tocar el video, que sigue usando
-  // el valor de siempre. El mapa (MAPA_X/MAPA_ANCHO) no se toca acá: ya
-  // queda centrado en el canvas sin importar este valor, así que reducirlo
-  // no afecta el tamaño ni la nitidez del mapa, solo el margen decorativo.
-  paddingOverride?: number,
+  // LAYOUT_DEFECTO para generarVideoRecorrido() (no se le pasa nada, así que
+  // sigue exactamente igual); generarTarjetaRecorrido() pasa LAYOUT_COMPACTO.
+  layout: LayoutTarjeta = LAYOUT_DEFECTO,
 ): string {
   const { puntos } = datos;
-  const padding = paddingOverride ?? PADDING;
+  const { padding, alto, mapaY, mapaAlto, cajaRecorridoY, cajaRecorridoAlto, cajaStatsY, cajaStatsAlto, tamLogo, logoY, fechaY } = layout;
 
   const lats = puntos.map((p) => p.lat);
   const lons = puntos.map((p) => p.lon);
@@ -268,12 +320,12 @@ function construirSvg(
   let y: (lat: number) => number;
   if (mapa) {
     x = (lon: number) => MAPA_X + (lonAPixelX(lon, mapa.zoom) - mapa.centroPxX + MAPA_ANCHO / 2);
-    y = (lat: number) => MAPA_Y + (latAPixelY(lat, mapa.zoom) - mapa.centroPxY + MAPA_ALTO / 2);
+    y = (lat: number) => mapaY + (latAPixelY(lat, mapa.zoom) - mapa.centroPxY + mapaAlto / 2);
   } else {
     x = (lon: number) =>
       MAPA_X + margenInterno + ((lon - minLon) / rangoLon) * (MAPA_ANCHO - margenInterno * 2);
     y = (lat: number) =>
-      MAPA_Y + margenInterno + ((maxLat - lat) / rangoLat) * (MAPA_ALTO - margenInterno * 2);
+      mapaY + margenInterno + ((maxLat - lat) / rangoLat) * (mapaAlto - margenInterno * 2);
   }
 
   const inicio = puntos[0];
@@ -284,11 +336,11 @@ function construirSvg(
   const posicionActual = frame?.posicionActual ?? null;
 
   const mapaFondoSvg = mapa
-    ? `<image href="${mapa.dataUrl}" x="${MAPA_X}" y="${MAPA_Y}" width="${MAPA_ANCHO}" height="${MAPA_ALTO}" preserveAspectRatio="none"/>`
-    : `<rect x="${MAPA_X}" y="${MAPA_Y}" width="${MAPA_ANCHO}" height="${MAPA_ALTO}" fill="#1a1108"/>`;
+    ? `<image href="${mapa.dataUrl}" x="${MAPA_X}" y="${mapaY}" width="${MAPA_ANCHO}" height="${mapaAlto}" preserveAspectRatio="none"/>`
+    : `<rect x="${MAPA_X}" y="${mapaY}" width="${MAPA_ANCHO}" height="${mapaAlto}" fill="#1a1108"/>`;
 
   const atribucionSvg = mapa
-    ? `<text x="${MAPA_X + MAPA_ANCHO - 8}" y="${MAPA_Y + MAPA_ALTO - 8}" text-anchor="end" font-family="Arial, sans-serif" font-size="9" fill="#8a8177" opacity="0.85">© OpenStreetMap, © CARTO</text>`
+    ? `<text x="${MAPA_X + MAPA_ANCHO - 8}" y="${mapaY + mapaAlto - 8}" text-anchor="end" font-family="Arial, sans-serif" font-size="9" fill="#8a8177" opacity="0.85">© OpenStreetMap, © CARTO</text>`
     : "";
 
   // Durante la animación del video, distancia y tiempo van subiendo cuadro a
@@ -309,17 +361,17 @@ function construirSvg(
   // simples líneas separadoras).
   const ESPACIO_ENTRE_CAJAS = 14;
   const anchoCaja = (ANCHO - padding * 2 - ESPACIO_ENTRE_CAJAS * (stats.length - 1)) / stats.length;
-  const iconoY = CAJA_STATS_Y + 26;
-  const valorY = CAJA_STATS_Y + 102;
-  const etiquetaY = CAJA_STATS_Y + 128;
+  const iconoY = cajaStatsY + 26;
+  const valorY = cajaStatsY + 102;
+  const etiquetaY = cajaStatsY + 128;
 
   const statsSvg = stats
     .map((s, i) => {
       const cajaX = padding + i * (anchoCaja + ESPACIO_ENTRE_CAJAS);
       const cx = cajaX + anchoCaja / 2;
       return `
-        <rect x="${cajaX}" y="${CAJA_STATS_Y}" width="${anchoCaja}" height="${CAJA_STATS_ALTO}" rx="16" fill="${FONDO_CAJA}" stroke="${DORADO_BORDE}" stroke-width="1.5" opacity="0.9" filter="url(#resplandorDorado)"/>
-        <rect x="${cajaX}" y="${CAJA_STATS_Y}" width="${anchoCaja}" height="${CAJA_STATS_ALTO}" rx="16" fill="${FONDO_CAJA}" stroke="${DORADO_BORDE}" stroke-width="1.2"/>
+        <rect x="${cajaX}" y="${cajaStatsY}" width="${anchoCaja}" height="${cajaStatsAlto}" rx="16" fill="${FONDO_CAJA}" stroke="${DORADO_BORDE}" stroke-width="1.5" opacity="0.9" filter="url(#resplandorDorado)"/>
+        <rect x="${cajaX}" y="${cajaStatsY}" width="${anchoCaja}" height="${cajaStatsAlto}" rx="16" fill="${FONDO_CAJA}" stroke="${DORADO_BORDE}" stroke-width="1.2"/>
         ${s.icono(cx, iconoY)}
         <text x="${cx}" y="${valorY}" text-anchor="middle" font-family="Arial, sans-serif" font-size="34" font-weight="800" fill="${DORADO}">${escapeXml(s.valor)}</text>
         <text x="${cx}" y="${etiquetaY}" text-anchor="middle" font-family="Arial, sans-serif" font-size="17" font-weight="600" letter-spacing="0.3" fill="${GRIS_TEXTO}">${escapeXml(s.etiqueta)}</text>
@@ -331,14 +383,12 @@ function construirSvg(
   // publicación en Post, o como texto del panel nativo al compartir a redes)
   // — a pedido del usuario, ya no se dibujan encima de la imagen misma.
 
-  const TAM_LOGO = 150;
-  const LOGO_Y = 32;
   const marcaSvg = logoDataUrl
-    ? `<image href="${logoDataUrl}" x="${ANCHO / 2 - TAM_LOGO / 2}" y="${LOGO_Y}" width="${TAM_LOGO}" height="${TAM_LOGO}" />`
-    : `<text x="${ANCHO / 2}" y="${LOGO_Y + TAM_LOGO / 2 + 13}" text-anchor="middle" font-family="Arial, sans-serif" font-size="42" font-weight="800" fill="${DORADO}" letter-spacing="2">LEGIÓN ROLLER</text>`;
+    ? `<image href="${logoDataUrl}" x="${ANCHO / 2 - tamLogo / 2}" y="${logoY}" width="${tamLogo}" height="${tamLogo}" />`
+    : `<text x="${ANCHO / 2}" y="${logoY + tamLogo / 2 + 13}" text-anchor="middle" font-family="Arial, sans-serif" font-size="42" font-weight="800" fill="${DORADO}" letter-spacing="2">LEGIÓN ROLLER</text>`;
 
   return `
-    <svg width="${ANCHO * ESCALA}" height="${ALTO * ESCALA}" viewBox="0 0 ${ANCHO} ${ALTO}" xmlns="http://www.w3.org/2000/svg">
+    <svg width="${ANCHO * ESCALA}" height="${alto * ESCALA}" viewBox="0 0 ${ANCHO} ${alto}" xmlns="http://www.w3.org/2000/svg">
       <defs>
         <filter id="resplandorDorado" x="-60%" y="-60%" width="220%" height="220%">
           <feGaussianBlur stdDeviation="5" result="blur"/>
@@ -350,29 +400,29 @@ function construirSvg(
       </defs>
 
       <clipPath id="marcoTarjeta">
-        <rect width="${ANCHO}" height="${ALTO}" rx="26"/>
+        <rect width="${ANCHO}" height="${alto}" rx="26"/>
       </clipPath>
       <g clip-path="url(#marcoTarjeta)">
         ${
           fondoDataUrl
-            ? `<image href="${fondoDataUrl}" x="0" y="0" width="${ANCHO}" height="${ALTO}" preserveAspectRatio="xMidYMax slice"/>
-               <rect width="${ANCHO}" height="${ALTO}" fill="${FONDO_CARD}" opacity="0.55"/>`
-            : `<rect width="${ANCHO}" height="${ALTO}" fill="${FONDO_CARD}"/>`
+            ? `<image href="${fondoDataUrl}" x="0" y="0" width="${ANCHO}" height="${alto}" preserveAspectRatio="xMidYMax slice"/>
+               <rect width="${ANCHO}" height="${alto}" fill="${FONDO_CARD}" opacity="0.55"/>`
+            : `<rect width="${ANCHO}" height="${alto}" fill="${FONDO_CARD}"/>`
         }
       </g>
-      <rect x="14" y="14" width="${ANCHO - 28}" height="${ALTO - 28}" rx="26" fill="none" stroke="${DORADO_BORDE}" stroke-width="2" opacity="0.55" filter="url(#resplandorDorado)"/>
-      <rect x="14" y="14" width="${ANCHO - 28}" height="${ALTO - 28}" rx="26" fill="none" stroke="${DORADO_BORDE}" stroke-width="1.5"/>
+      <rect x="14" y="14" width="${ANCHO - 28}" height="${alto - 28}" rx="26" fill="none" stroke="${DORADO_BORDE}" stroke-width="2" opacity="0.55" filter="url(#resplandorDorado)"/>
+      <rect x="14" y="14" width="${ANCHO - 28}" height="${alto - 28}" rx="26" fill="none" stroke="${DORADO_BORDE}" stroke-width="1.5"/>
 
       ${marcaSvg}
-      <text x="${ANCHO / 2}" y="218" text-anchor="middle" font-family="Arial, sans-serif" font-size="23" font-weight="600" fill="#f2ead8">${escapeXml(datos.fecha)}<tspan fill="${DORADO}"> · </tspan><tspan fill="${GRIS_TEXTO}" font-weight="400" font-size="21">${escapeXml(datos.sector)}</tspan></text>
+      <text x="${ANCHO / 2}" y="${fechaY}" text-anchor="middle" font-family="Arial, sans-serif" font-size="23" font-weight="600" fill="#f2ead8">${escapeXml(datos.fecha)}<tspan fill="${DORADO}"> · </tspan><tspan fill="${GRIS_TEXTO}" font-weight="400" font-size="21">${escapeXml(datos.sector)}</tspan></text>
 
-      <rect x="${padding}" y="${CAJA_RECORRIDO_Y}" width="${ANCHO - padding * 2}" height="${CAJA_RECORRIDO_ALTO}" rx="18" fill="${FONDO_CAJA}" stroke="${DORADO_BORDE}" stroke-width="1.5" opacity="0.9" filter="url(#resplandorDorado)"/>
-      <rect x="${padding}" y="${CAJA_RECORRIDO_Y}" width="${ANCHO - padding * 2}" height="${CAJA_RECORRIDO_ALTO}" rx="18" fill="${FONDO_CAJA}" stroke="${DORADO_BORDE}" stroke-width="1.2"/>
+      <rect x="${padding}" y="${cajaRecorridoY}" width="${ANCHO - padding * 2}" height="${cajaRecorridoAlto}" rx="18" fill="${FONDO_CAJA}" stroke="${DORADO_BORDE}" stroke-width="1.5" opacity="0.9" filter="url(#resplandorDorado)"/>
+      <rect x="${padding}" y="${cajaRecorridoY}" width="${ANCHO - padding * 2}" height="${cajaRecorridoAlto}" rx="18" fill="${FONDO_CAJA}" stroke="${DORADO_BORDE}" stroke-width="1.2"/>
 
-      <text x="${ANCHO / 2}" y="${CAJA_RECORRIDO_Y + 40}" text-anchor="middle" font-family="Arial, sans-serif" font-size="20" font-weight="700" letter-spacing="2" fill="${DORADO}">RECORRIDO</text>
+      <text x="${ANCHO / 2}" y="${cajaRecorridoY + 40}" text-anchor="middle" font-family="Arial, sans-serif" font-size="20" font-weight="700" letter-spacing="2" fill="${DORADO}">RECORRIDO</text>
 
       <clipPath id="recorteMapa">
-        <rect x="${MAPA_X}" y="${MAPA_Y}" width="${MAPA_ANCHO}" height="${MAPA_ALTO}" rx="14"/>
+        <rect x="${MAPA_X}" y="${mapaY}" width="${MAPA_ANCHO}" height="${mapaAlto}" rx="14"/>
       </clipPath>
       <g clip-path="url(#recorteMapa)">
         ${mapaFondoSvg}
@@ -382,12 +432,12 @@ function construirSvg(
         ${posicionActual ? `<circle cx="${x(posicionActual.lon)}" cy="${y(posicionActual.lat)}" r="9" fill="${DORADO}" stroke="#0d0a06" stroke-width="3" filter="url(#resplandorDorado)"/>` : ""}
         ${atribucionSvg}
       </g>
-      <rect x="${MAPA_X}" y="${MAPA_Y}" width="${MAPA_ANCHO}" height="${MAPA_ALTO}" rx="14" fill="none" stroke="${DORADO_BORDE}" stroke-width="1.2" opacity="0.8"/>
+      <rect x="${MAPA_X}" y="${mapaY}" width="${MAPA_ANCHO}" height="${mapaAlto}" rx="14" fill="none" stroke="${DORADO_BORDE}" stroke-width="1.2" opacity="0.8"/>
 
-      <circle cx="${ANCHO / 2 - 68}" cy="${MAPA_Y + MAPA_ALTO + 36}" r="8" fill="#5fae4e"/>
-      <text x="${ANCHO / 2 - 51}" y="${MAPA_Y + MAPA_ALTO + 42}" font-family="Arial, sans-serif" font-size="19" font-weight="700" fill="#f2ead8">INICIO</text>
-      <circle cx="${ANCHO / 2 + 28}" cy="${MAPA_Y + MAPA_ALTO + 36}" r="8" fill="#d8342f"/>
-      <text x="${ANCHO / 2 + 45}" y="${MAPA_Y + MAPA_ALTO + 42}" font-family="Arial, sans-serif" font-size="19" font-weight="700" fill="#f2ead8">FIN</text>
+      <circle cx="${ANCHO / 2 - 68}" cy="${mapaY + mapaAlto + 36}" r="8" fill="#5fae4e"/>
+      <text x="${ANCHO / 2 - 51}" y="${mapaY + mapaAlto + 42}" font-family="Arial, sans-serif" font-size="19" font-weight="700" fill="#f2ead8">INICIO</text>
+      <circle cx="${ANCHO / 2 + 28}" cy="${mapaY + mapaAlto + 36}" r="8" fill="#d8342f"/>
+      <text x="${ANCHO / 2 + 45}" y="${mapaY + mapaAlto + 42}" font-family="Arial, sans-serif" font-size="19" font-weight="700" fill="#f2ead8">FIN</text>
 
       ${statsSvg}
     </svg>
@@ -405,13 +455,7 @@ export async function generarTarjetaRecorrido(datos: DatosTarjetaRecorrido): Pro
     cargarImagenComoDataUrl("/fondo-mis-rutas.jpg"),
     generarMapaReal(datos.puntos),
   ]);
-  // Margen más chico que el del video (PADDING=50) -- pedido puntual para la
-  // imagen de Post: el marco decorativo (foto de fondo difuminada) entre el
-  // borde de la tarjeta y el recuadro "RECORRIDO" quedaba muy ancho. El mapa
-  // no se toca (MAPA_X ya queda centrado en el canvas sin depender de este
-  // valor), solo se angosta el margen alrededor.
-  const PADDING_IMAGEN = 26;
-  const svg = construirSvg(datos, logoDataUrl, fondoDataUrl, mapa, undefined, PADDING_IMAGEN);
+  const svg = construirSvg(datos, logoDataUrl, fondoDataUrl, mapa, undefined, LAYOUT_COMPACTO);
   const svgDataUrl = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`;
 
   return new Promise((resolve, reject) => {
@@ -419,7 +463,7 @@ export async function generarTarjetaRecorrido(datos: DatosTarjetaRecorrido): Pro
     img.onload = () => {
       const canvas = document.createElement("canvas");
       canvas.width = ANCHO * ESCALA;
-      canvas.height = ALTO * ESCALA;
+      canvas.height = LAYOUT_COMPACTO.alto * ESCALA;
       const ctx = canvas.getContext("2d");
       if (!ctx) {
         reject(new Error("No se pudo generar la imagen"));
