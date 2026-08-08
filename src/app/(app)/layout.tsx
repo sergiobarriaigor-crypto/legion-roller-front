@@ -87,28 +87,34 @@ export default function AppGroupLayout({
     // teléfono — por eso en desktop se veían expandidos a pantalla completa
     // en vez de quedar centrados y angostos como en un celular.
     <div className="relative mx-auto flex min-h-dvh w-full max-w-md flex-1 flex-col bg-page-bg [transform:translateZ(0)]">
-      {enConversacionChat ? chatHeader : <AppHeader />}
-      {sesion.rol !== "visitante" && <EmergenciaBanner />}
+      {/* VideoRecorridoProvider envuelve TODO acá abajo, incluido BottomNav a
+          propósito: "Compartir recorrido" también se abre desde el
+          doble-toque en el ícono de Mapa de BottomNav (además del acceso
+          dentro de la pantalla de Mapa) -- si BottomNav quedara afuera, ese
+          camino rompe con "useVideoRecorrido debe usarse dentro de
+          VideoRecorridoProvider". */}
+      <VideoRecorridoProvider>
+        {enConversacionChat ? chatHeader : <AppHeader />}
+        {sesion.rol !== "visitante" && <EmergenciaBanner />}
 
-      {sesion.rol === "visitante" && (
-        <div className="flex items-center justify-between bg-bg-accent px-4 py-2 text-xs text-amber-text">
-          <span>Estás como visitante — navegación limitada</span>
-          <button type="button" onClick={logout} className="underline">
-            Salir
-          </button>
-        </div>
-      )}
+        {sesion.rol === "visitante" && (
+          <div className="flex items-center justify-between bg-bg-accent px-4 py-2 text-xs text-amber-text">
+            <span>Estás como visitante — navegación limitada</span>
+            <button type="button" onClick={logout} className="underline">
+              Salir
+            </button>
+          </div>
+        )}
 
-      <ChatHeaderProvider value={setChatHeader}>
-        <BorradorPostProvider>
-          <VideoRecorridoProvider>
+        <ChatHeaderProvider value={setChatHeader}>
+          <BorradorPostProvider>
             <SwipeNavigator>{children}</SwipeNavigator>
-            <VideoRecorridoIndicador />
-          </VideoRecorridoProvider>
-        </BorradorPostProvider>
-      </ChatHeaderProvider>
+          </BorradorPostProvider>
+        </ChatHeaderProvider>
 
-      <BottomNav />
+        <BottomNav />
+        <VideoRecorridoIndicador />
+      </VideoRecorridoProvider>
     </div>
   );
 }
