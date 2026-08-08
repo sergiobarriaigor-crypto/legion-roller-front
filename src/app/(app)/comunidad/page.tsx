@@ -139,7 +139,7 @@ export default function ComunidadPage() {
   async function confirmarAsistenciaGps(publicacionId: number) {
     setConfirmandoAsistencia(publicacionId);
     try {
-      const posicion = await obtenerPosicionActual();
+      const posicion = await obtenerPosicionActual({ enableHighAccuracy: true });
       confirmarAsistencia(publicacionId, { lat: posicion.lat, lon: posicion.lon });
     } catch {
       setError("No se pudo obtener tu ubicación.");

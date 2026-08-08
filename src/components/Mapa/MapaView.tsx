@@ -604,7 +604,7 @@ export function MapaView() {
       return;
     }
     let cancelado = false;
-    obtenerPosicionActual({ timeout: 8000 })
+    obtenerPosicionActual({ timeout: 8000, enableHighAccuracy: true })
       .then((pos) => {
         if (cancelado) return;
         const nueva = { lat: pos.lat, lon: pos.lon };
