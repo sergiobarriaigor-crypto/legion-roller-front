@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { Capacitor } from "@capacitor/core";
 import { IconShare, IconUpload, IconCube3dSphere, IconX } from "@tabler/icons-react";
 import { apiUpload, apiPost, ApiError } from "@/lib/api";
 import { generarTarjetaRecorrido, generarVideoRecorrido, type DatosTarjetaRecorrido } from "@/lib/tarjetaRecorrido";
@@ -12,6 +13,7 @@ import {
   type EstiloFlyover,
 } from "@/lib/flyover";
 import { useNoAutofill } from "@/lib/useNoAutofill";
+import { compartirArchivoNativo } from "@/lib/compartirNativo";
 
 type Estado = "editando" | "publicando";
 type Tab = "imagen" | "video" | "video3d";
@@ -265,6 +267,17 @@ export function CompartirRecorridoModal({
 
     const archivo = new File([blobActivo], nombreArchivo, { type: tipoArchivo });
     const textoCompartir = [titulo.trim(), comentario.trim()].filter(Boolean).join("\n");
+
+    // En la app nativa (Capacitor), la Web Share API y el fallback de
+    // descarga de más abajo fallan en silencio -- ver compartirNativo.ts.
+    if (Capacitor.isNativePlatform()) {
+      try {
+        await compartirArchivoNativo(archivo, { titulo: titulo || "Mi recorrido", texto: textoCompartir });
+      } catch {
+        setError("No se pudo compartir el archivo. Probá de nuevo.");
+      }
+      return;
+    }
 
     try {
       if (

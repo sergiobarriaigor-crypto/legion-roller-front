@@ -1,3 +1,6 @@
+import { Capacitor } from "@capacitor/core";
+import { compartirArchivoNativo } from "./compartirNativo";
+
 // Comparte un archivo (imagen/video) o un texto simple con el selector nativo
 // del sistema, agregando siempre el link de vuelta a la app -- así quien lo
 // recibe por WhatsApp/redes puede tocarlo y entrar directo al contenido
@@ -12,6 +15,13 @@ export async function compartirConLink(
   archivo?: File,
 ): Promise<void> {
   const textoConLink = `${texto}\n\n${link}`;
+
+  // En la app nativa (Capacitor), la Web Share API y el fallback de descarga
+  // de más abajo fallan en silencio -- ver compartirNativo.ts para el porqué.
+  if (archivo && Capacitor.isNativePlatform()) {
+    await compartirArchivoNativo(archivo, { titulo, texto: textoConLink });
+    return;
+  }
 
   if (
     archivo &&
