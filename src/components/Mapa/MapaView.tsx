@@ -1719,11 +1719,11 @@ export function MapaView() {
               </>
             ) : (
               <>
-                <p className="text-xs text-fill-success">
-                  {mapeado
-                    ? `Grabando tu ruta... ${puntosGrabados.length} puntos registrados.`
-                    : "Patinando sin mapear el trazado. Tu distancia y tiempo se están registrando igual."}
-                </p>
+                {!mapeado && (
+                  <p className="text-xs text-fill-success">
+                    Patinando sin mapear el trazado. Tu distancia y tiempo se están registrando igual.
+                  </p>
+                )}
                 {!posicion && (
                   <p className="text-xs text-text-secondary">Obteniendo tu ubicación por GPS...</p>
                 )}
