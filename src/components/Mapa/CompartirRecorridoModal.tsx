@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { IconShare, IconUpload, IconCube3dSphere, IconX } from "@tabler/icons-react";
 import { apiUpload, apiPost, ApiError } from "@/lib/api";
-import { generarTarjetaRecorrido, type DatosTarjetaRecorrido } from "@/lib/tarjetaRecorrido";
+import { generarTarjetaRecorrido, generarVideoRecorrido, type DatosTarjetaRecorrido } from "@/lib/tarjetaRecorrido";
 import {
   solicitarFlyover,
   estadoFlyoverPorRecorrido,
@@ -12,10 +12,9 @@ import {
   type EstiloFlyover,
 } from "@/lib/flyover";
 import { useNoAutofill } from "@/lib/useNoAutofill";
-import { useVideoRecorrido } from "@/context/VideoRecorridoContext";
 
 type Estado = "editando" | "publicando";
-export type Tab = "imagen" | "video" | "video3d";
+type Tab = "imagen" | "video" | "video3d";
 
 export function CompartirRecorridoModal({
   datos,
@@ -23,17 +22,12 @@ export function CompartirRecorridoModal({
   token,
   onClose,
   onPublicado,
-  tabInicial,
 }: {
   datos: DatosTarjetaRecorrido;
   recorridoId: number;
   token: string | null;
   onClose: () => void;
   onPublicado?: () => void;
-  // Permite abrir el modal directo en una pestaña (ej. desde la píldora de
-  // "Video listo" -- ver VideoRecorridoIndicador.tsx / MapaView.tsx) en vez
-  // de arrancar siempre en "Imagen".
-  tabInicial?: Tab;
 }) {
   const [titulo, setTitulo] = useState("");
   const [comentario, setComentario] = useState("");
@@ -51,18 +45,14 @@ export function CompartirRecorridoModal({
   // Video para redes sociales: es una pieza aparte (no depende de
   // título/comentario, que no se dibujan en la tarjeta), se genera una sola
   // vez bajo demanda al entrar a la pestaña "Video" — a diferencia de la
-  // imagen no se regenera solo, porque tarda varios segundos reales. El
-  // estado vive en VideoRecorridoContext (fuera de este modal, montado en el
-  // layout de (app)) para que sobreviva cerrar el modal o cambiar de
-  // pestaña -- acá solo se lee, filtrando por si el video en curso/listo es
-  // el de ESTA ruta (podría haber uno de otra ruta en curso).
-  const [tab, setTab] = useState<Tab>(tabInicial ?? "imagen");
-  const { estado: estadoVideo, iniciarGeneracion: iniciarGeneracionVideo } = useVideoRecorrido();
-  const videoEsDeEstaRuta = estadoVideo.recorridoId === recorridoId;
-  const generandoVideo = videoEsDeEstaRuta && estadoVideo.generando;
-  const videoBlob = videoEsDeEstaRuta ? estadoVideo.videoBlob : null;
-  const videoUrl = videoEsDeEstaRuta ? estadoVideo.videoUrl : null;
-  const errorVideo = videoEsDeEstaRuta ? estadoVideo.error : null;
+  // imagen no se regenera solo, porque tarda varios segundos reales.
+  const [tab, setTab] = useState<Tab>("imagen");
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [videoBlob, setVideoBlob] = useState<Blob | null>(null);
+  const [generandoVideo, setGenerandoVideo] = useState(false);
+  const [progresoVideo, setProgresoVideo] = useState(0);
+  const [errorVideo, setErrorVideo] = useState("");
+  const videoBlobUrlRef = useRef<string | null>(null);
 
   // Video 3D (flyover): a diferencia del video de arriba, se renderiza en el
   // servidor (navegador headless + MapLibre) porque muchos celulares no
@@ -114,6 +104,7 @@ export function CompartirRecorridoModal({
   useEffect(() => {
     return () => {
       if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
+      if (videoBlobUrlRef.current) URL.revokeObjectURL(videoBlobUrlRef.current);
       detenerPollingFlyover();
     };
   }, []);
@@ -176,11 +167,28 @@ export function CompartirRecorridoModal({
     }
   }
 
+  async function generarVideo() {
+    if (videoBlob || generandoVideo) return;
+    setGenerandoVideo(true);
+    setErrorVideo("");
+    setProgresoVideo(0);
+    try {
+      const nuevoBlob = await generarVideoRecorrido(datos, { onProgreso: setProgresoVideo });
+      if (videoBlobUrlRef.current) URL.revokeObjectURL(videoBlobUrlRef.current);
+      const url = URL.createObjectURL(nuevoBlob);
+      videoBlobUrlRef.current = url;
+      setVideoBlob(nuevoBlob);
+      setVideoUrl(url);
+    } catch {
+      setErrorVideo("No se pudo generar el video en este navegador. Probá desde el celular.");
+    } finally {
+      setGenerandoVideo(false);
+    }
+  }
+
   function elegirTab(nuevoTab: Tab) {
     setTab(nuevoTab);
-    if (nuevoTab === "video" && !videoBlob && !generandoVideo) {
-      iniciarGeneracionVideo(recorridoId, datos);
-    }
+    if (nuevoTab === "video" && !videoBlob && !generandoVideo) generarVideo();
     if (nuevoTab === "video3d" && estadoFlyover === null && !cargandoFlyover) {
       consultarEstadoFlyoverInicial();
     }
@@ -321,16 +329,9 @@ export function CompartirRecorridoModal({
           {tab === "video" && (
             <>
               {generandoVideo && (
-                <div className="flex flex-col items-center gap-2 px-6 text-center">
-                  <p className="text-xs text-text-secondary">
-                    Generando video... {Math.round(estadoVideo.progreso * 100)}%
-                  </p>
-                  <p className="text-[11px] text-text-muted">
-                    Podés seguir navegando en la app mientras se genera. No cierres la pestaña ni
-                    bloquees la pantalla del celular — el navegador corta la grabación si la app
-                    queda en segundo plano.
-                  </p>
-                </div>
+                <p className="px-6 text-center text-xs text-text-secondary">
+                  Generando video... {Math.round(progresoVideo * 100)}%
+                </p>
               )}
               {!generandoVideo && errorVideo && (
                 <p className="px-6 text-center text-xs text-fill-warning">{errorVideo}</p>

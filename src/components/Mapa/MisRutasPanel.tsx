@@ -132,21 +132,16 @@ function FichaRecorrido({
   onToggleFavorito,
   onEliminar,
   onPublicado,
-  abrirCompartirEnVideo,
 }: {
   recorrido: Recorrido;
   token: string | null;
   onToggleFavorito: () => void;
   onEliminar: () => Promise<void>;
   onPublicado: () => void;
-  // Deep-link desde la píldora "Video listo" (VideoRecorridoIndicador.tsx):
-  // abre "Compartir recorrido" ya en la pestaña Video en vez de esperar a
-  // que el usuario toque "Compartir" a mano.
-  abrirCompartirEnVideo?: boolean;
 }) {
   const [confirmandoEliminar, setConfirmandoEliminar] = useState(false);
   const [eliminando, setEliminando] = useState(false);
-  const [mostrarCompartir, setMostrarCompartir] = useState(!!abrirCompartirEnVideo);
+  const [mostrarCompartir, setMostrarCompartir] = useState(false);
 
   const puntos = recorrido.puntos;
 
@@ -270,7 +265,6 @@ function FichaRecorrido({
             fecha: fechaCompleta,
             sector,
           }}
-          tabInicial={abrirCompartirEnVideo ? "video" : undefined}
           onClose={() => setMostrarCompartir(false)}
           onPublicado={onPublicado}
         />
@@ -321,14 +315,9 @@ function FichaRecorrido({
 export function MisRutasPanel({
   token,
   onClose,
-  abrirCompartirVideoId,
 }: {
   token: string | null;
   onClose: () => void;
-  // Deep-link desde la píldora "Video listo" (VideoRecorridoIndicador.tsx
-  // vía MapaView.tsx): apenas cargan los recorridos, selecciona este y abre
-  // "Compartir recorrido" directo en la pestaña Video.
-  abrirCompartirVideoId?: number | null;
 }) {
   const [recorridos, setRecorridos] = useState<Recorrido[]>([]);
   const [cargando, setCargando] = useState(true);
@@ -341,18 +330,8 @@ export function MisRutasPanel({
   useEffect(() => {
     if (!token) return;
     apiGet<Recorrido[]>("/mapa/recorridos", token)
-      .then((lista) => {
-        setRecorridos(lista);
-        if (abrirCompartirVideoId != null) {
-          const encontrado = lista.find((r) => r.id === abrirCompartirVideoId);
-          if (encontrado) {
-            setSeleccionado(encontrado);
-            setAlturaVh(ALTURA_EXPANDIDA_VH);
-          }
-        }
-      })
+      .then(setRecorridos)
       .finally(() => setCargando(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   async function alternarFavorito(id: number) {
@@ -471,7 +450,6 @@ export function MisRutasPanel({
               onToggleFavorito={() => alternarFavorito(seleccionado.id)}
               onEliminar={() => eliminarRecorrido(seleccionado.id)}
               onPublicado={() => setToastMensaje("Recorrido publicado")}
-              abrirCompartirEnVideo={abrirCompartirVideoId === seleccionado.id}
             />
           ) : (
             <>

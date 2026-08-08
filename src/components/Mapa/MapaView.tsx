@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from "react-leaflet";
 import L from "leaflet";
@@ -328,7 +328,6 @@ export function MapaView() {
   // dos veces seguidas no volvía a centrar la cámara, porque la URL quedaba
   // exactamente igual a la anterior (mismo lat/lon) y no había nada que
   // detectar como "cambio".
-  const router = useRouter();
   const searchParams = useSearchParams();
   const latQueryRaw = searchParams.get("lat");
   const lonQueryRaw = searchParams.get("lon");
@@ -338,25 +337,6 @@ export function MapaView() {
   const puntoQueryValido =
     latQuery !== null && lonQuery !== null && !Number.isNaN(latQuery) && !Number.isNaN(lonQuery);
   const puntoQueryCentradoRef = useRef<string | null>(null);
-
-  // Deep-link desde la píldora de VideoRecorridoIndicador.tsx ("Video listo
-  // -- tocá para compartirlo"): /mapa?compartirVideo=<recorridoId> abre Mis
-  // Rutas directo en esa ruta, con "Compartir recorrido" ya abierto en la
-  // pestaña Video. Se limpia el query param apenas se consume (a diferencia
-  // del lat/lon de arriba, que se deja) porque acá sí sería molesto que
-  // volver a esta pantalla por swipe reabra todo el panel de nuevo solo por
-  // seguir en la URL.
-  const compartirVideoQuery = searchParams.get("compartirVideo");
-  const compartirVideoId = compartirVideoQuery !== null ? Number(compartirVideoQuery) : null;
-  const compartirVideoConsumidoRef = useRef(false);
-  useEffect(() => {
-    if (compartirVideoId === null || Number.isNaN(compartirVideoId)) return;
-    if (compartirVideoConsumidoRef.current) return;
-    compartirVideoConsumidoRef.current = true;
-    setMostrarMisRutas(true);
-    router.replace("/mapa", { scroll: false });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [compartirVideoId]);
 
   const [posicion, setPosicion] = useState<{ lat: number; lon: number } | null>(null);
   // Solo true en el montaje realmente inicial de toda la sesión (sin vista de
@@ -2053,11 +2033,7 @@ export function MapaView() {
       )}
 
       {mostrarMisRutas && (
-        <MisRutasPanel
-          token={token}
-          onClose={() => setMostrarMisRutas(false)}
-          abrirCompartirVideoId={compartirVideoId}
-        />
+        <MisRutasPanel token={token} onClose={() => setMostrarMisRutas(false)} />
       )}
 
       {chatFlotante && (
