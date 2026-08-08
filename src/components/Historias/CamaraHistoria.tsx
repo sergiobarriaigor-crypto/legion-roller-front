@@ -371,6 +371,10 @@ export function CamaraHistoria({
           autoPlay
           muted
           playsInline
+          // Sin esto, algunos WebView de Android muestran un ícono de "play"
+          // gigante centrado como placeholder mientras el stream de la
+          // cámara todavía no llegó -- un poster transparente lo evita.
+          poster="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="
           className="absolute inset-0 z-0 h-full w-full object-cover"
           style={{
             ...(camaraFrontal ? { transform: "scaleX(-1)" } : null),
