@@ -68,12 +68,22 @@ export function VideoRecorridoProvider({ children }: { children: ReactNode }) {
       error: null,
     });
 
-    generarVideoRecorrido(datos, {
+    // Red de seguridad además del timeout de fetch en tarjetaRecorrido.ts:
+    // como este estado ahora vive acá (sobrevive cambiar de pestaña) y no en
+    // el modal, un cuelgue no identificado dejaría "generando" trabado para
+    // toda la sesión -- bloqueando cualquier video futuro (el guard de más
+    // arriba solo permite un slot a la vez) hasta cerrar la app entera. Con
+    // esto, como mucho se pierde ESTE intento y el usuario puede reintentar.
+    const timeoutGeneracion = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error("timeout")), 60000);
+    });
+
+    Promise.race([generarVideoRecorrido(datos, {
       onProgreso: (fraccion) => {
         if (generandoIdRef.current !== recorridoId) return;
         setEstado((prev) => (prev.recorridoId === recorridoId ? { ...prev, progreso: fraccion } : prev));
       },
-    })
+    }), timeoutGeneracion])
       .then((nuevoBlob) => {
         if (generandoIdRef.current !== recorridoId) return; // se descartó o se reemplazó mientras tanto
         const url = URL.createObjectURL(nuevoBlob);

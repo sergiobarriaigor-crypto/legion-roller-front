@@ -181,9 +181,24 @@ function urlTile(plantilla: string, zoom: number, x: number, y: number): string 
   return plantilla.replace("{z}", String(zoom)).replace("{y}", String(y)).replace("{x}", String(x));
 }
 
+// Timeout explícito: sin esto, un fetch() colgado en una red de celular
+// inestable (nunca resuelve ni rechaza) deja pendiente para siempre el
+// Promise.all() de generarMapaReal() -- y como el video ahora vive en
+// VideoRecorridoContext (persiste entre pestañas, ver ese archivo), un solo
+// tile colgado bloqueaba "generando" para toda la sesión hasta cerrar y
+// volver a abrir la app entera.
+const TIMEOUT_TILE_MS = 8000;
+
 async function cargarTileComoImagen(url: string): Promise<HTMLImageElement | null> {
   try {
-    const res = await fetch(url);
+    const controlador = new AbortController();
+    const idTimeout = setTimeout(() => controlador.abort(), TIMEOUT_TILE_MS);
+    let res: Response;
+    try {
+      res = await fetch(url, { signal: controlador.signal });
+    } finally {
+      clearTimeout(idTimeout);
+    }
     if (!res.ok) return null;
     const blob = await res.blob();
     const dataUrl = await new Promise<string>((resolve, reject) => {

@@ -14,8 +14,15 @@ export function forzarHttps(ruta: string): string {
 // el canvas al rasterizarlo (el clásico "canvas tainted by cross-origin
 // data" que aparecería si se dibujara la imagen remota directo con <img>).
 // Compartido entre tarjetaRecorrido.ts y tarjetaPost.ts.
+// Mismo timeout explícito que cargarTileComoImagen() en tarjetaRecorrido.ts:
+// un fetch() colgado (red inestable) nunca debe dejar el Promise.all() del
+// llamador esperando para siempre.
+const TIMEOUT_IMAGEN_MS = 8000;
+
 export function cargarImagenComoDataUrl(ruta: string): Promise<string | null> {
-  return fetch(forzarHttps(ruta))
+  const controlador = new AbortController();
+  const idTimeout = setTimeout(() => controlador.abort(), TIMEOUT_IMAGEN_MS);
+  return fetch(forzarHttps(ruta), { signal: controlador.signal })
     .then((res) => (res.ok ? res.blob() : Promise.reject(new Error("no encontrada: " + ruta))))
     .then(
       (blob) =>
@@ -26,5 +33,6 @@ export function cargarImagenComoDataUrl(ruta: string): Promise<string | null> {
           lector.readAsDataURL(blob);
         }),
     )
-    .catch(() => null);
+    .catch(() => null)
+    .finally(() => clearTimeout(idTimeout));
 }
