@@ -9,6 +9,8 @@ import { SwipeNavigator } from "@/components/SwipeNavigator";
 import { useSession } from "@/context/SessionContext";
 import { BorradorPostProvider } from "@/context/BorradorPostContext";
 import { ChatHeaderProvider } from "@/context/ChatHeaderContext";
+import { VideoRecorridoProvider } from "@/context/VideoRecorridoContext";
+import { VideoRecorridoIndicador } from "@/components/VideoRecorridoIndicador";
 import { RUTAS_RESTRINGIDAS_VISITANTE } from "@/lib/session";
 
 // Next.js exige que useSearchParams() esté dentro de un <Suspense> (si no, el
@@ -99,7 +101,10 @@ export default function AppGroupLayout({
 
       <ChatHeaderProvider value={setChatHeader}>
         <BorradorPostProvider>
-          <SwipeNavigator>{children}</SwipeNavigator>
+          <VideoRecorridoProvider>
+            <SwipeNavigator>{children}</SwipeNavigator>
+            <VideoRecorridoIndicador />
+          </VideoRecorridoProvider>
         </BorradorPostProvider>
       </ChatHeaderProvider>
 
