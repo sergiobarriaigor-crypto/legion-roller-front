@@ -223,7 +223,11 @@ export function CamaraHistoria({
   // celular tiene "Girar pantalla automática" activado, el navegador rota
   // toda esta vista (pensada para formato vertical) al girar el teléfono —
   // algo aparte y sin relación con el botón manual de "Girar imagen" de más
-  // abajo. El bloqueo del navegador solo funciona en pantalla completa y no
+  // abajo. En la app nativa esto ya no hace falta: MainActivity está fijada
+  // a portrait en AndroidManifest.xml (android:screenOrientation="portrait"),
+  // que bloquea la ventana nativa completa a nivel de Android. Este bloqueo
+  // por JS queda solo como respaldo para quienes usan la versión web/PWA
+  // (donde no hay manifest nativo) — solo funciona en pantalla completa y no
   // existe en Safari/iOS, así que se ignora en silencio si falla, dejando el
   // botón manual como respaldo universal.
   useEffect(() => {
