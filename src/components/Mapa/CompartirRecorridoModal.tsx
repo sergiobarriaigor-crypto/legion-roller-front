@@ -38,6 +38,10 @@ export function CompartirRecorridoModal({
   const [cargandoInicial, setCargandoInicial] = useState(true);
   const [estado, setEstado] = useState<Estado>("editando");
   const [error, setError] = useState("");
+  // Solo importa para "video3d": ese caso hace un fetch() del mp4 (puede
+  // pesar varios MB) antes de poder compartirlo -- sin este estado, el botón
+  // no daba ninguna señal mientras tanto y parecía que "no hacía nada".
+  const [compartiendo, setCompartiendo] = useState(false);
   const blobUrlRef = useRef<string | null>(null);
   const generacionIdRef = useRef(0);
   const primeraVezRef = useRef(true);
@@ -220,7 +224,15 @@ export function CompartirRecorridoModal({
 
   async function compartirEnRedes() {
     setError("");
+    setCompartiendo(true);
+    try {
+      await compartirEnRedesInterno();
+    } finally {
+      setCompartiendo(false);
+    }
+  }
 
+  async function compartirEnRedesInterno() {
     let blobActivo: Blob | null;
     let nombreArchivo: string;
     let tipoArchivo: string;
@@ -228,9 +240,17 @@ export function CompartirRecorridoModal({
     if (tab === "video3d") {
       if (!estadoFlyover?.videoUrl) return;
       try {
-        blobActivo = await fetch(estadoFlyover.videoUrl).then((r) => r.blob());
+        const controlador = new AbortController();
+        const idTimeout = setTimeout(() => controlador.abort(), 20000);
+        try {
+          const res = await fetch(estadoFlyover.videoUrl, { signal: controlador.signal });
+          if (!res.ok) throw new Error("respuesta no OK");
+          blobActivo = await res.blob();
+        } finally {
+          clearTimeout(idTimeout);
+        }
       } catch {
-        setError("No se pudo descargar el video 3D para compartir.");
+        setError("No se pudo descargar el video 3D para compartir. Probá de nuevo.");
         return;
       }
       nombreArchivo = "recorrido-3d-legion-roller.mp4";
@@ -477,17 +497,18 @@ export function CompartirRecorridoModal({
         <button
           type="button"
           disabled={
-            tab === "imagen"
+            compartiendo ||
+            (tab === "imagen"
               ? cargandoInicial || !blob
               : tab === "video"
                 ? generandoVideo || !videoBlob
-                : estadoFlyover?.estado !== "listo" || !estadoFlyover.videoUrl
+                : estadoFlyover?.estado !== "listo" || !estadoFlyover.videoUrl)
           }
           onClick={compartirEnRedes}
           className="flex items-center justify-center gap-1.5 rounded-app border border-border-accent px-4 py-2 text-sm text-text-accent disabled:opacity-50"
         >
           <IconShare size={16} />
-          Compartir en redes sociales
+          {compartiendo ? "Preparando..." : "Compartir en redes sociales"}
         </button>
 
         <button type="button" onClick={onClose} className="text-xs text-text-secondary underline">
