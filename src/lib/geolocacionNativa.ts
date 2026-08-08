@@ -1,5 +1,6 @@
 import { Capacitor, registerPlugin } from "@capacitor/core";
 import type { BackgroundGeolocationPlugin } from "@capacitor-community/background-geolocation";
+import { PushNotifications } from "@capacitor/push-notifications";
 
 // El paquete no exporta un objeto JS armado (solo tipos + código nativo
 // Android/iOS) -- se registra a mano como indica su propia documentación.
@@ -37,35 +38,54 @@ export function iniciarSeguimientoUbicacion(
     let idObservador: string | null = null;
     let cancelado = false;
 
-    BackgroundGeolocation.addWatcher(
-      {
-        backgroundTitle: TITULO_NOTIFICACION,
-        backgroundMessage: MENSAJE_NOTIFICACION,
-        requestPermissions: true,
-        distanceFilter: 0,
-      },
-      (posicion, error) => {
-        if (error) {
-          onError();
-          return;
-        }
-        if (posicion) {
-          onPosicion({
-            lat: posicion.latitude,
-            lon: posicion.longitude,
-            accuracy: posicion.accuracy,
-          });
-        }
-      },
-    )
-      .then((id) => {
+    (async () => {
+      // Android 13+ exige el permiso POST_NOTIFICATIONS aparte del de
+      // ubicación para poder MOSTRAR la notificación persistente del
+      // servicio en primer plano -- el plugin de background-geolocation la
+      // declara en su manifiesto pero no la pide en tiempo de ejecución (es
+      // responsabilidad de la app). Sin este pedido, el GPS en segundo
+      // plano sigue funcionando pero la notificación queda invisible sin
+      // ningún aviso de por qué (confirmado: ACCESS_FINE_LOCATION
+      // concedido, POST_NOTIFICATIONS no). Se pide acá para no depender de
+      // que el usuario haya tocado antes la campana de push.
+      try {
+        await PushNotifications.requestPermissions();
+      } catch {
+        // Si falla, no bloquea el seguimiento -- en el peor caso la
+        // notificación no se ve pero el GPS sigue andando igual.
+      }
+
+      try {
+        const id = await BackgroundGeolocation.addWatcher(
+          {
+            backgroundTitle: TITULO_NOTIFICACION,
+            backgroundMessage: MENSAJE_NOTIFICACION,
+            requestPermissions: true,
+            distanceFilter: 0,
+          },
+          (posicion, error) => {
+            if (error) {
+              onError();
+              return;
+            }
+            if (posicion) {
+              onPosicion({
+                lat: posicion.latitude,
+                lon: posicion.longitude,
+                accuracy: posicion.accuracy,
+              });
+            }
+          },
+        );
         if (cancelado) {
           BackgroundGeolocation.removeWatcher({ id });
         } else {
           idObservador = id;
         }
-      })
-      .catch(() => onError());
+      } catch {
+        onError();
+      }
+    })();
 
     return () => {
       cancelado = true;

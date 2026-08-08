@@ -38,4 +38,13 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Cámara Express (CamaraHistoria.tsx) usa getUserMedia() directo en el
+         WebView, a diferencia de @capacitor/camera (que delega a la app de
+         cámara del sistema vía Intent y no necesita este permiso). Sin esto
+         declarado acá, Capacitor no puede ni pedir el permiso en tiempo de
+         ejecución: Android lo rechaza en silencio. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
 </manifest>

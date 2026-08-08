@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "791289343014",
+    "project_id": "legion-roler",
+    "storage_bucket": "legion-roler.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:791289343014:android:5d2d4f97a58dff6ca3cae7",
+        "android_client_info": {
+          "package_name": "com.legionroller.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCTk9V3a8QG7jCkM5hlHGOfXWC3sDLrIMo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -33,6 +33,8 @@ import { proximaRodada, type RodadaProxima } from "@/lib/publicaciones";
 import { misInvitacionesPendientes, ETIQUETA_CATEGORIA, type InvitacionPendiente } from "@/lib/calendario";
 import { tiempoTranscurrido } from "@/lib/tiempo";
 import { pushDisponible, estaSuscrito, suscribirPush } from "@/lib/push";
+import { Capacitor } from "@capacitor/core";
+import { estaSuscritoNativo, suscribirPushNativo } from "@/lib/pushNativo";
 import { SosButton } from "@/components/SosButton";
 import { PopupMencion } from "@/components/Historias/PopupMencion";
 import { Avatar } from "@/components/Avatar";
@@ -77,7 +79,12 @@ export function AppHeader() {
   }, [token, sesion?.rol]);
 
   useEffect(() => {
-    if (!token || sesion?.rol === "visitante" || !pushDisponible()) return;
+    if (!token || sesion?.rol === "visitante") return;
+    if (Capacitor.isNativePlatform()) {
+      Promise.resolve(estaSuscritoNativo()).then(setPushActivo);
+      return;
+    }
+    if (!pushDisponible()) return;
     estaSuscrito().then(setPushActivo);
   }, [token, sesion?.rol]);
 
@@ -85,7 +92,7 @@ export function AppHeader() {
     if (!token || activandoPush) return;
     setActivandoPush(true);
     try {
-      const ok = await suscribirPush(token);
+      const ok = Capacitor.isNativePlatform() ? await suscribirPushNativo(token) : await suscribirPush(token);
       if (ok) setPushActivo(true);
     } catch {
       // el usuario puede reintentar tocando el botón de nuevo
