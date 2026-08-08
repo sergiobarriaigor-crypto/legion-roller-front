@@ -1,6 +1,7 @@
 import { Capacitor, registerPlugin } from "@capacitor/core";
 import type { BackgroundGeolocationPlugin } from "@capacitor-community/background-geolocation";
 import { PushNotifications } from "@capacitor/push-notifications";
+import { Geolocation } from "@capacitor/geolocation";
 
 // El paquete no exporta un objeto JS armado (solo tipos + código nativo
 // Android/iOS) -- se registra a mano como indica su propia documentación.
@@ -111,4 +112,43 @@ export function iniciarSeguimientoUbicacion(
   );
 
   return () => navigator.geolocation.clearWatch(watchId);
+}
+
+// Posición puntual (no seguimiento continuo), usada al entrar al Mapa para
+// centrar la cámara y al validar cercanía a una rodada antes de activar
+// "Estoy en Ruta". En la app nativa, `navigator.geolocation.getCurrentPosition`
+// depende del prompt de permisos propio del WebView (`onGeolocationPermissionsShowPrompt`),
+// que en la práctica resultó poco confiable ahí -- se quedaba pidiendo la
+// ubicación sin resolver nunca ni éxito ni error, ignorando el `timeout`.
+// @capacitor/geolocation usa el proveedor de ubicación nativo de Android
+// directo (ya estaba instalado como dependencia de background-geolocation
+// pero sin usarse), evitando ese puente. En la web sigue exactamente igual
+// que antes.
+export async function obtenerPosicionActual(opciones?: {
+  enableHighAccuracy?: boolean;
+  timeout?: number;
+}): Promise<PosicionSimple> {
+  const enableHighAccuracy = opciones?.enableHighAccuracy ?? false;
+  const timeout = opciones?.timeout ?? 10000;
+
+  if (Capacitor.isNativePlatform()) {
+    const pos = await Geolocation.getCurrentPosition({ enableHighAccuracy, timeout });
+    return { lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: pos.coords.accuracy ?? 0 };
+  }
+
+  if (!navigator.geolocation) {
+    throw new Error("Geolocalización no soportada");
+  }
+  return new Promise((resolve, reject) => {
+    navigator.geolocation.getCurrentPosition(
+      (pos) =>
+        resolve({
+          lat: pos.coords.latitude,
+          lon: pos.coords.longitude,
+          accuracy: pos.coords.accuracy ?? 0,
+        }),
+      (err) => reject(err),
+      { enableHighAccuracy, timeout },
+    );
+  });
 }

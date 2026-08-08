@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { IconMapPin, IconSearch, IconX } from "@tabler/icons-react";
 import { buscarLugares, reverseGeocodificar } from "@/lib/geocodificacion";
 import { useNoAutofill } from "@/lib/useNoAutofill";
+import { obtenerPosicionActual } from "@/lib/geolocacionNativa";
 
 // Selector de ubicación estilo Instagram, compartido por Post e Historias: al
 // abrir, geocodifica tu posición GPS real (vía Nominatim) y la muestra como
@@ -27,39 +28,32 @@ export function SelectorUbicacion({
   const [buscando, setBuscando] = useState(false);
   const noAutofill = useNoAutofill();
 
-  function detectarUbicacion() {
-    if (!navigator.geolocation) {
-      setErrorGps("Este navegador no admite geolocalización.");
-      return;
-    }
+  async function detectarUbicacion() {
     setErrorGps(null);
     setCercano(null);
     setDetectando(true);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        reverseGeocodificar(pos.coords.latitude, pos.coords.longitude).then((lugar) => {
-          setCercano(lugar?.nombre ?? null);
-          if (!lugar) {
-            setErrorGps("No se pudo identificar tu ubicación. Podés buscar el lugar manualmente.");
-          }
-          setDetectando(false);
-        });
-      },
-      (err) => {
-        // Los tres códigos posibles del navegador (permiso negado, posición no
-        // disponible, tiempo agotado) — se explican para que el usuario sepa
-        // qué revisar, en vez de quedar viendo "Buscando..." sin explicación.
-        setDetectando(false);
-        if (err.code === err.PERMISSION_DENIED) {
-          setErrorGps(
-            "No autorizaste el acceso a tu ubicación. Revisa los permisos de ubicación del navegador o busca el lugar manualmente.",
-          );
-        } else {
-          setErrorGps("No se pudo detectar tu ubicación (sin señal de GPS). Podés buscar el lugar manualmente.");
-        }
-      },
-      { timeout: 8000, enableHighAccuracy: true },
-    );
+    try {
+      const pos = await obtenerPosicionActual({ timeout: 8000, enableHighAccuracy: true });
+      const lugar = await reverseGeocodificar(pos.lat, pos.lon);
+      setCercano(lugar?.nombre ?? null);
+      if (!lugar) {
+        setErrorGps("No se pudo identificar tu ubicación. Podés buscar el lugar manualmente.");
+      }
+      setDetectando(false);
+    } catch (err) {
+      // Código 1 = permiso denegado, tanto en GeolocationPositionError (web)
+      // como en el error que devuelve @capacitor/geolocation (nativo) --
+      // se explica para que el usuario sepa qué revisar, en vez de quedar
+      // viendo "Buscando..." sin explicación.
+      setDetectando(false);
+      if (err instanceof GeolocationPositionError && err.code === err.PERMISSION_DENIED) {
+        setErrorGps(
+          "No autorizaste el acceso a tu ubicación. Revisa los permisos de ubicación del navegador o busca el lugar manualmente.",
+        );
+      } else {
+        setErrorGps("No se pudo detectar tu ubicación (sin señal de GPS). Podés buscar el lugar manualmente.");
+      }
+    }
   }
 
   useEffect(() => {

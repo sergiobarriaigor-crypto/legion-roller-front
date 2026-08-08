@@ -15,6 +15,7 @@ import {
 import { CarruselFotos } from "@/components/CarruselFotos";
 import { renderizarTextoFormateado } from "@/lib/textoFormateado";
 import { useNoAutofill } from "@/lib/useNoAutofill";
+import { obtenerPosicionActual } from "@/lib/geolocacionNativa";
 
 // Componente propio (no un input inline dentro del .map de publicaciones)
 // para que cada casilla tenga su propia instancia de useNoAutofill — un hook
@@ -135,24 +136,15 @@ export default function ComunidadPage() {
     }
   }
 
-  function confirmarAsistenciaGps(publicacionId: number) {
-    if (!navigator.geolocation) {
-      setError("Tu navegador no soporta geolocalización.");
-      return;
-    }
+  async function confirmarAsistenciaGps(publicacionId: number) {
     setConfirmandoAsistencia(publicacionId);
-    navigator.geolocation.getCurrentPosition(
-      (posicion) => {
-        confirmarAsistencia(publicacionId, {
-          lat: posicion.coords.latitude,
-          lon: posicion.coords.longitude,
-        });
-      },
-      () => {
-        setError("No se pudo obtener tu ubicación.");
-        setConfirmandoAsistencia(null);
-      },
-    );
+    try {
+      const posicion = await obtenerPosicionActual();
+      confirmarAsistencia(publicacionId, { lat: posicion.lat, lon: posicion.lon });
+    } catch {
+      setError("No se pudo obtener tu ubicación.");
+      setConfirmandoAsistencia(null);
+    }
   }
 
   if (cargando) {

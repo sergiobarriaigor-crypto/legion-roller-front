@@ -6,6 +6,7 @@ import { IconX } from "@tabler/icons-react";
 import { sectorMasCercano } from "@/lib/sectores";
 import { apiGet } from "@/lib/api";
 import type { MiembroSimple } from "@/lib/chat";
+import { obtenerPosicionActual } from "@/lib/geolocacionNativa";
 
 const MiniMapaUbicacion = dynamic(
   () => import("@/components/Chat/MiniMapaUbicacion").then((m) => m.MiniMapaUbicacion),
@@ -40,26 +41,19 @@ export function SelectorUbicacionChat({
       .catch(() => {});
   }, [token, propioId]);
 
-  function detectarUbicacion() {
-    if (!navigator.geolocation) {
-      setErrorGps("Este navegador no admite geolocalización.");
-      return;
-    }
+  async function detectarUbicacion() {
     setErrorGps(null);
     setPosicion(null);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => setPosicion({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
-      (err) => {
-        if (err.code === err.PERMISSION_DENIED) {
-          setErrorGps(
-            "No autorizaste el acceso a tu ubicación. Revisa los permisos de ubicación del navegador.",
-          );
-        } else {
-          setErrorGps("No se pudo detectar tu ubicación (sin señal de GPS).");
-        }
-      },
-      { timeout: 8000, enableHighAccuracy: true },
-    );
+    try {
+      const pos = await obtenerPosicionActual({ timeout: 8000, enableHighAccuracy: true });
+      setPosicion({ lat: pos.lat, lon: pos.lon });
+    } catch (err) {
+      if (err instanceof GeolocationPositionError && err.code === err.PERMISSION_DENIED) {
+        setErrorGps("No autorizaste el acceso a tu ubicación. Revisa los permisos de ubicación del navegador.");
+      } else {
+        setErrorGps("No se pudo detectar tu ubicación (sin señal de GPS).");
+      }
+    }
   }
 
   useEffect(() => {

@@ -12,6 +12,7 @@ import {
 import { obtenerClima, type ClimaDetalle, type SemaforoClima } from "@/lib/clima";
 import { obtenerCiudad } from "@/lib/geocodificacion";
 import { ApiError } from "@/lib/api";
+import { obtenerPosicionActual } from "@/lib/geolocacionNativa";
 
 const SEMAFORO: Record<SemaforoClima, { emoji: string; texto: string; color: string }> = {
   bueno: { emoji: "🟢", texto: "Buen clima para patinar", color: "var(--fill-success)" },
@@ -40,32 +41,22 @@ export function VisorClima({ token, onCerrar }: { token: string | null; onCerrar
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
 
-  function pedirUbicacion() {
+  async function pedirUbicacion() {
     setError("");
     setCargando(true);
     setClima(null);
     setCiudad(null);
-    if (!navigator.geolocation) {
-      setError("Tu navegador no permite compartir la ubicación.");
+    try {
+      const pos = await obtenerPosicionActual({ timeout: 8000 });
+      obtenerCiudad(pos.lat, pos.lon).then(setCiudad);
+      obtenerClima(pos.lat, pos.lon, token)
+        .then(setClima)
+        .catch((err) => setError(err instanceof ApiError ? err.message : "No se pudo cargar el clima."))
+        .finally(() => setCargando(false));
+    } catch {
+      setError("Activa tu ubicación para ver el clima de donde estás.");
       setCargando(false);
-      return;
     }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        obtenerCiudad(pos.coords.latitude, pos.coords.longitude).then(setCiudad);
-        obtenerClima(pos.coords.latitude, pos.coords.longitude, token)
-          .then(setClima)
-          .catch((err) =>
-            setError(err instanceof ApiError ? err.message : "No se pudo cargar el clima."),
-          )
-          .finally(() => setCargando(false));
-      },
-      () => {
-        setError("Activa tu ubicación para ver el clima de donde estás.");
-        setCargando(false);
-      },
-      { timeout: 8000 },
-    );
   }
 
   useEffect(() => {

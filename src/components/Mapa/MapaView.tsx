@@ -25,7 +25,7 @@ import { ETIQUETA_MOTIVO, type EmergenciaActiva } from "@/lib/emergencias";
 import { salaIndividual } from "@/lib/chat";
 import { obtenerSocket } from "@/lib/socket";
 import { notificarme } from "@/lib/push";
-import { iniciarSeguimientoUbicacion } from "@/lib/geolocacionNativa";
+import { iniciarSeguimientoUbicacion, obtenerPosicionActual } from "@/lib/geolocacionNativa";
 import { PatinadoresActivosPanel } from "@/components/Mapa/PatinadoresActivosPanel";
 import { MisRutasPanel } from "@/components/Mapa/MisRutasPanel";
 import { ChatFlotante } from "@/components/Mapa/ChatFlotante";
@@ -599,13 +599,15 @@ export function MapaView() {
   // activo o si el usuario está explorando el mapa a mano
   // (`exploracionManualActiva`), para no pelearle la cámara.
   useEffect(() => {
-    if (modoRef.current || exploracionManualActiva || !navigator.geolocation) {
+    if (modoRef.current || exploracionManualActiva) {
       setBuscandoUbicacionInicial(false);
       return;
     }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const nueva = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+    let cancelado = false;
+    obtenerPosicionActual({ timeout: 8000 })
+      .then((pos) => {
+        if (cancelado) return;
+        const nueva = { lat: pos.lat, lon: pos.lon };
         const esPrimeraDeEstaSesion = !ultimaPosicionConocida;
         ultimaPosicionConocida = nueva;
         setBuscandoUbicacionInicial(false);
@@ -628,15 +630,16 @@ export function MapaView() {
         if (distanciaKm > UMBRAL_ACTUALIZACION_KM) {
           mapRef.current.flyTo([nueva.lat, nueva.lon], mapRef.current.getZoom());
         }
-      },
-      () => {
+      })
+      .catch(() => {
         // sin permiso o sin señal: se deja de mostrar el indicador de carga
         // (si estaba) y el mapa se queda donde ya estaba (última vista
         // conocida o, si es la sesión recién empezando, el centro por defecto).
-        setBuscandoUbicacionInicial(false);
-      },
-      { timeout: 8000 },
-    );
+        if (!cancelado) setBuscandoUbicacionInicial(false);
+      });
+    return () => {
+      cancelado = true;
+    };
   }, []);
 
   // GPS: solo se activa mientras haya un modo seleccionado (privacidad primero).
@@ -963,40 +966,33 @@ export function MapaView() {
   // botón. Si la rodada no tiene un punto GPS cargado (quedó solo el texto
   // libre "puntoEncuentro"), no hay contra qué validar y se activa directo,
   // como siempre.
-  function unirseARodadaActiva() {
+  async function unirseARodadaActiva() {
     if (!rodadaActiva) return;
     const rodada = rodadaActiva;
     if (rodada.puntoLat === null || rodada.puntoLon === null) {
       unirseYActivarRuta(rodada);
       return;
     }
-    if (!navigator.geolocation) {
-      setErrorGeo("Tu navegador no soporta geolocalización.");
-      return;
-    }
     setErrorGeo("");
     setVerificandoCercaniaRodada(true);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setVerificandoCercaniaRodada(false);
-        const distanciaKm = distanciaHaversineKm(
-          { lat: pos.coords.latitude, lon: pos.coords.longitude, timestamp: 0 },
-          { lat: rodada.puntoLat as number, lon: rodada.puntoLon as number, timestamp: 0 },
+    try {
+      const pos = await obtenerPosicionActual({ enableHighAccuracy: true, timeout: 10000 });
+      setVerificandoCercaniaRodada(false);
+      const distanciaKm = distanciaHaversineKm(
+        { lat: pos.lat, lon: pos.lon, timestamp: 0 },
+        { lat: rodada.puntoLat as number, lon: rodada.puntoLon as number, timestamp: 0 },
+      );
+      if (distanciaKm > RADIO_ASISTENCIA_KM) {
+        setErrorGeo(
+          `Estás a ${distanciaKm.toFixed(1)} km del punto de encuentro. Acércate (menos de ${RADIO_ASISTENCIA_KM} km) para activar "Estoy en Ruta".`,
         );
-        if (distanciaKm > RADIO_ASISTENCIA_KM) {
-          setErrorGeo(
-            `Estás a ${distanciaKm.toFixed(1)} km del punto de encuentro. Acércate (menos de ${RADIO_ASISTENCIA_KM} km) para activar "Estoy en Ruta".`,
-          );
-          return;
-        }
-        unirseYActivarRuta(rodada);
-      },
-      () => {
-        setVerificandoCercaniaRodada(false);
-        setErrorGeo("No pudimos confirmar tu ubicación (revisa los permisos) para validar la cercanía. Inténtalo de nuevo.");
-      },
-      { enableHighAccuracy: true, timeout: 10000 },
-    );
+        return;
+      }
+      unirseYActivarRuta(rodada);
+    } catch {
+      setVerificandoCercaniaRodada(false);
+      setErrorGeo("No pudimos confirmar tu ubicación (revisa los permisos) para validar la cercanía. Inténtalo de nuevo.");
+    }
   }
 
   function descartarCandidatasRodada() {
