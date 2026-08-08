@@ -73,6 +73,15 @@ interface Miembro {
   rol: string;
   categoria: "legion" | "comunidad" | null;
   createdAt: string;
+  bloqueadoHasta: string | null;
+  bloqueadoMotivo: string | null;
+  eliminadoEn: string | null;
+}
+
+const OPCIONES_DIAS_BLOQUEO = [1, 3, 7, 30];
+
+function formatFechaBloqueo(fecha: string): string {
+  return new Date(fecha).toLocaleString("es-CL", { dateStyle: "medium", timeStyle: "short" });
 }
 
 interface RsvpDetalle {
@@ -127,6 +136,11 @@ export default function AdminPage() {
   const noAutofillFiltroDirectorio = useNoAutofill();
   const [emprendedorAEliminar, setEmprendedorAEliminar] = useState<Emprendedor | null>(null);
   const [eliminandoEmprendedor, setEliminandoEmprendedor] = useState(false);
+  const [miembroABloquear, setMiembroABloquear] = useState<Miembro | null>(null);
+  const [motivoBloqueo, setMotivoBloqueo] = useState("");
+  const [bloqueandoMiembro, setBloqueandoMiembro] = useState(false);
+  const [miembroAEliminar, setMiembroAEliminar] = useState<Miembro | null>(null);
+  const [eliminandoMiembro, setEliminandoMiembro] = useState(false);
   const [solicitudesRegistro, setSolicitudesRegistro] = useState<SolicitudRegistro[]>([]);
   const [miembros, setMiembros] = useState<Miembro[]>([]);
   const [filtroMiembros, setFiltroMiembros] = useState("");
@@ -263,6 +277,49 @@ export default function AdminPage() {
       cargarMiembros();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "No se pudo cambiar la categoría.");
+    }
+  }
+
+  async function confirmarBloqueoMiembro(dias: number) {
+    if (!token || !miembroABloquear) return;
+    setBloqueandoMiembro(true);
+    try {
+      await apiPost(
+        `/auth/miembros/${miembroABloquear.id}/bloquear`,
+        { dias, motivo: motivoBloqueo.trim() || undefined },
+        token,
+      );
+      setMiembroABloquear(null);
+      setMotivoBloqueo("");
+      cargarMiembros();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "No se pudo bloquear al miembro.");
+    } finally {
+      setBloqueandoMiembro(false);
+    }
+  }
+
+  async function desbloquearMiembro(id: number) {
+    if (!token) return;
+    try {
+      await apiPost(`/auth/miembros/${id}/desbloquear`, {}, token);
+      cargarMiembros();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "No se pudo desbloquear al miembro.");
+    }
+  }
+
+  async function confirmarEliminarMiembro() {
+    if (!token || !miembroAEliminar) return;
+    setEliminandoMiembro(true);
+    try {
+      await apiDelete(`/auth/miembros/${miembroAEliminar.id}`, token);
+      setMiembroAEliminar(null);
+      cargarMiembros();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "No se pudo eliminar al miembro.");
+    } finally {
+      setEliminandoMiembro(false);
     }
   }
 
@@ -1112,7 +1169,7 @@ export default function AdminPage() {
                     </div>
                     <div className="flex shrink-0 flex-col items-end gap-1">
                       <span className="text-xs text-text-accent">{m.rol}</span>
-                      {m.rol !== "admin" && (
+                      {m.rol !== "admin" && !m.eliminadoEn && (
                         <select
                           value={m.categoria ?? ""}
                           onChange={(e) =>
@@ -1126,6 +1183,43 @@ export default function AdminPage() {
                           <option value="legion">Legión</option>
                           <option value="comunidad">Comunidad</option>
                         </select>
+                      )}
+                      {m.rol !== "admin" && (
+                        <>
+                          {m.eliminadoEn ? (
+                            <span className="text-[11px] text-text-muted">Cuenta eliminada</span>
+                          ) : m.bloqueadoHasta && new Date(m.bloqueadoHasta) > new Date() ? (
+                            <div className="flex flex-col items-end gap-0.5">
+                              <span className="text-[11px] text-fill-warning">
+                                Bloqueado hasta {formatFechaBloqueo(m.bloqueadoHasta)}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => desbloquearMiembro(m.id)}
+                                className="text-[11px] text-text-accent underline"
+                              >
+                                Desbloquear
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setMiembroABloquear(m)}
+                                className="text-[11px] text-fill-warning underline"
+                              >
+                                Bloquear
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setMiembroAEliminar(m)}
+                                className="text-[11px] text-red-500 underline"
+                              >
+                                Eliminar
+                              </button>
+                            </div>
+                          )}
+                        </>
                       )}
                     </div>
                   </div>
@@ -1169,6 +1263,81 @@ export default function AdminPage() {
                 type="button"
                 disabled={eliminandoEmprendedor}
                 onClick={() => setEmprendedorAEliminar(null)}
+                className="text-xs text-text-secondary underline"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {miembroABloquear && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-6">
+          <div className="card flex w-full max-w-xs flex-col gap-3 p-5">
+            <h2 className="text-sm font-semibold text-text-accent">Bloquear miembro</h2>
+            <p className="text-xs text-text-secondary">
+              ¿Por cuánto tiempo bloqueamos a <strong>{miembroABloquear.nombre}</strong>? No va a
+              poder entrar a la app hasta que se levante el bloqueo.
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              {OPCIONES_DIAS_BLOQUEO.map((dias) => (
+                <button
+                  key={dias}
+                  type="button"
+                  disabled={bloqueandoMiembro}
+                  onClick={() => confirmarBloqueoMiembro(dias)}
+                  className="rounded-app border border-border px-3 py-2 text-sm text-text-primary disabled:opacity-50"
+                >
+                  {dias} día{dias > 1 ? "s" : ""}
+                </button>
+              ))}
+            </div>
+            <input
+              type="text"
+              value={motivoBloqueo}
+              onChange={(e) => setMotivoBloqueo(e.target.value)}
+              placeholder="Motivo (opcional)"
+              className="rounded-app border border-border bg-surface-2 px-3 py-2 text-sm text-text-primary outline-none"
+            />
+            <button
+              type="button"
+              disabled={bloqueandoMiembro}
+              onClick={() => {
+                setMiembroABloquear(null);
+                setMotivoBloqueo("");
+              }}
+              className="text-xs text-text-secondary underline"
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {miembroAEliminar && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-6">
+          <div className="card flex w-full max-w-xs flex-col gap-3 p-5">
+            <h2 className="text-sm font-semibold text-text-accent">Eliminar cuenta</h2>
+            <p className="text-xs text-text-secondary">
+              ¿Seguro que quieres eliminar la cuenta de <strong>{miembroAEliminar.nombre}</strong>?
+              Ya no va a poder entrar a la app. Sus posts, mensajes y rutas ya publicados se
+              mantienen (aparecen como &quot;Usuario eliminado&quot;, sin nombre ni foto real) —
+              esta acción es irreversible.
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                disabled={eliminandoMiembro}
+                onClick={confirmarEliminarMiembro}
+                className="rounded-app bg-red-700 px-4 py-2 text-sm text-white disabled:opacity-50"
+              >
+                {eliminandoMiembro ? "Eliminando..." : "Sí, eliminar"}
+              </button>
+              <button
+                type="button"
+                disabled={eliminandoMiembro}
+                onClick={() => setMiembroAEliminar(null)}
                 className="text-xs text-text-secondary underline"
               >
                 Cancelar
