@@ -49,6 +49,16 @@ const EMBELLECIMIENTOS: Embellecimiento[] = [
   { id: "glow", nombre: "Glow", css: "blur(0.5px) brightness(1.12) contrast(0.88) sepia(0.1) saturate(1.15)" },
 ];
 
+// focusMode/pointsOfInterest son parte de la Image Capture API extendida
+// (MediaTrack Capabilities/Constraints de cámara) -- todavía no están en los
+// tipos DOM de TypeScript, aunque Chrome/WebView de Android ya los soporta
+// desde hace varias versiones. Se define acá el tipo local, mismo criterio
+// que ya se usó arriba en este archivo para screen.orientation.lock().
+interface ConstraintSetConEnfoque extends MediaTrackConstraintSet {
+  focusMode?: "manual" | "single-shot" | "continuous";
+  pointsOfInterest?: { x: number; y: number }[];
+}
+
 // Solo se pide facingMode — sin width/height/aspectRatio "ideal": pedir una
 // proporción angosta (9:16) hace que varios celulares apliquen un recorte de
 // hardware (zoom) al sensor para acercarse a esa forma, en vez de solo
@@ -56,9 +66,18 @@ const EMBELLECIMIENTOS: Embellecimiento[] = [
 // hace falta: el recorte a 1080x1920 ya se hace en software al dibujar cada
 // cuadro en el canvas (dibujarCuadro más abajo) y en prepararFotoHistoria
 // para la foto, así que la cámara puede entregar su campo de visión normal.
+//
+// `advanced: [{ focusMode: "continuous" }]` pide enfoque automático continuo
+// desde el arranque -- va en `advanced` (no en las restricciones normales)
+// porque esa lista es "mejor esfuerzo": si el dispositivo no soporta mover
+// el enfoque por software, se ignora en silencio en vez de hacer fallar todo
+// el pedido de cámara (a diferencia de pedirlo como restricción obligatoria).
 async function obtenerStreamCamara(frontal: boolean): Promise<MediaStream> {
   const facingMode = frontal ? "user" : "environment";
-  const video: MediaTrackConstraints = { facingMode };
+  const video: MediaTrackConstraints = {
+    facingMode,
+    advanced: [{ focusMode: "continuous" } as ConstraintSetConEnfoque],
+  };
   try {
     return await navigator.mediaDevices.getUserMedia({ video, audio: true });
   } catch {
@@ -97,6 +116,11 @@ export function CamaraHistoria({
   const idIntervaloRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const idLimiteRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const idCuadroRef = useRef<number | null>(null);
+  const idAnilloEnfoqueRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Punto (en px, relativo al contenedor) donde se tocó para enfocar --
+  // controla el anillo visual de feedback, no el enfoque en sí (ese se pide
+  // aparte vía applyConstraints en alTocarParaEnfocar).
+  const [puntoEnfoque, setPuntoEnfoque] = useState<{ x: number; y: number } | null>(null);
   // Grados que hay que rotar el cuadro capturado para que quede derecho --
   // 100% manual (botón de girar más abajo), sin detección automática (ver
   // comentario arriba de por qué se descartó el acelerómetro).
@@ -152,9 +176,48 @@ export function CamaraHistoria({
       if (idIntervaloRef.current) clearInterval(idIntervaloRef.current);
       if (idLimiteRef.current) clearTimeout(idLimiteRef.current);
       if (idCuadroRef.current) cancelAnimationFrame(idCuadroRef.current);
+      if (idAnilloEnfoqueRef.current) clearTimeout(idAnilloEnfoqueRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Tocar-para-enfocar: además del enfoque continuo automático (pedido al
+  // abrir la cámara en obtenerStreamCamara), el usuario puede tocar un punto
+  // de la vista previa para que la cámara priorice enfocar ahí -- mismo
+  // criterio que cualquier app de cámara nativa. Se mantiene `focusMode:
+  // "continuous"` (no "single-shot") para que el enfoque se siga ajustando
+  // solo después, en vez de quedar trabado en ese punto para siempre.
+  function alTocarParaEnfocar(e: React.PointerEvent<HTMLVideoElement>) {
+    const video = videoRef.current;
+    const stream = streamRef.current;
+    if (!video || !stream) return;
+    const rect = video.getBoundingClientRect();
+    const xPantalla = e.clientX - rect.left;
+    const yPantalla = e.clientY - rect.top;
+
+    setPuntoEnfoque({ x: xPantalla, y: yPantalla });
+    if (idAnilloEnfoqueRef.current) clearTimeout(idAnilloEnfoqueRef.current);
+    idAnilloEnfoqueRef.current = setTimeout(() => setPuntoEnfoque(null), 700);
+
+    // La cámara frontal se ve espejada en pantalla (transform: scaleX(-1)),
+    // pero el sensor real no está espejado -- hay que invertir X para que el
+    // punto de enfoque caiga donde realmente se tocó en la imagen.
+    let x = xPantalla / rect.width;
+    if (camaraFrontal) x = 1 - x;
+    const y = yPantalla / rect.height;
+
+    const track = stream.getVideoTracks()[0];
+    if (!track) return;
+    const restriccion: ConstraintSetConEnfoque = {
+      focusMode: "continuous",
+      pointsOfInterest: [{ x: Math.min(1, Math.max(0, x)), y: Math.min(1, Math.max(0, y)) }],
+    };
+    track.applyConstraints({ advanced: [restriccion] }).catch(() => {
+      // Muchos celulares no dejan mover el punto de enfoque por software --
+      // se ignora en silencio, el anillo visual ya se mostró y el enfoque
+      // continuo sigue funcionando igual.
+    });
+  }
 
   // Bloqueo de orientación mientras la cámara está abierta: sin esto, si el
   // celular tiene "Girar pantalla automática" activado, el navegador rota
@@ -371,6 +434,7 @@ export function CamaraHistoria({
           autoPlay
           muted
           playsInline
+          onPointerDown={alTocarParaEnfocar}
           // Sin esto, algunos WebView de Android muestran un ícono de "play"
           // gigante centrado como placeholder mientras el stream de la
           // cámara todavía no llegó -- un poster transparente lo evita.
@@ -380,6 +444,16 @@ export function CamaraHistoria({
             ...(camaraFrontal ? { transform: "scaleX(-1)" } : null),
             filter: filtroCombinado(),
           }}
+        />
+      )}
+
+      {/* Anillo de feedback al tocar para enfocar -- se autodestruye solo,
+          no bloquea toques (pointer-events-none) para no interferir con los
+          controles de arriba. */}
+      {puntoEnfoque && (
+        <div
+          className="pointer-events-none absolute z-10 h-16 w-16 -translate-x-1/2 -translate-y-1/2 animate-ping rounded-full border-2 border-white"
+          style={{ left: puntoEnfoque.x, top: puntoEnfoque.y, animationIterationCount: 1, animationDuration: "600ms" }}
         />
       )}
 
