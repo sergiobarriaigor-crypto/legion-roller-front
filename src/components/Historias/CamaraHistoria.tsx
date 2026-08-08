@@ -485,13 +485,17 @@ export function CamaraHistoria({
           <div className="flex items-center gap-2">
             {/* Corrección de orientación 100% manual (sin detección
                 automática, ver comentario arriba): gira 90° a la izquierda
-                cada toque. */}
+                cada toque. La vista previa no rota (ver comentario más abajo
+                sobre por qué), así que sin el giro del ícono acá el botón
+                parece no hacer nada al tocarlo -- este transform es la única
+                confirmación visual de que el ángulo cambió. */}
             <button
               type="button"
               onClick={() => setAnguloManual((a) => sumarAngulos(a, 270))}
               disabled={grabando}
               aria-label="Girar imagen a la izquierda"
-              className="flex h-9 w-9 items-center justify-center rounded-full bg-black/40 text-white disabled:opacity-40"
+              className="flex h-9 w-9 items-center justify-center rounded-full bg-black/40 text-white transition-transform duration-200 disabled:opacity-40"
+              style={{ transform: `rotate(${anguloManual}deg)` }}
             >
               <IconRotate2 size={20} />
             </button>
