@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { IconShare, IconUpload, IconCube3dSphere } from "@tabler/icons-react";
+import { IconShare, IconUpload, IconCube3dSphere, IconX } from "@tabler/icons-react";
 import { apiUpload, apiPost, ApiError } from "@/lib/api";
 import { generarTarjetaRecorrido, generarVideoRecorrido, type DatosTarjetaRecorrido } from "@/lib/tarjetaRecorrido";
 import {
@@ -278,7 +278,12 @@ export function CompartirRecorridoModal({
         style={{ maxHeight: "88vh", overflowY: "auto" }}
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 className="text-sm font-semibold text-text-accent">Compartir recorrido</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-text-accent">Compartir recorrido</h2>
+          <button type="button" onClick={onClose} aria-label="Cerrar" className="text-text-secondary">
+            <IconX size={18} />
+          </button>
+        </div>
 
         <div className="flex gap-1.5 rounded-app bg-surface-2 p-1">
           <button
@@ -486,7 +491,9 @@ export function CompartirRecorridoModal({
         </button>
 
         <button type="button" onClick={onClose} className="text-xs text-text-secondary underline">
-          Cancelar
+          {tab === "video3d" && (estadoFlyover?.estado === "pendiente" || estadoFlyover?.estado === "procesando")
+            ? "Cerrar (el video se sigue generando)"
+            : "Cancelar"}
         </button>
       </div>
     </div>
