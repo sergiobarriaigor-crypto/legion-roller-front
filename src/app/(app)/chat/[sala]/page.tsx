@@ -29,6 +29,8 @@ import { comprimirFotoChat } from "@/lib/comprimirImagen";
 import { obtenerSocket } from "@/lib/socket";
 import { tiempoTranscurrido } from "@/lib/tiempo";
 import { pushDisponible, estaSuscrito } from "@/lib/push";
+import { Capacitor } from "@capacitor/core";
+import { estaSuscritoNativo } from "@/lib/pushNativo";
 import type { PuntoGps } from "@/lib/geo";
 import {
   actualizarSilenciado,
@@ -262,9 +264,16 @@ export default function ConversacionPage() {
   }, [token, sala]);
 
   useEffect(() => {
-    if (!pushDisponible()) return;
     let cancelado = false;
-    estaSuscrito().then((suscrito) => {
+    // Dentro de la app nativa las notificaciones van por FCM, no por Web
+    // Push/PushManager -- estaSuscrito() (chequeo del navegador) siempre da
+    // false ahí, aunque el push sí esté activo, y el botón quedaba oculto.
+    const suscripcion = Capacitor.isNativePlatform()
+      ? Promise.resolve(estaSuscritoNativo())
+      : pushDisponible()
+        ? estaSuscrito()
+        : Promise.resolve(false);
+    suscripcion.then((suscrito) => {
       if (cancelado) return;
       setPuedeSilenciar(suscrito);
       if (!suscrito || !token) return;
