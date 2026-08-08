@@ -19,7 +19,7 @@ export function VideoRecorridoIndicador() {
     <div className="flex items-center justify-between gap-2 bg-bg-accent px-4 py-2 text-xs text-amber-text">
       <button
         type="button"
-        onClick={() => router.push("/mapa")}
+        onClick={() => router.push(`/mapa?compartirVideo=${estado.recorridoId}`)}
         className="flex-1 text-left"
       >
         {estado.generando

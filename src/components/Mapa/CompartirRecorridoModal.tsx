@@ -15,7 +15,7 @@ import { useNoAutofill } from "@/lib/useNoAutofill";
 import { useVideoRecorrido } from "@/context/VideoRecorridoContext";
 
 type Estado = "editando" | "publicando";
-type Tab = "imagen" | "video" | "video3d";
+export type Tab = "imagen" | "video" | "video3d";
 
 export function CompartirRecorridoModal({
   datos,
@@ -23,12 +23,17 @@ export function CompartirRecorridoModal({
   token,
   onClose,
   onPublicado,
+  tabInicial,
 }: {
   datos: DatosTarjetaRecorrido;
   recorridoId: number;
   token: string | null;
   onClose: () => void;
   onPublicado?: () => void;
+  // Permite abrir el modal directo en una pestaña (ej. desde la píldora de
+  // "Video listo" -- ver VideoRecorridoIndicador.tsx / MapaView.tsx) en vez
+  // de arrancar siempre en "Imagen".
+  tabInicial?: Tab;
 }) {
   const [titulo, setTitulo] = useState("");
   const [comentario, setComentario] = useState("");
@@ -51,7 +56,7 @@ export function CompartirRecorridoModal({
   // layout de (app)) para que sobreviva cerrar el modal o cambiar de
   // pestaña -- acá solo se lee, filtrando por si el video en curso/listo es
   // el de ESTA ruta (podría haber uno de otra ruta en curso).
-  const [tab, setTab] = useState<Tab>("imagen");
+  const [tab, setTab] = useState<Tab>(tabInicial ?? "imagen");
   const { estado: estadoVideo, iniciarGeneracion: iniciarGeneracionVideo } = useVideoRecorrido();
   const videoEsDeEstaRuta = estadoVideo.recorridoId === recorridoId;
   const generandoVideo = videoEsDeEstaRuta && estadoVideo.generando;
