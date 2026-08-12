@@ -113,6 +113,15 @@ const MS_MOVIMIENTO_SOSTENIDO_EXPLORACION = 6000;
 // sea solo una bajada rápida o un salto de GPS puntual.
 const KMH_VELOCIDAD_SOSPECHOSA = 35;
 const MS_VELOCIDAD_SOSPECHOSA_SOSTENIDA = 5 * 60 * 1000;
+// Manejar en ciudad tiene semáforos, esquinas y tráfico -- una baja momentánea
+// de velocidad ahí no significa "se bajó del auto y ahora patina". Antes,
+// CUALQUIER lectura por debajo del umbral reiniciaba el contador de
+// "sostenido" a cero, así que varios semáforos en los primeros minutos podían
+// impedir que el contador llegara nunca a los 5 minutos seguidos, dejando
+// pasar varios km reales de auto sin descartar. Ahora una baja tiene que
+// sostenerse ELLA MISMA por más de esto para recién ahí asumir que de verdad
+// se dejó de andar en vehículo (ver inicioTramoLentoRef).
+const MS_PAUSA_TOLERADA_EN_TRAMO_RAPIDO = 90 * 1000;
 
 // Un fix puntual de mala precisión (rebote entre edificios, ubicación por
 // red/Wi-Fi en vez de GPS real) puede reportar una posición decenas o
@@ -435,10 +444,17 @@ export function MapaView() {
   const ultimoMovimientoEnRef = useRef<number>(Date.now());
   const avisoInactividadRef = useRef(false);
   const cierreAutomaticoTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Marca desde cuándo el tramo actual viene sostenido arriba de
-  // KMH_VELOCIDAD_SOSPECHOSA — se reinicia a null apenas la velocidad baja del
-  // umbral, así que solo cuenta tiempo *seguido* arriba, no acumulado.
+  // Marca desde cuándo viene el tramo sospechoso de vehículo. Ya NO se
+  // reinicia ante cualquier baja momentánea de velocidad (semáforo, esquina)
+  // — solo se reinicia si esa baja se sostiene más de
+  // MS_PAUSA_TOLERADA_EN_TRAMO_RAPIDO (ver inicioTramoLentoRef), así que
+  // tolera manejo real en ciudad con paradas cortas.
   const inicioTramoRapidoRef = useRef<number | null>(null);
+  // Desde cuándo viene la baja de velocidad ACTUAL dentro de un tramo que
+  // todavía se considera sospechoso de vehículo -- null mientras la
+  // velocidad está arriba del umbral, o cuando no hay ningún tramo
+  // sospechoso en curso.
+  const inicioTramoLentoRef = useRef<number | null>(null);
   const avisoVelocidadRef = useRef(false);
   // A diferencia de avisoVelocidadRef (se apaga con continuarTrasVelocidad,
   // para dejar seguir grabando), esto queda en true toda la sesión una vez
@@ -567,9 +583,31 @@ export function MapaView() {
     const kmh = (distanciaHaversineKm(anterior, puntoNuevo) / dtSeg) * 3600;
 
     if (kmh <= KMH_VELOCIDAD_SOSPECHOSA) {
+      if (inicioTramoRapidoRef.current === null) {
+        // No hay ningún tramo sospechoso en curso -- nada que tolerar.
+        return false;
+      }
+      if (inicioTramoLentoRef.current === null) {
+        inicioTramoLentoRef.current = anterior.timestamp;
+        return false;
+      }
+      if (Date.now() - inicioTramoLentoRef.current < MS_PAUSA_TOLERADA_EN_TRAMO_RAPIDO) {
+        // Baja momentánea (semáforo, esquina, tráfico) -- no alcanza para
+        // asumir que de verdad se dejó de andar rápido, se mantiene el
+        // tramo sospechoso en curso sin reiniciar el contador.
+        return false;
+      }
+      // La baja ya se sostuvo lo suficiente como para asumir que de verdad
+      // terminó el tramo rápido (se bajó del vehículo, o era solo un pico
+      // puntual real de patinaje) -- recién ahí se sale del todo.
       inicioTramoRapidoRef.current = null;
+      inicioTramoLentoRef.current = null;
       return false;
     }
+
+    // Volvió a superar el umbral -- si veníamos en una pausa tolerada
+    // (semáforo), no era el fin del tramo rápido, se sigue acumulando igual.
+    inicioTramoLentoRef.current = null;
 
     if (inicioTramoRapidoRef.current === null) {
       inicioTramoRapidoRef.current = anterior.timestamp;
@@ -602,6 +640,7 @@ export function MapaView() {
 
   function continuarTrasVelocidad() {
     inicioTramoRapidoRef.current = null;
+    inicioTramoLentoRef.current = null;
     setAvisoVelocidad(false);
     avisoVelocidadRef.current = false;
   }
@@ -952,6 +991,7 @@ export function MapaView() {
     mapeadoRef.current = false;
     setMapeado(false);
     inicioTramoRapidoRef.current = null;
+    inicioTramoLentoRef.current = null;
     setAvisoVelocidad(false);
     avisoVelocidadRef.current = false;
     huboVelocidadSospechosaRef.current = false;
@@ -1065,6 +1105,7 @@ export function MapaView() {
     setAvisoInactividad(false);
     avisoInactividadRef.current = false;
     inicioTramoRapidoRef.current = null;
+    inicioTramoLentoRef.current = null;
     setAvisoVelocidad(false);
     avisoVelocidadRef.current = false;
 
