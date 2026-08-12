@@ -457,16 +457,17 @@ export function CompartirRecorridoModal({
               )}
               {!cargandoFlyover && estadoFlyover?.estado === "error" && (
                 <div className="flex flex-col items-center gap-2.5 px-6 text-center">
-                  <p className="text-xs text-fill-warning">
-                    {/* Errores de ffmpeg/Puppeteer llegan acá como texto técnico
-                        larguísimo (ver flyover-render.service.ts) -- solo se
-                        muestra si es corto y legible; el detalle completo queda
-                        en errorMsg igual, para revisarlo desde la base de datos
-                        si hace falta. */}
-                    {estadoFlyover.errorMsg && estadoFlyover.errorMsg.length <= 150
-                      ? estadoFlyover.errorMsg
-                      : "No se pudo generar el video 3D."}
-                  </p>
+                  <p className="text-xs text-fill-warning">No se pudo generar el video 3D.</p>
+                  {estadoFlyover.errorMsg && (
+                    // Errores de ffmpeg/Puppeteer llegan acá como texto técnico
+                    // larguísimo (ver flyover-render.service.ts) -- antes se
+                    // mostraba entero y tapaba toda la ventana; ahora queda
+                    // contenido en una caja chica con scroll, útil para
+                    // diagnosticar sin volver a inundar la pantalla.
+                    <pre className="max-h-24 w-full overflow-y-auto whitespace-pre-wrap break-words rounded-app bg-surface-2 p-2 text-left text-[10px] text-text-muted">
+                      {estadoFlyover.errorMsg.slice(0, 500)}
+                    </pre>
+                  )}
                   <button
                     type="button"
                     onClick={generarFlyover}
