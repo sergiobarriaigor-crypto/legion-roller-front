@@ -58,3 +58,64 @@ export function velocidadMaximaKmH(puntos: PuntoGps[]): number {
   }
   return maxima;
 }
+
+// El GPS real nunca cae justo en la línea recta -- un tramo recto de verdad
+// se ve con un zigzag de unos metros que nunca pasó. Esto es SOLO para
+// dibujar la línea (Polyline del mapa, vista previa chica de Mis Rutas) --
+// nunca usar el resultado para distancia/velocidad, esas deben seguir
+// viniendo de los puntos reales sin alterar. Algoritmo Douglas-Peucker:
+// aplana tramos casi rectos sin perder curvas reales (una curva de verdad se
+// aleja más que la tolerancia de la línea entre sus extremos y sus puntos se
+// conservan). Misma idea que TOLERANCIA_SIMPLIFICADO_KM en
+// geo-flyover.util.ts (backend, para la cámara del video 3D) -- duplicada
+// acá porque el proyecto no comparte código entre frontend/backend.
+const TOLERANCIA_SIMPLIFICADO_DIBUJO_KM = 0.01; // 10 metros
+
+function distanciaPerpendicularKm(punto: PuntoGps, a: PuntoGps, b: PuntoGps): number {
+  const KM_POR_GRADO_LAT = 111.32;
+  const cosLat = Math.cos((a.lat * Math.PI) / 180);
+  const ax = a.lon * cosLat;
+  const ay = a.lat;
+  const bx = b.lon * cosLat;
+  const by = b.lat;
+  const px = punto.lon * cosLat;
+  const py = punto.lat;
+
+  const dx = bx - ax;
+  const dy = by - ay;
+  const largoCuadrado = dx * dx + dy * dy;
+  const t =
+    largoCuadrado > 0
+      ? Math.min(1, Math.max(0, ((px - ax) * dx + (py - ay) * dy) / largoCuadrado))
+      : 0;
+  const proyX = ax + t * dx;
+  const proyY = ay + t * dy;
+  return Math.sqrt((px - proyX) ** 2 + (py - proyY) ** 2) * KM_POR_GRADO_LAT;
+}
+
+export function simplificarRutaParaDibujo(
+  puntos: PuntoGps[],
+  toleranciaKm: number = TOLERANCIA_SIMPLIFICADO_DIBUJO_KM,
+): PuntoGps[] {
+  if (puntos.length <= 2) return puntos;
+
+  let distanciaMaxima = 0;
+  let indiceMaximo = 0;
+  const inicio = puntos[0];
+  const fin = puntos[puntos.length - 1];
+  for (let i = 1; i < puntos.length - 1; i++) {
+    const d = distanciaPerpendicularKm(puntos[i], inicio, fin);
+    if (d > distanciaMaxima) {
+      distanciaMaxima = d;
+      indiceMaximo = i;
+    }
+  }
+
+  if (distanciaMaxima > toleranciaKm) {
+    const izquierda = simplificarRutaParaDibujo(puntos.slice(0, indiceMaximo + 1), toleranciaKm);
+    const derecha = simplificarRutaParaDibujo(puntos.slice(indiceMaximo), toleranciaKm);
+    return [...izquierda.slice(0, -1), ...derecha];
+  }
+
+  return [inicio, fin];
+}

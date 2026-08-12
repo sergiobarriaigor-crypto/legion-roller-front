@@ -11,7 +11,7 @@ import {
   IconShare,
 } from "@tabler/icons-react";
 import { apiGet, apiPatch, apiDelete, ApiError } from "@/lib/api";
-import { velocidadMaximaKmH, type PuntoGps } from "@/lib/geo";
+import { velocidadMaximaKmH, simplificarRutaParaDibujo, type PuntoGps } from "@/lib/geo";
 import { useNombreLugar } from "@/lib/sectores";
 import { NombreLugar } from "@/components/Mapa/NombreLugar";
 import { CompartirRecorridoModal } from "@/components/Mapa/CompartirRecorridoModal";
@@ -61,7 +61,9 @@ function VistaPreviaSvg({ puntos }: { puntos: PuntoGps[] }) {
 
   const inicio = puntos[0];
   const fin = puntos[puntos.length - 1];
-  const trazo = puntos.map((p) => `${x(p.lon)},${y(p.lat)}`).join(" ");
+  const trazo = simplificarRutaParaDibujo(puntos)
+    .map((p) => `${x(p.lon)},${y(p.lat)}`)
+    .join(" ");
 
   return (
     <svg
@@ -223,7 +225,7 @@ function FichaRecorrido({
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
             <Polyline
-              positions={puntos.map((p) => [p.lat, p.lon])}
+              positions={simplificarRutaParaDibujo(puntos).map((p) => [p.lat, p.lon])}
               pathOptions={{ color: "#C99A3D", weight: 4 }}
             />
             <CircleMarker

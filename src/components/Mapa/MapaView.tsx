@@ -12,7 +12,7 @@ import { type OtroMiembro, ContenidoPopupMiembro } from "@/components/Mapa/Tarje
 import { htmlPuntoSimple, HTML_PUNTO_PARTIDA, htmlIconoAvatar, TAM_AVATAR } from "@/lib/iconosMapa";
 import { useSession } from "@/context/SessionContext";
 import { apiPost, apiPut, apiGet, apiDelete, ApiError } from "@/lib/api";
-import { distanciaTotalKm, distanciaHaversineKm, type PuntoGps } from "@/lib/geo";
+import { distanciaTotalKm, distanciaHaversineKm, simplificarRutaParaDibujo, type PuntoGps } from "@/lib/geo";
 import type { Publicacion } from "@/lib/publicaciones";
 import {
   combinarFechaHora,
@@ -1511,7 +1511,9 @@ export function MapaView() {
           ))}
           {mapeado && puntosGrabados.length > 1 && (
             <Polyline
-              positions={puntosGrabados.map((p) => [p.lat, p.lon])}
+              // Solo para el dibujo -- distancia/duracion siguen calculandose
+              // sobre puntosGrabados sin tocar (ver finalizarModo/registrarMovimiento).
+              positions={simplificarRutaParaDibujo(puntosGrabados).map((p) => [p.lat, p.lon])}
               pathOptions={{ color: "#C99A3D", weight: 4 }}
             />
           )}
