@@ -114,6 +114,18 @@ const MS_MOVIMIENTO_SOSTENIDO_EXPLORACION = 6000;
 const KMH_VELOCIDAD_SOSPECHOSA = 35;
 const MS_VELOCIDAD_SOSPECHOSA_SOSTENIDA = 5 * 60 * 1000;
 
+// Un fix puntual de mala precisión (rebote entre edificios, ubicación por
+// red/Wi-Fi en vez de GPS real) puede reportar una posición decenas o
+// cientos de metros lejos de donde la persona está en verdad, aunque solo
+// dure una lectura. revisarVelocidadSospechosa no lo agarra a propósito
+// (exige velocidad sostenida por varios minutos para no descartar bajadas
+// rápidas reales) -- un salto aislado que va y vuelve queda invisible para
+// esa lógica y termina dibujado como un pico agudo en el trazado del
+// recorrido. Se descarta ANTES de llegar a la lista grabada; no afecta la
+// posición mostrada en pantalla (marcador propio/otros), solo qué queda
+// grabado como parte de la ruta y la distancia patinada.
+const PRECISION_MAXIMA_PUNTO_GRABADO_M = 35;
+
 // Zoom usado para centrar el mapa automáticamente al activar un modo (más cercano
 // que el zoom inicial de la sección 1 del PDF, pensado para ubicarte de un vistazo).
 const ZOOM_CENTRADO_AUTOMATICO = 16;
@@ -664,7 +676,11 @@ export function MapaView() {
         setErrorGeo("");
         registrarMovimiento(punto, pos.accuracy);
 
-        if (grabandoRef.current && !avisoVelocidadRef.current) {
+        if (
+          grabandoRef.current &&
+          !avisoVelocidadRef.current &&
+          pos.accuracy <= PRECISION_MAXIMA_PUNTO_GRABADO_M
+        ) {
           const puntoGrabado = { ...punto, timestamp: Date.now() };
           const acabaDePausar = revisarVelocidadSospechosa(puntoGrabado);
           if (!acabaDePausar) {
