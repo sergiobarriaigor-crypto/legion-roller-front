@@ -471,6 +471,36 @@ export function CompartirRecorridoModal({
                       {estadoFlyover.errorMsg.slice(-800)}
                     </pre>
                   )}
+                  {/* Una vez que existe CUALQUIER intento anterior para esta ruta
+                      (aunque haya sido error), este selector dejaba de mostrarse
+                      -- "Reintentar" volvía a generar en silencio con el estilo
+                      por defecto ("edificios"), sin importar cuál eligiera el
+                      usuario antes. Se repite acá para poder cambiar de estilo
+                      antes de reintentar. */}
+                  <div className="flex gap-1.5 rounded-app bg-surface-2 p-1">
+                    <button
+                      type="button"
+                      onClick={() => setEstiloFlyover("edificios")}
+                      className={`rounded-app px-3 py-1.5 text-xs font-semibold ${
+                        estiloFlyover === "edificios"
+                          ? "bg-fill-primary text-on-primary"
+                          : "text-text-secondary"
+                      }`}
+                    >
+                      Edificios 3D
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEstiloFlyover("satelital")}
+                      className={`rounded-app px-3 py-1.5 text-xs font-semibold ${
+                        estiloFlyover === "satelital"
+                          ? "bg-fill-primary text-on-primary"
+                          : "text-text-secondary"
+                      }`}
+                    >
+                      Satelital
+                    </button>
+                  </div>
                   <button
                     type="button"
                     onClick={generarFlyover}
@@ -483,6 +513,19 @@ export function CompartirRecorridoModal({
             </>
           )}
         </div>
+        {/* Una vez que hay un video "listo" para esta ruta, esa pestaña
+            siempre muestra ese video de entrada (ver arriba) -- sin este
+            link no había forma de volver a elegir estilo y generar el otro,
+            solo se podía ver el que ya existía. */}
+        {tab === "video3d" && estadoFlyover?.estado === "listo" && (
+          <button
+            type="button"
+            onClick={() => setEstadoFlyover(null)}
+            className="self-center text-[11px] text-text-secondary underline"
+          >
+            Generar en otro estilo
+          </button>
+        )}
 
         <input
           type="text"
