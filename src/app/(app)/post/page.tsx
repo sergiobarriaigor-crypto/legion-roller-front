@@ -19,6 +19,7 @@ import { BarraHistorias } from "@/components/Historias/BarraHistorias";
 import { generarTarjetaCompartirPost } from "@/lib/tarjetaPost";
 import { forzarHttps } from "@/lib/imagenDataUrl";
 import { compartirConLink } from "@/lib/compartir";
+import { Toast } from "@/components/Toast";
 
 const MAX_FOTOS_POR_POST = 3;
 const DURACION_MAXIMA_VIDEO_SEG = 50;
@@ -49,7 +50,7 @@ function mensajeVencimiento(diasRestantes: number): string {
 // Discord, etc.) no muestre el texto del share por separado. El video se
 // sigue compartiendo tal cual: componer texto sobre un video pedía extraer
 // un frame y recodificar, un alcance mucho mayor que no se pidió.
-async function compartirPost(p: Post) {
+async function compartirPost(p: Post, onError: (mensaje: string) => void) {
   const link = `${window.location.origin}/post?post=${p.id}`;
   try {
     if (p.tipo === "video" && p.videoUrl) {
@@ -71,9 +72,16 @@ async function compartirPost(p: Post) {
     });
     const archivo = new File([blobTarjeta], "post-legion-roller.jpg", { type: blobTarjeta.type });
     await compartirConLink(p.titulo, p.resena, link, archivo);
-  } catch {
-    // el usuario canceló el panel de compartir, la vista previa no se pudo
-    // generar, o el navegador rechazó el share
+  } catch (err) {
+    // El usuario cerrando el panel de compartir del sistema también llega acá
+    // como un "error" (DOMException AbortError en la Web Share API) -- eso es
+    // normal, se queda en silencio. Cualquier otra falla real (la vista
+    // previa no se pudo generar, el share nativo rechazó el archivo, etc.)
+    // antes quedaba completamente en silencio también, indistinguible de un
+    // botón roto -- ahora se avisa para que quien lo reporte sepa que no fue
+    // una simple cancelación.
+    if (err instanceof DOMException && err.name === "AbortError") return;
+    onError("No se pudo compartir la publicación. Probá de nuevo.");
   }
 }
 
@@ -94,6 +102,7 @@ export default function PostPage() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [misReacciones, setMisReacciones] = useState<number[]>([]);
   const [error, setError] = useState("");
+  const [toastCompartir, setToastCompartir] = useState<string | null>(null);
   const [cargando, setCargando] = useState(true);
 
   const [mostrarCompose, setMostrarCompose] = useState(false);
@@ -687,7 +696,7 @@ export default function PostPage() {
                 {esAutor && (
                   <button
                     type="button"
-                    onClick={() => compartirPost(p)}
+                    onClick={() => compartirPost(p, setToastCompartir)}
                     className="flex items-center gap-1"
                   >
                     <IconShare size={16} />
@@ -760,6 +769,10 @@ export default function PostPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {toastCompartir && (
+        <Toast mensaje={toastCompartir} onDismiss={() => setToastCompartir(null)} duracionMs={2500} />
       )}
     </div>
   );
