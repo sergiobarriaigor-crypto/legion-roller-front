@@ -462,10 +462,13 @@ export function CompartirRecorridoModal({
                     // Errores de ffmpeg/Puppeteer llegan acá como texto técnico
                     // larguísimo (ver flyover-render.service.ts) -- antes se
                     // mostraba entero y tapaba toda la ventana; ahora queda
-                    // contenido en una caja chica con scroll, útil para
-                    // diagnosticar sin volver a inundar la pantalla.
-                    <pre className="max-h-24 w-full overflow-y-auto whitespace-pre-wrap break-words rounded-app bg-surface-2 p-2 text-left text-[10px] text-text-muted">
-                      {estadoFlyover.errorMsg.slice(0, 500)}
+                    // contenido en una caja chica con scroll. El motivo real
+                    // del fallo casi siempre queda al FINAL del mensaje (Node
+                    // arma "Command failed: <comando completo>\n<stderr>", así
+                    // que los primeros ~500 caracteres son solo el comando) --
+                    // por eso se recorta desde el final, no desde el inicio.
+                    <pre className="max-h-32 w-full overflow-y-auto whitespace-pre-wrap break-words rounded-app bg-surface-2 p-2 text-left text-[10px] text-text-muted">
+                      {estadoFlyover.errorMsg.slice(-800)}
                     </pre>
                   )}
                   <button
