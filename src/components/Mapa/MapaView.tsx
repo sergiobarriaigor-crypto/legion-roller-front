@@ -440,6 +440,14 @@ export function MapaView() {
   // umbral, así que solo cuenta tiempo *seguido* arriba, no acumulado.
   const inicioTramoRapidoRef = useRef<number | null>(null);
   const avisoVelocidadRef = useRef(false);
+  // A diferencia de avisoVelocidadRef (se apaga con continuarTrasVelocidad,
+  // para dejar seguir grabando), esto queda en true toda la sesión una vez
+  // que se descartó al menos un tramo por velocidad sospechosa -- así
+  // finalizarModo() sabe, aunque el aviso en pantalla nunca haya llegado a
+  // verse (ej. pantalla bloqueada todo el trayecto, o se terminó desde el
+  // botón normal en vez de desde el modal del aviso), que tiene que avisar
+  // igual al cerrar en vez de dejar la ruta más corta sin ninguna explicación.
+  const huboVelocidadSospechosaRef = useRef(false);
   const necesitaCentrarInicialRef = useRef(false);
   // Igual que inicioTramoRapidoRef, pero para el desplazamiento que retoma el
   // seguimiento del mapa tras el modo Exploración (ver registrarMovimiento).
@@ -579,6 +587,7 @@ export function MapaView() {
     if (grabacionActivaModulo) grabacionActivaModulo.puntos = puntosLimpios;
     setAvisoVelocidad(true);
     avisoVelocidadRef.current = true;
+    huboVelocidadSospechosaRef.current = true;
     // Push real (no solo el modal en pantalla): quien está patinando suele
     // llevar el celular guardado, con la pantalla apagada, así que el aviso
     // tiene que llegar como notificación del sistema, no solo como un modal
@@ -945,6 +954,7 @@ export function MapaView() {
     inicioTramoRapidoRef.current = null;
     setAvisoVelocidad(false);
     avisoVelocidadRef.current = false;
+    huboVelocidadSospechosaRef.current = false;
     grabacionActivaModulo = {
       modo: nuevoModo,
       puntos: [],
@@ -1109,6 +1119,33 @@ export function MapaView() {
       } catch (err) {
         setMensaje(err instanceof ApiError ? err.message : "No se pudo guardar el recorrido.");
         setLimiteRutasAlcanzado(err instanceof ApiError && err.status === 409);
+      }
+    }
+
+    // Garantiza el aviso de velocidad sospechosa aunque nunca se haya
+    // llegado a ver el modal en pantalla (pantalla bloqueada todo el
+    // trayecto, o se terminó desde el botón normal "Finalizar recorrido" en
+    // vez de desde el modal) -- sin esto, el tramo se descartaba en
+    // silencio total: ni push, ni aviso en la app, ni rastro de por qué los
+    // km salieron más bajos (o la ruta ni se guardó, si lo que quedó fue
+    // menos de los 75m mínimos). Se reintenta el push acá porque en este
+    // punto la app seguro está en primer plano (el usuario recién tocó
+    // "Finalizar"), a diferencia del intento original en
+    // revisarVelocidadSospechosa que puede haber ocurrido con la pantalla
+    // bloqueada y no haber llegado a enviarse.
+    if (huboVelocidadSospechosaRef.current) {
+      huboVelocidadSospechosaRef.current = false;
+      setMensaje((previo) => {
+        const texto =
+          "Detectamos una velocidad que no parece de patinaje durante este recorrido (posible traslado en vehículo) y se descartó ese tramo de la distancia.";
+        return previo ? `${previo} ${texto}` : texto;
+      });
+      if (tokenActual) {
+        notificarme(tokenActual, {
+          titulo: "⚠️ Recorrido con tramo descartado",
+          cuerpo: "Detectamos una velocidad que no parece de patinaje y se descartó ese tramo. Revisa la app.",
+          url: "/mapa",
+        }).catch(() => {});
       }
     }
 
