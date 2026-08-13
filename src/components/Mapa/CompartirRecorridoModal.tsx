@@ -10,7 +10,7 @@ import {
   type DatosTarjetaRecorrido,
   type EstiloFotoVideo,
 } from "@/lib/tarjetaRecorrido";
-import { leerArchivoComoDataUrl } from "@/lib/imagenDataUrl";
+import { EditorEncuadreFoto } from "@/components/EditorEncuadreFoto";
 import {
   solicitarFlyover,
   estadoFlyoverPorRecorrido,
@@ -78,12 +78,16 @@ export function CompartirRecorridoModal({
   const [progresoVideo, setProgresoVideo] = useState(0);
   const [errorVideo, setErrorVideo] = useState("");
   const videoBlobUrlRef = useRef<string | null>(null);
-  // Foto opcional del video (nunca obligatoria, ver tarjetaRecorrido.ts) --
-  // se elige ANTES de generar, en la pantalla de configuración de la
-  // pestaña "Video" (a diferencia de antes, que arrancaba a grabar solo con
-  // entrar a la pestaña).
-  const [fotoVideoDataUrl, setFotoVideoDataUrl] = useState<string | null>(null);
+  // Fotos opcionales del video (nunca obligatorias, hasta 3, ver
+  // tarjetaRecorrido.ts) -- se eligen ANTES de generar, en la pantalla de
+  // configuración de la pestaña "Video". "Al final" (portada de cierre) solo
+  // admite 1 foto; "En el mapa" admite hasta 3 (pines repartidos por
+  // distancia). Cada foto elegida pasa primero por un editor de encuadre
+  // (arrastrar/zoom, ver EditorEncuadreFoto) antes de sumarse a la lista --
+  // archivoEditandoFoto es el File crudo mientras ese editor está abierto.
+  const [fotosVideoDataUrl, setFotosVideoDataUrl] = useState<string[]>([]);
   const [estiloFotoVideo, setEstiloFotoVideo] = useState<EstiloFotoVideo>("final");
+  const [archivoEditandoFoto, setArchivoEditandoFoto] = useState<File | null>(null);
   const inputFotoVideoRef = useRef<HTMLInputElement>(null);
 
   // Video 3D (flyover): a diferencia del video de arriba, se renderiza en el
@@ -207,8 +211,8 @@ export function CompartirRecorridoModal({
     try {
       const nuevoBlob = await generarVideoRecorrido(datos, {
         onProgreso: setProgresoVideo,
-        fotoDataUrl: fotoVideoDataUrl ?? undefined,
-        estiloFoto: fotoVideoDataUrl ? estiloFotoVideo : undefined,
+        fotosDataUrl: fotosVideoDataUrl.length ? fotosVideoDataUrl : undefined,
+        estiloFoto: fotosVideoDataUrl.length ? estiloFotoVideo : undefined,
         avatarUrl: miFotoUrl,
         nombreUsuario: sesion?.nombre,
       });
@@ -232,12 +236,31 @@ export function CompartirRecorridoModal({
     setErrorVideo("");
   }
 
-  async function manejarSeleccionFotoVideo(e: React.ChangeEvent<HTMLInputElement>) {
+  function manejarSeleccionFotoVideo(e: React.ChangeEvent<HTMLInputElement>) {
     const archivo = e.target.files?.[0];
     e.target.value = "";
     if (!archivo) return;
-    const dataUrl = await leerArchivoComoDataUrl(archivo);
-    if (dataUrl) setFotoVideoDataUrl(dataUrl);
+    setArchivoEditandoFoto(archivo);
+  }
+
+  function confirmarFotoEditada(dataUrl: string) {
+    setFotosVideoDataUrl((prev) => [...prev, dataUrl].slice(0, 3));
+    setArchivoEditandoFoto(null);
+  }
+
+  function quitarFotoVideo(indice: number) {
+    setFotosVideoDataUrl((prev) => prev.filter((_, i) => i !== indice));
+  }
+
+  // Cambiar el estilo mientras ya hay 1 foto elegida invalida su encuadre
+  // (uno se recortó para pantalla completa 9:16, el otro para un pin
+  // circular) -- más simple pedir que la vuelva a encuadrar que tratar de
+  // reusar un recorte que ya no calza con la proporción nueva.
+  function cambiarEstiloFotoVideo(nuevo: EstiloFotoVideo) {
+    if (nuevo === estiloFotoVideo) return;
+    if (nuevo === "final" && fotosVideoDataUrl.length > 1) return;
+    if (fotosVideoDataUrl.length === 1) setFotosVideoDataUrl([]);
+    setEstiloFotoVideo(nuevo);
   }
 
   function elegirTab(nuevoTab: Tab) {
@@ -428,7 +451,7 @@ export function CompartirRecorridoModal({
                   {errorVideo && <p className="text-xs text-fill-warning">{errorVideo}</p>}
                   <p className="text-xs text-text-secondary">
                     El mapa se dibuja solo, con tu velocidad máxima marcada en el recorrido. Podés
-                    agregarle una foto (opcional).
+                    agregarle hasta 3 fotos (opcional).
                   </p>
                   <input
                     ref={inputFotoVideoRef}
@@ -437,39 +460,22 @@ export function CompartirRecorridoModal({
                     className="hidden"
                     onChange={manejarSeleccionFotoVideo}
                   />
-                  {!fotoVideoDataUrl && (
-                    <button
-                      type="button"
-                      onClick={() => inputFotoVideoRef.current?.click()}
-                      className="flex items-center gap-1.5 rounded-app border border-border-accent px-3 py-1.5 text-xs text-text-accent"
-                    >
-                      <IconPhoto size={14} />
-                      Agregar foto
-                    </button>
+                  {archivoEditandoFoto && (
+                    <EditorEncuadreFoto
+                      archivo={archivoEditandoFoto}
+                      aspecto={estiloFotoVideo === "final" ? "vertical" : "circular"}
+                      onConfirmar={confirmarFotoEditada}
+                      onCancelar={() => setArchivoEditandoFoto(null)}
+                    />
                   )}
-                  {fotoVideoDataUrl && (
-                    <div className="flex flex-col items-center gap-2.5">
-                      <div className="relative">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={fotoVideoDataUrl}
-                          alt="Foto elegida"
-                          className="h-16 w-16 rounded-full border border-border-accent object-cover"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setFotoVideoDataUrl(null)}
-                          aria-label="Quitar foto"
-                          className="absolute -right-1 -top-1 rounded-full bg-surface-2 p-1 text-text-secondary"
-                        >
-                          <IconTrash size={12} />
-                        </button>
-                      </div>
+                  {!archivoEditandoFoto && (
+                    <>
                       <div className="flex gap-1.5 rounded-app bg-surface-2 p-1">
                         <button
                           type="button"
-                          onClick={() => setEstiloFotoVideo("final")}
-                          className={`rounded-app px-3 py-1.5 text-xs font-semibold ${
+                          disabled={fotosVideoDataUrl.length > 1}
+                          onClick={() => cambiarEstiloFotoVideo("final")}
+                          className={`rounded-app px-3 py-1.5 text-xs font-semibold disabled:opacity-40 ${
                             estiloFotoVideo === "final"
                               ? "bg-fill-primary text-on-primary"
                               : "text-text-secondary"
@@ -479,7 +485,7 @@ export function CompartirRecorridoModal({
                         </button>
                         <button
                           type="button"
-                          onClick={() => setEstiloFotoVideo("mapa")}
+                          onClick={() => cambiarEstiloFotoVideo("mapa")}
                           className={`rounded-app px-3 py-1.5 text-xs font-semibold ${
                             estiloFotoVideo === "mapa"
                               ? "bg-fill-primary text-on-primary"
@@ -489,15 +495,49 @@ export function CompartirRecorridoModal({
                           En el mapa
                         </button>
                       </div>
-                    </div>
+                      {fotosVideoDataUrl.length > 0 && (
+                        <div className="flex gap-2">
+                          {fotosVideoDataUrl.map((foto, i) => (
+                            <div key={i} className="relative">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={foto}
+                                alt="Foto elegida"
+                                className={`h-20 w-20 border border-border-accent object-cover ${
+                                  estiloFotoVideo === "final" ? "rounded-app" : "rounded-full"
+                                }`}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => quitarFotoVideo(i)}
+                                aria-label="Quitar foto"
+                                className="absolute -right-1 -top-1 rounded-full bg-surface-2 p-1 text-text-secondary"
+                              >
+                                <IconTrash size={12} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {fotosVideoDataUrl.length < (estiloFotoVideo === "final" ? 1 : 3) && (
+                        <button
+                          type="button"
+                          onClick={() => inputFotoVideoRef.current?.click()}
+                          className="flex items-center gap-1.5 rounded-app border border-border-accent px-3 py-1.5 text-xs text-text-accent"
+                        >
+                          <IconPhoto size={14} />
+                          Agregar foto
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={generarVideo}
+                        className="btn-hero rounded-app px-4 py-1.5 text-xs"
+                      >
+                        Generar video
+                      </button>
+                    </>
                   )}
-                  <button
-                    type="button"
-                    onClick={generarVideo}
-                    className="btn-hero rounded-app px-4 py-1.5 text-xs"
-                  >
-                    Generar video
-                  </button>
                 </div>
               )}
             </>

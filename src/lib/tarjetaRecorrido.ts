@@ -556,9 +556,13 @@ export interface OpcionesVideoRecorrido {
   duracionFinalSeg?: number;
   fps?: number;
   onProgreso?: (fraccion: number) => void;
-  // Foto opcional (nunca obligatoria) -- si no se pasa fotoDataUrl, el video
-  // sigue igual pero sin ningún paso de foto.
-  fotoDataUrl?: string;
+  // Fotos opcionales (nunca obligatorias, hasta 3) -- si no se pasa
+  // fotosDataUrl, el video sigue igual pero sin ningún paso de foto.
+  // estiloFoto "final" solo tiene efecto con exactamente 1 foto (se muestra
+  // a pantalla completa en el cierre); con 2 o 3 fotos, o con estiloFoto
+  // "mapa", cada una se clava como un pin sobre el mapa, repartidas por
+  // distancia del recorrido (ver fraccionesPines).
+  fotosDataUrl?: string[];
   estiloFoto?: EstiloFotoVideo;
   // Portada opcional al arranque del video con la foto de perfil + nombre
   // del usuario (estilo Relive/Strava) -- si no se pasa nombreUsuario, no
@@ -971,14 +975,22 @@ function dibujarImagenContain(ctx: CanvasRenderingContext2D, img: HTMLImageEleme
   ctx.drawImage(img, cx - w / 2, cy - h / 2, w, h);
 }
 
+// Foto de cierre a pantalla completa (solo con exactamente 1 foto y
+// estiloFoto "final") o pin sobre el mapa (los demás casos, hasta 3, cada
+// uno con su propio punto real del recorrido y su propia distancia de
+// revelado -- ver fraccionesPines).
+interface PinFotoVideo {
+  img: HTMLImageElement;
+  punto: PuntoGps;
+  distanciaKm: number;
+}
+
 interface ConfigVideo {
   puntoVelMax: PuntoGps | null;
   distanciaVelMaxKm: number;
   kmhVelMax: number;
-  fotoImg: HTMLImageElement | null;
-  estiloFoto: EstiloFotoVideo | null;
-  puntoFotoMapa: PuntoGps | null;
-  distanciaFotoMapaKm: number;
+  fotoFinalImg: HTMLImageElement | null;
+  pinesFoto: PinFotoVideo[];
   // Hasta 3 etiquetas de lugar (ver DatosTarjetaRecorrido.sectoresRuta),
   // cada una revelándose sobre el mapa recién cuando el trazo llega a su
   // distanciaKm -- igual criterio que la marca de velocidad máxima y el pin
@@ -999,7 +1011,7 @@ interface ConfigVideo {
 // tarjeta de siempre para el PNG de Post), contador de distancia/tiempo
 // flotando arriba, marca de velocidad máxima que se prende al pasar el
 // trazo por ese punto, y el cuadro de cierre (panorámica completa, con o
-// sin foto según config.estiloFoto).
+// sin foto según config.fotoFinalImg).
 function dibujarCuadroVideo(
   ctx: CanvasRenderingContext2D,
   datos: DatosTarjetaRecorrido,
@@ -1022,8 +1034,8 @@ function dibujarCuadroVideo(
 
   // Cuadro de cierre con foto a pantalla completa (opción "final"): ya no
   // hay mapa en este cuadro, solo la foto + degradé + resumen del recorrido.
-  if (mostrarFotoFinal && config.fotoImg) {
-    dibujarImagenCover(ctx, config.fotoImg, 0, 0, ANCHO_VIDEO, ALTO_VIDEO);
+  if (mostrarFotoFinal && config.fotoFinalImg) {
+    dibujarImagenCover(ctx, config.fotoFinalImg, 0, 0, ANCHO_VIDEO, ALTO_VIDEO);
     const degrade = ctx.createLinearGradient(0, ALTO_VIDEO * 0.45, 0, ALTO_VIDEO);
     degrade.addColorStop(0, "rgba(13,10,6,0)");
     degrade.addColorStop(1, "rgba(13,10,6,0.88)");
@@ -1099,13 +1111,13 @@ function dibujarCuadroVideo(
     dibujarMarcaVelMax(ctx, x(config.puntoVelMax.lon), y(config.puntoVelMax.lat), config.kmhVelMax, pulsoVelMax);
   }
 
-  const mostrarFotoMapa =
-    config.estiloFoto === "mapa" &&
-    config.fotoImg &&
-    config.puntoFotoMapa !== null &&
-    distanciaMostrar >= config.distanciaFotoMapaKm;
-  if (mostrarFotoMapa && config.fotoImg && config.puntoFotoMapa) {
-    dibujarPinFoto(ctx, config.fotoImg, x(config.puntoFotoMapa.lon), y(config.puntoFotoMapa.lat), 30);
+  // Hasta 3 fotos clavadas como pin sobre el mapa, cada una en su propio
+  // punto real del recorrido, revelándose recién cuando el trazo llega a su
+  // distancia -- mismo criterio que la marca de velocidad máxima.
+  for (const pin of config.pinesFoto) {
+    if (distanciaMostrar >= pin.distanciaKm) {
+      dibujarPinFoto(ctx, pin.img, x(pin.punto.lon), y(pin.punto.lat), 30);
+    }
   }
 
   // Las etiquetas de sector se dibujan al final (encima de todo lo demás,
@@ -1237,6 +1249,16 @@ function dibujarCierreVideo(ctx: CanvasRenderingContext2D, logoGrandeImg: HTMLIm
   }
 }
 
+// Reparte hasta 3 pines de foto por distancia del recorrido -- con 1 sola
+// foto queda en la mitad (mismo criterio de siempre); con 2 o 3, separadas
+// entre sí para no amontonarse (sin pegarse a los extremos, donde la cámara
+// ya está persiguiendo el inicio/fin del trazo).
+function fraccionesPines(n: number): number[] {
+  if (n <= 1) return [0.5];
+  if (n === 2) return [0.35, 0.7];
+  return [0.18, 0.5, 0.82];
+}
+
 // Genera un video corto (.webm) del recorrido "dibujándose" sobre el mismo
 // mapa satelital de la tarjeta estática, con la distancia y el tiempo
 // subiendo en vivo — pensado específicamente para compartir en redes
@@ -1260,7 +1282,7 @@ export async function generarVideoRecorrido(
     duracionCierreSeg = DURACION_CIERRE_SEG_DEFECTO,
     fps = FPS_DEFECTO,
     onProgreso,
-    fotoDataUrl = null,
+    fotosDataUrl = [],
     estiloFoto = null,
     avatarUrl = null,
     nombreUsuario,
@@ -1273,13 +1295,20 @@ export async function generarVideoRecorrido(
     throw new Error("El recorrido no tiene suficientes puntos para animar.");
   }
 
+  // "final" (portada de cierre a pantalla completa) solo tiene sentido con
+  // exactamente 1 foto -- con 2 o 3, todas pasan a ser pines sobre el mapa
+  // (ver fraccionesPines), no hay forma de mostrar varias a pantalla
+  // completa en el mismo cuadro.
+  const fotoFinalDataUrl = estiloFoto === "final" && fotosDataUrl.length === 1 ? fotosDataUrl[0] : null;
+  const fotosPinDataUrl = fotoFinalDataUrl ? [] : fotosDataUrl;
+
   const [logoGrandeDataUrl, mapa, avatarDataUrl] = await Promise.all([
     cargarImagenComoDataUrl("/logo-legion-roller.png"),
     generarMapaReal(datos.puntos, ANCHO_VIDEO, ALTO_VIDEO, false),
     avatarUrl ? cargarImagenComoDataUrl(avatarUrl) : Promise.resolve(null),
   ]);
 
-  // Las imágenes (mapa, foto, avatar, logo) se decodifican UNA sola vez acá,
+  // Las imágenes (mapa, fotos, avatar, logo) se decodifican UNA sola vez acá,
   // antes de arrancar la animación -- la versión anterior reincrustaba el
   // mapa completo (base64) dentro de un SVG nuevo en CADA cuadro y lo volvía
   // a rasterizar, lo que con el mapa ahora a pantalla completa tardaba tanto
@@ -1291,9 +1320,10 @@ export async function generarVideoRecorrido(
   // grande (real, con todo su detalle) solo se usa en el cuadro de cierre
   // final -- ahí es lo bastante grande para verse bien; el corner badge
   // chico que se veía pixelado se sacó del video.
-  const [mapaImg, fotoImg, avatarImg, logoGrandeImg] = await Promise.all([
+  const [mapaImg, fotoFinalImg, fotosPinImg, avatarImg, logoGrandeImg] = await Promise.all([
     cargarImagenOpcional(mapa?.dataUrl ?? null),
-    cargarImagenOpcional(fotoDataUrl),
+    cargarImagenOpcional(fotoFinalDataUrl),
+    Promise.all(fotosPinDataUrl.map((d) => cargarImagenOpcional(d))),
     cargarImagenOpcional(avatarDataUrl),
     cargarImagenOpcional(logoGrandeDataUrl),
   ]);
@@ -1308,27 +1338,28 @@ export async function generarVideoRecorrido(
   }
 
   const { punto: puntoVelMax, indice: indiceVelMax, kmh: kmhVelMax } = velocidadMaximaConPunto(datos.puntos);
-  // El pin de "foto en el mapa" se clava, por defecto, en la mitad del
-  // recorrido POR DISTANCIA (no por índice ni por tiempo -- así se ve
-  // centrado en el trazo incluso si el usuario se detuvo mucho rato en un
-  // tramo, lo que dejaría muchos más puntos ahí).
-  const mitadDistanciaKm = datos.distanciaKm / 2;
-  let indiceFotoMapa = 0;
-  while (
-    indiceFotoMapa < distanciaAcumuladaKm.length - 1 &&
-    distanciaAcumuladaKm[indiceFotoMapa] < mitadDistanciaKm
-  ) {
-    indiceFotoMapa++;
-  }
+
+  // Cada pin de foto se clava en un punto real del recorrido, repartido POR
+  // DISTANCIA (no por índice ni por tiempo -- así se ve repartido en el
+  // trazo incluso si el usuario se detuvo mucho rato en un tramo, lo que
+  // dejaría muchos más puntos ahí).
+  const pinesFoto: PinFotoVideo[] = fotosPinImg.flatMap((img, i) => {
+    if (!img) return [];
+    const fraccion = fraccionesPines(fotosPinImg.length)[i];
+    const distanciaObjetivoKm = fraccion * datos.distanciaKm;
+    let indice = 0;
+    while (indice < distanciaAcumuladaKm.length - 1 && distanciaAcumuladaKm[indice] < distanciaObjetivoKm) {
+      indice++;
+    }
+    return [{ img, punto: datos.puntos[indice], distanciaKm: distanciaAcumuladaKm[indice] }];
+  });
 
   const config: ConfigVideo = {
     puntoVelMax,
     distanciaVelMaxKm: indiceVelMax >= 0 ? distanciaAcumuladaKm[indiceVelMax] : Infinity,
     kmhVelMax,
-    fotoImg,
-    estiloFoto,
-    puntoFotoMapa: estiloFoto === "mapa" && fotoImg ? datos.puntos[indiceFotoMapa] : null,
-    distanciaFotoMapaKm: distanciaAcumuladaKm[indiceFotoMapa] ?? Infinity,
+    fotoFinalImg,
+    pinesFoto,
     sectoresRuta: datos.sectoresRuta ?? [],
     velocidadesKmh,
     kmhReferenciaColor: Math.max(kmhVelMax, 8),
@@ -1442,7 +1473,7 @@ export async function generarVideoRecorrido(
   // Cuadro final congelado unos segundos más, para que en redes sociales
   // alcance a leerse antes de que corte -- panorámica del recorrido
   // completo, o la foto de portada si el usuario eligió estiloFoto "final".
-  const mostrarFotoFinal = estiloFoto === "final" && !!fotoImg;
+  const mostrarFotoFinal = !!fotoFinalImg;
   dibujarFrame(1, mostrarFotoFinal);
   await new Promise((r) => setTimeout(r, duracionFinalSeg * 1000));
 
