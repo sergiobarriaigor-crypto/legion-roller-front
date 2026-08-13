@@ -639,189 +639,312 @@ interface EstadoCamara {
 // (suavizar(), no lineal, para que se sienta como una desaceleración real de
 // cámara) hasta volver a escala 1 centrada en el recorrido completo -- la
 // panorámica de cierre.
+//
+// El punto perseguido se "clampea" (nunca se deja centrar la cámara más
+// cerca del borde de lo que el acercamiento permite) -- el mapa cargado
+// cubre EXACTAMENTE el cuadro a escala 1, así que perseguir de cerca (1.35x)
+// un punto pegado al borde (típicamente el de inicio/fin) dejaría ver, más
+// allá del borde del mapa, un vacío sin imagen (franja negra). Con el
+// clamp, cerca del borde la cámara deja de seguir el punto exacto y se
+// queda quieta en el máximo desplazamiento que el mapa cargado alcanza a
+// cubrir -- se pierde algo de precisión del seguimiento justo ahí, pero
+// nunca se sale del mapa real.
 function estadoCamara(
   fraccionTotal: number,
   focoTrazando: { x: number; y: number },
   focoCentro: { x: number; y: number },
 ): EstadoCamara {
+  const mitadVisibleX = ANCHO_VIDEO / (2 * ESCALA_CAMARA_CERCANA);
+  const mitadVisibleY = ALTO_VIDEO / (2 * ESCALA_CAMARA_CERCANA);
+  const focoCercano = {
+    x: Math.min(Math.max(focoTrazando.x, mitadVisibleX), ANCHO_VIDEO - mitadVisibleX),
+    y: Math.min(Math.max(focoTrazando.y, mitadVisibleY), ALTO_VIDEO - mitadVisibleY),
+  };
   if (fraccionTotal <= FRACCION_TRAZO_COMPLETO) {
-    return { cx: focoTrazando.x, cy: focoTrazando.y, escala: ESCALA_CAMARA_CERCANA };
+    return { cx: focoCercano.x, cy: focoCercano.y, escala: ESCALA_CAMARA_CERCANA };
   }
   const t = suavizar((fraccionTotal - FRACCION_TRAZO_COMPLETO) / (1 - FRACCION_TRAZO_COMPLETO));
   return {
-    cx: focoTrazando.x + (focoCentro.x - focoTrazando.x) * t,
-    cy: focoTrazando.y + (focoCentro.y - focoTrazando.y) * t,
+    cx: focoCercano.x + (focoCentro.x - focoCercano.x) * t,
+    cy: focoCercano.y + (focoCentro.y - focoCercano.y) * t,
     escala: ESCALA_CAMARA_CERCANA + (1 - ESCALA_CAMARA_CERCANA) * t,
   };
 }
 
+function cargarImagenDesdeSrc(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("No se pudo cargar una imagen del video."));
+    img.src = src;
+  });
+}
+
+async function cargarImagenOpcional(src: string | null): Promise<HTMLImageElement | null> {
+  if (!src) return null;
+  try {
+    return await cargarImagenDesdeSrc(src);
+  } catch {
+    return null;
+  }
+}
+
+function dibujarRectRedondeado(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function dibujarPunto(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, color: string, resplandor = false) {
+  if (resplandor) {
+    ctx.save();
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 8;
+  }
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = "#0d0a06";
+  ctx.stroke();
+  if (resplandor) ctx.restore();
+}
+
+function dibujarLogo(ctx: CanvasRenderingContext2D, logoImg: HTMLImageElement | null, cx: number, cy: number, r: number) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, r + 2, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(13,10,6,0.75)";
+  ctx.fill();
+  if (logoImg) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.drawImage(logoImg, cx - r, cy - r, r * 2, r * 2);
+  }
+  ctx.restore();
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.strokeStyle = DORADO_BORDE;
+  ctx.lineWidth = 1.3;
+  ctx.stroke();
+}
+
+function dibujarMarcaVelMax(ctx: CanvasRenderingContext2D, cx: number, cy: number, kmh: number) {
+  ctx.save();
+  ctx.shadowColor = DORADO;
+  ctx.shadowBlur = 8;
+  ctx.globalAlpha = 0.55;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 10, 0, Math.PI * 2);
+  ctx.strokeStyle = DORADO;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.restore();
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, 6, 0, Math.PI * 2);
+  ctx.fillStyle = DORADO;
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = "#0d0a06";
+  ctx.stroke();
+
+  const texto = `⚡ ${Math.round(kmh)} km/h`;
+  ctx.font = "700 14px Arial, sans-serif";
+  const ancho = ctx.measureText(texto).width + 24;
+  ctx.fillStyle = "rgba(13,10,6,0.8)";
+  dibujarRectRedondeado(ctx, cx + 12, cy - 13, ancho, 26, 13);
+  ctx.fillStyle = DORADO;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+  ctx.fillText(texto, cx + 24, cy + 5);
+}
+
 // Pin circular con la foto del usuario clavado en un punto del mapa (estilo
-// Relive/Strava) -- una "gota" dorada con la foto recortada en círculo
-// adentro, apoyada justo sobre el punto exacto.
-function pinFotoSvg(cx: number, cyPunta: number, radio: number, fotoHref: string, idClip: string): string {
-  const cyCentro = cyPunta - radio - 8;
-  const anchoBase = radio * 0.6;
-  return `
-    <path d="M ${cx} ${cyPunta} L ${cx - anchoBase} ${cyCentro + radio * 0.65} A ${radio + 5} ${radio + 5} 0 1 1 ${cx + anchoBase} ${cyCentro + radio * 0.65} Z" fill="#0d0a06" stroke="${DORADO_BORDE}" stroke-width="2.5"/>
-    <clipPath id="${idClip}"><circle cx="${cx}" cy="${cyCentro}" r="${radio}"/></clipPath>
-    <image href="${fotoHref}" x="${cx - radio}" y="${cyCentro - radio}" width="${radio * 2}" height="${radio * 2}" preserveAspectRatio="xMidYMid slice" clip-path="url(#${idClip})"/>
-    <circle cx="${cx}" cy="${cyCentro}" r="${radio}" fill="none" stroke="${DORADO_BORDE}" stroke-width="2.5"/>
-  `;
+// Relive/Strava) -- un triángulo apuntador + la foto recortada en círculo.
+function dibujarPinFoto(ctx: CanvasRenderingContext2D, fotoImg: HTMLImageElement, cx: number, cyPunta: number, radio: number) {
+  const cyCentro = cyPunta - radio - 6;
+  ctx.beginPath();
+  ctx.moveTo(cx, cyPunta);
+  ctx.lineTo(cx - 8, cyCentro + radio - 4);
+  ctx.lineTo(cx + 8, cyCentro + radio - 4);
+  ctx.closePath();
+  ctx.fillStyle = "#0d0a06";
+  ctx.fill();
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cyCentro, radio, 0, Math.PI * 2);
+  ctx.fillStyle = "#0d0a06";
+  ctx.fill();
+  ctx.clip();
+  dibujarImagenCover(ctx, fotoImg, cx - radio, cyCentro - radio, radio * 2, radio * 2);
+  ctx.restore();
+
+  ctx.beginPath();
+  ctx.arc(cx, cyCentro, radio, 0, Math.PI * 2);
+  ctx.strokeStyle = DORADO_BORDE;
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+}
+
+// Dibuja una imagen recortándola (nunca deformándola) para cubrir todo el
+// rectángulo destino -- mismo criterio que CSS object-fit: cover.
+function dibujarImagenCover(ctx: CanvasRenderingContext2D, img: HTMLImageElement, x: number, y: number, w: number, h: number) {
+  const escala = Math.max(w / img.width, h / img.height);
+  const anchoDestino = img.width * escala;
+  const altoDestino = img.height * escala;
+  ctx.drawImage(img, x + (w - anchoDestino) / 2, y + (h - altoDestino) / 2, anchoDestino, altoDestino);
 }
 
 interface ConfigVideo {
   puntoVelMax: PuntoGps | null;
   distanciaVelMaxKm: number;
   kmhVelMax: number;
-  fotoDataUrl: string | null;
+  fotoImg: HTMLImageElement | null;
   estiloFoto: EstiloFotoVideo | null;
   puntoFotoMapa: PuntoGps | null;
   distanciaFotoMapaKm: number;
 }
 
-// Arma cada cuadro del video rediseñado: mapa a pantalla completa (sin
-// marcos ni casillas -- a diferencia de construirSvg(), que sigue siendo
-// la tarjeta de siempre para el PNG de Post), contador de distancia/tiempo
+// Dibuja cada cuadro del video rediseñado directamente en el canvas (sin
+// pasar por SVG+<img> por cuadro, ver generarVideoRecorrido): mapa a
+// pantalla completa (a diferencia de construirSvg(), que sigue siendo la
+// tarjeta de siempre para el PNG de Post), contador de distancia/tiempo
 // flotando arriba, marca de velocidad máxima que se prende al pasar el
 // trazo por ese punto, y el cuadro de cierre (panorámica completa, con o
 // sin foto según config.estiloFoto).
-function construirSvgVideo(
+function dibujarCuadroVideo(
+  ctx: CanvasRenderingContext2D,
   datos: DatosTarjetaRecorrido,
-  logoDataUrl: string | null,
-  mapa: MapaGenerado | null,
+  logoImg: HTMLImageElement | null,
+  mapaImg: HTMLImageElement | null,
+  x: (lon: number) => number,
+  y: (lat: number) => number,
+  focoCentroPx: { x: number; y: number },
   frame: FrameAnimado,
   fraccionTotal: number,
   config: ConfigVideo,
   mostrarFotoFinal: boolean,
-): string {
+) {
   const { puntos } = datos;
-  const lats = puntos.map((p) => p.lat);
-  const lons = puntos.map((p) => p.lon);
-  const minLat = Math.min(...lats);
-  const maxLat = Math.max(...lats);
-  const minLon = Math.min(...lons);
-  const maxLon = Math.max(...lons);
-  const rangoLat = maxLat - minLat || 0.0001;
-  const rangoLon = maxLon - minLon || 0.0001;
-  const margenInterno = 50;
-
-  let x: (lon: number) => number;
-  let y: (lat: number) => number;
-  if (mapa) {
-    x = (lon: number) => lonAPixelX(lon, mapa.zoom) - mapa.centroPxX + ANCHO_VIDEO / 2;
-    y = (lat: number) => latAPixelY(lat, mapa.zoom) - mapa.centroPxY + ALTO_VIDEO / 2;
-  } else {
-    x = (lon: number) =>
-      margenInterno + ((lon - minLon) / rangoLon) * (ANCHO_VIDEO - margenInterno * 2);
-    y = (lat: number) =>
-      margenInterno + ((maxLat - lat) / rangoLat) * (ALTO_VIDEO - margenInterno * 2);
-  }
-
   const distanciaMostrar = frame.distanciaKm;
   const duracionMostrar = frame.duracionSeg;
 
-  const marcaSvg = logoDataUrl
-    ? `<clipPath id="clipLogo"><circle cx="${ANCHO_VIDEO - 46}" cy="46" r="24"/></clipPath>
-       <circle cx="${ANCHO_VIDEO - 46}" cy="46" r="26" fill="#0d0a06" opacity="0.75"/>
-       <image href="${logoDataUrl}" x="${ANCHO_VIDEO - 70}" y="22" width="48" height="48" clip-path="url(#clipLogo)"/>
-       <circle cx="${ANCHO_VIDEO - 46}" cy="46" r="24" fill="none" stroke="${DORADO_BORDE}" stroke-width="1.3"/>`
-    : "";
+  ctx.clearRect(0, 0, ANCHO_VIDEO, ALTO_VIDEO);
+  ctx.textBaseline = "alphabetic";
 
   // Cuadro de cierre con foto a pantalla completa (opción "final"): ya no
   // hay mapa en este cuadro, solo la foto + degradé + resumen del recorrido.
-  if (mostrarFotoFinal && config.fotoDataUrl) {
-    return `
-      <svg width="${ANCHO_VIDEO}" height="${ALTO_VIDEO}" viewBox="0 0 ${ANCHO_VIDEO} ${ALTO_VIDEO}" xmlns="http://www.w3.org/2000/svg">
-        <defs>
-          <linearGradient id="degradeFoto" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="45%" stop-color="#0d0a06" stop-opacity="0"/>
-            <stop offset="100%" stop-color="#0d0a06" stop-opacity="0.88"/>
-          </linearGradient>
-        </defs>
-        <clipPath id="clipFotoFinal"><rect width="${ANCHO_VIDEO}" height="${ALTO_VIDEO}"/></clipPath>
-        <image href="${config.fotoDataUrl}" x="0" y="0" width="${ANCHO_VIDEO}" height="${ALTO_VIDEO}" preserveAspectRatio="xMidYMid slice" clip-path="url(#clipFotoFinal)"/>
-        <rect width="${ANCHO_VIDEO}" height="${ALTO_VIDEO}" fill="url(#degradeFoto)"/>
-        ${marcaSvg}
-        <text x="${ANCHO_VIDEO / 2}" y="${ALTO_VIDEO - 190}" text-anchor="middle" font-family="Arial, sans-serif" font-size="46" font-weight="800" fill="${DORADO}">${distanciaMostrar.toFixed(2)} km &#183; ${Math.round(duracionMostrar / 60)} min</text>
-        <text x="${ANCHO_VIDEO / 2}" y="${ALTO_VIDEO - 148}" text-anchor="middle" font-family="Arial, sans-serif" font-size="22" fill="${GRIS_TEXTO}">VEL. PROMEDIO ${Math.round(datos.velocidadPromedio)} km/h &#183; VEL. MÁXIMA ${Math.round(datos.velocidadMaxima)} km/h</text>
-        <text x="${ANCHO_VIDEO / 2}" y="${ALTO_VIDEO - 60}" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" font-weight="600" letter-spacing="3" fill="${GRIS_TEXTO}">LEGIÓN ROLLER</text>
-      </svg>
-    `;
+  if (mostrarFotoFinal && config.fotoImg) {
+    dibujarImagenCover(ctx, config.fotoImg, 0, 0, ANCHO_VIDEO, ALTO_VIDEO);
+    const degrade = ctx.createLinearGradient(0, ALTO_VIDEO * 0.45, 0, ALTO_VIDEO);
+    degrade.addColorStop(0, "rgba(13,10,6,0)");
+    degrade.addColorStop(1, "rgba(13,10,6,0.88)");
+    ctx.fillStyle = degrade;
+    ctx.fillRect(0, 0, ANCHO_VIDEO, ALTO_VIDEO);
+
+    ctx.textAlign = "center";
+    ctx.fillStyle = DORADO;
+    ctx.font = "800 46px Arial, sans-serif";
+    ctx.fillText(
+      `${distanciaMostrar.toFixed(2)} km · ${Math.round(duracionMostrar / 60)} min`,
+      ANCHO_VIDEO / 2,
+      ALTO_VIDEO - 190,
+    );
+    ctx.fillStyle = GRIS_TEXTO;
+    ctx.font = "400 22px Arial, sans-serif";
+    ctx.fillText(
+      `VEL. PROMEDIO ${Math.round(datos.velocidadPromedio)} km/h · VEL. MÁXIMA ${Math.round(datos.velocidadMaxima)} km/h`,
+      ANCHO_VIDEO / 2,
+      ALTO_VIDEO - 148,
+    );
+    ctx.font = "600 18px Arial, sans-serif";
+    ctx.fillText("LEGIÓN ROLLER", ANCHO_VIDEO / 2, ALTO_VIDEO - 60);
+    dibujarLogo(ctx, logoImg, ANCHO_VIDEO - 46, 46, 24);
+    return;
   }
 
   const inicio = puntos[0];
   const fin = puntos[puntos.length - 1];
   const focoActual = frame.posicionActual ?? fin;
   const focoTrazandoPx = { x: x(focoActual.lon), y: y(focoActual.lat) };
-  const focoCentroPx = mapa
-    ? { x: ANCHO_VIDEO / 2, y: ALTO_VIDEO / 2 }
-    : { x: x((minLon + maxLon) / 2), y: y((minLat + maxLat) / 2) };
   const camara = estadoCamara(fraccionTotal, focoTrazandoPx, focoCentroPx);
 
-  const trazo = frame.puntosTrazo.map((p) => `${x(p.lon)},${y(p.lat)}`).join(" ");
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, ANCHO_VIDEO, ALTO_VIDEO);
+  ctx.clip();
+  ctx.translate(ANCHO_VIDEO / 2, ALTO_VIDEO / 2);
+  ctx.scale(camara.escala, camara.escala);
+  ctx.translate(-camara.cx, -camara.cy);
 
-  const mapaFondoSvg = mapa
-    ? `<image href="${mapa.dataUrl}" x="0" y="0" width="${ANCHO_VIDEO}" height="${ALTO_VIDEO}" preserveAspectRatio="none"/>`
-    : `<rect x="0" y="0" width="${ANCHO_VIDEO}" height="${ALTO_VIDEO}" fill="#1a1108"/>`;
+  if (mapaImg) {
+    ctx.drawImage(mapaImg, 0, 0, ANCHO_VIDEO, ALTO_VIDEO);
+  } else {
+    ctx.fillStyle = "#1a1108";
+    ctx.fillRect(0, 0, ANCHO_VIDEO, ALTO_VIDEO);
+  }
 
-  const mostrarVelMax =
-    config.puntoVelMax !== null && distanciaMostrar >= config.distanciaVelMaxKm;
-  const velMaxSvg =
-    mostrarVelMax && config.puntoVelMax
-      ? `<g transform="translate(${x(config.puntoVelMax.lon)}, ${y(config.puntoVelMax.lat)})">
-           <circle r="10" fill="none" stroke="${DORADO}" stroke-width="1.5" opacity="0.55" filter="url(#resplandorDorado)"/>
-           <circle r="6" fill="${DORADO}" stroke="#0d0a06" stroke-width="2"/>
-           <rect x="12" y="-13" width="82" height="26" rx="13" fill="#0d0a06" opacity="0.8"/>
-           <text x="24" y="4" font-family="Arial, sans-serif" font-size="15" fill="${DORADO}">&#9889;</text>
-           <text x="36" y="5" font-family="Arial, sans-serif" font-size="14" font-weight="700" fill="${DORADO}">${Math.round(config.kmhVelMax)} km/h</text>
-         </g>`
-      : "";
+  ctx.beginPath();
+  frame.puntosTrazo.forEach((p, i) => {
+    const px = x(p.lon);
+    const py = y(p.lat);
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  });
+  ctx.strokeStyle = DORADO;
+  ctx.lineWidth = 6;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.stroke();
+
+  dibujarPunto(ctx, x(inicio.lon), y(inicio.lat), 10, "#5fae4e");
+  if (frame.mostrarFin) dibujarPunto(ctx, x(fin.lon), y(fin.lat), 10, "#d8342f");
+  if (frame.posicionActual) {
+    dibujarPunto(ctx, x(frame.posicionActual.lon), y(frame.posicionActual.lat), 9, DORADO, true);
+  }
+
+  const mostrarVelMax = config.puntoVelMax !== null && distanciaMostrar >= config.distanciaVelMaxKm;
+  if (mostrarVelMax && config.puntoVelMax) {
+    dibujarMarcaVelMax(ctx, x(config.puntoVelMax.lon), y(config.puntoVelMax.lat), config.kmhVelMax);
+  }
 
   const mostrarFotoMapa =
     config.estiloFoto === "mapa" &&
-    config.fotoDataUrl &&
+    config.fotoImg &&
     config.puntoFotoMapa !== null &&
     distanciaMostrar >= config.distanciaFotoMapaKm;
-  const fotoMapaSvg =
-    mostrarFotoMapa && config.fotoDataUrl && config.puntoFotoMapa
-      ? pinFotoSvg(x(config.puntoFotoMapa.lon), y(config.puntoFotoMapa.lat), 30, config.fotoDataUrl, "clipFotoMapa")
-      : "";
+  if (mostrarFotoMapa && config.fotoImg && config.puntoFotoMapa) {
+    dibujarPinFoto(ctx, config.fotoImg, x(config.puntoFotoMapa.lon), y(config.puntoFotoMapa.lat), 30);
+  }
 
-  const contadorSvg = `
-    <rect x="0" y="0" width="${ANCHO_VIDEO}" height="118" fill="#0d0a06" opacity="0.5"/>
-    <text x="28" y="52" font-family="Arial, sans-serif" font-size="38" font-weight="800" fill="${DORADO}">${distanciaMostrar.toFixed(2)} km</text>
-    <text x="28" y="76" font-family="Arial, sans-serif" font-size="15" font-weight="600" letter-spacing="1" fill="${GRIS_TEXTO}">DISTANCIA</text>
-    <text x="${ANCHO_VIDEO / 2 + 20}" y="52" font-family="Arial, sans-serif" font-size="38" font-weight="800" fill="${DORADO}">${Math.round(duracionMostrar / 60)} min</text>
-    <text x="${ANCHO_VIDEO / 2 + 20}" y="76" font-family="Arial, sans-serif" font-size="15" font-weight="600" letter-spacing="1" fill="${GRIS_TEXTO}">TIEMPO</text>
-  `;
+  ctx.restore();
 
-  return `
-    <svg width="${ANCHO_VIDEO}" height="${ALTO_VIDEO}" viewBox="0 0 ${ANCHO_VIDEO} ${ALTO_VIDEO}" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <filter id="resplandorDorado" x="-60%" y="-60%" width="220%" height="220%">
-          <feGaussianBlur stdDeviation="4" result="blur"/>
-          <feMerge>
-            <feMergeNode in="blur"/>
-            <feMergeNode in="SourceGraphic"/>
-          </feMerge>
-        </filter>
-      </defs>
-      <clipPath id="recorteVideo"><rect width="${ANCHO_VIDEO}" height="${ALTO_VIDEO}"/></clipPath>
-      <g clip-path="url(#recorteVideo)">
-        <g transform="translate(${ANCHO_VIDEO / 2}, ${ALTO_VIDEO / 2}) scale(${camara.escala}) translate(${-camara.cx}, ${-camara.cy})">
-          ${mapaFondoSvg}
-          <polyline points="${trazo}" fill="none" stroke="${DORADO}" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
-          <circle cx="${x(inicio.lon)}" cy="${y(inicio.lat)}" r="10" fill="#5fae4e" stroke="#0d0a06" stroke-width="3"/>
-          ${frame.mostrarFin ? `<circle cx="${x(fin.lon)}" cy="${y(fin.lat)}" r="10" fill="#d8342f" stroke="#0d0a06" stroke-width="3"/>` : ""}
-          ${frame.posicionActual ? `<circle cx="${x(frame.posicionActual.lon)}" cy="${y(frame.posicionActual.lat)}" r="9" fill="${DORADO}" stroke="#0d0a06" stroke-width="3" filter="url(#resplandorDorado)"/>` : ""}
-          ${velMaxSvg}
-          ${fotoMapaSvg}
-        </g>
-      </g>
-      ${contadorSvg}
-      ${marcaSvg}
-    </svg>
-  `;
+  ctx.fillStyle = "rgba(13,10,6,0.5)";
+  ctx.fillRect(0, 0, ANCHO_VIDEO, 118);
+  ctx.textAlign = "left";
+  ctx.fillStyle = DORADO;
+  ctx.font = "800 38px Arial, sans-serif";
+  ctx.fillText(`${distanciaMostrar.toFixed(2)} km`, 28, 52);
+  ctx.fillStyle = GRIS_TEXTO;
+  ctx.font = "600 15px Arial, sans-serif";
+  ctx.fillText("DISTANCIA", 28, 76);
+  ctx.fillStyle = DORADO;
+  ctx.font = "800 38px Arial, sans-serif";
+  ctx.fillText(`${Math.round(duracionMostrar / 60)} min`, ANCHO_VIDEO / 2 + 20, 52);
+  ctx.fillStyle = GRIS_TEXTO;
+  ctx.font = "600 15px Arial, sans-serif";
+  ctx.fillText("TIEMPO", ANCHO_VIDEO / 2 + 20, 76);
+
+  dibujarLogo(ctx, logoImg, ANCHO_VIDEO - 46, 46, 24);
 }
 
 // Genera un video corto (.webm) del recorrido "dibujándose" sobre el mismo
@@ -861,6 +984,21 @@ export async function generarVideoRecorrido(
     generarMapaReal(datos.puntos, ANCHO_VIDEO, ALTO_VIDEO),
   ]);
 
+  // Las imágenes (mapa, logo, foto) se decodifican UNA sola vez acá, antes
+  // de arrancar la animación -- la versión anterior reincrustaba el mapa
+  // completo (base64) dentro de un SVG nuevo en CADA cuadro y lo volvía a
+  // rasterizar, lo que con el mapa ahora a pantalla completa tardaba tanto
+  // por cuadro que el video terminaba grabándose muchísimo más lento que en
+  // tiempo real (se notaba como "cuadro por cuadro"). Con las imágenes ya
+  // decodificadas, dibujar un cuadro es un puñado de drawImage()/stroke()
+  // directos sobre el canvas -- sin async, sin volver a parsear texto
+  // gigante -- así que corre a la velocidad real que pide el fps.
+  const [mapaImg, logoImg, fotoImg] = await Promise.all([
+    cargarImagenOpcional(mapa?.dataUrl ?? null),
+    cargarImagenOpcional(logoDataUrl),
+    cargarImagenOpcional(fotoDataUrl),
+  ]);
+
   const distanciaAcumuladaKm = [0];
   for (let i = 1; i < datos.puntos.length; i++) {
     distanciaAcumuladaKm.push(
@@ -886,11 +1024,36 @@ export async function generarVideoRecorrido(
     puntoVelMax,
     distanciaVelMaxKm: indiceVelMax >= 0 ? distanciaAcumuladaKm[indiceVelMax] : Infinity,
     kmhVelMax,
-    fotoDataUrl,
+    fotoImg,
     estiloFoto,
-    puntoFotoMapa: estiloFoto === "mapa" && fotoDataUrl ? datos.puntos[indiceFotoMapa] : null,
+    puntoFotoMapa: estiloFoto === "mapa" && fotoImg ? datos.puntos[indiceFotoMapa] : null,
     distanciaFotoMapaKm: distanciaAcumuladaKm[indiceFotoMapa] ?? Infinity,
   };
+
+  const lats = datos.puntos.map((p) => p.lat);
+  const lons = datos.puntos.map((p) => p.lon);
+  const minLat = Math.min(...lats);
+  const maxLat = Math.max(...lats);
+  const minLon = Math.min(...lons);
+  const maxLon = Math.max(...lons);
+  const rangoLat = maxLat - minLat || 0.0001;
+  const rangoLon = maxLon - minLon || 0.0001;
+  const margenInterno = 50;
+
+  let x: (lon: number) => number;
+  let y: (lat: number) => number;
+  if (mapa) {
+    x = (lon: number) => lonAPixelX(lon, mapa.zoom) - mapa.centroPxX + ANCHO_VIDEO / 2;
+    y = (lat: number) => latAPixelY(lat, mapa.zoom) - mapa.centroPxY + ALTO_VIDEO / 2;
+  } else {
+    x = (lon: number) =>
+      margenInterno + ((lon - minLon) / rangoLon) * (ANCHO_VIDEO - margenInterno * 2);
+    y = (lat: number) =>
+      margenInterno + ((maxLat - lat) / rangoLat) * (ALTO_VIDEO - margenInterno * 2);
+  }
+  const focoCentroPx = mapa
+    ? { x: ANCHO_VIDEO / 2, y: ALTO_VIDEO / 2 }
+    : { x: x((minLon + maxLon) / 2), y: y((minLat + maxLat) / 2) };
 
   const canvas = document.createElement("canvas");
   canvas.width = ANCHO_VIDEO;
@@ -898,26 +1061,15 @@ export async function generarVideoRecorrido(
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("No se pudo preparar el video.");
 
-  async function dibujarFrame(fraccionTotal: number, mostrarFotoFinal: boolean) {
+  function dibujarFrame(fraccionTotal: number, mostrarFotoFinal: boolean) {
     const fraccionTrazo = Math.min(1, fraccionTotal / FRACCION_TRAZO_COMPLETO);
     const frame = estadoEnFraccion(datos, distanciaAcumuladaKm, fraccionTrazo);
-    const svg = construirSvgVideo(datos, logoDataUrl, mapa, frame, fraccionTotal, config, mostrarFotoFinal);
-    const svgDataUrl = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`;
-    await new Promise<void>((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => {
-        ctx!.clearRect(0, 0, canvas.width, canvas.height);
-        ctx!.drawImage(img, 0, 0);
-        resolve();
-      };
-      img.onerror = () => reject(new Error("No se pudo dibujar un cuadro del video."));
-      img.src = svgDataUrl;
-    });
+    dibujarCuadroVideo(ctx!, datos, logoImg, mapaImg, x, y, focoCentroPx, frame, fraccionTotal, config, mostrarFotoFinal);
   }
 
   // Primer cuadro dibujado ANTES de arrancar a grabar, para no capturar un
-  // instante en blanco mientras carga la primera imagen.
-  await dibujarFrame(0, false);
+  // instante en blanco.
+  dibujarFrame(0, false);
 
   const stream = canvas.captureStream(fps);
   const mediaRecorder = new MediaRecorder(stream, { mimeType: elegirMimeTypeVideo() });
@@ -935,7 +1087,7 @@ export async function generarVideoRecorrido(
   const totalFrames = Math.round(duracionAnimSeg * fps);
   const intervaloMs = 1000 / fps;
   for (let f = 0; f <= totalFrames; f++) {
-    await dibujarFrame(f / totalFrames, false);
+    dibujarFrame(f / totalFrames, false);
     onProgreso?.(f / totalFrames);
     await new Promise((r) => setTimeout(r, intervaloMs));
   }
@@ -943,8 +1095,8 @@ export async function generarVideoRecorrido(
   // Cuadro final congelado unos segundos más, para que en redes sociales
   // alcance a leerse antes de que corte -- panorámica del recorrido
   // completo, o la foto de portada si el usuario eligió estiloFoto "final".
-  const mostrarFotoFinal = estiloFoto === "final" && !!fotoDataUrl;
-  await dibujarFrame(1, mostrarFotoFinal);
+  const mostrarFotoFinal = estiloFoto === "final" && !!fotoImg;
+  dibujarFrame(1, mostrarFotoFinal);
   await new Promise((r) => setTimeout(r, duracionFinalSeg * 1000));
 
   mediaRecorder.stop();
