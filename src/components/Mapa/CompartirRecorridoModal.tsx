@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import { IconShare, IconUpload, IconCube3dSphere, IconX, IconPhoto, IconTrash } from "@tabler/icons-react";
-import { apiUpload, apiPost, ApiError } from "@/lib/api";
+import { apiGet, apiUpload, apiPost, ApiError } from "@/lib/api";
 import {
   generarTarjetaRecorrido,
   generarVideoRecorrido,
@@ -20,6 +20,7 @@ import {
 } from "@/lib/flyover";
 import { useNoAutofill } from "@/lib/useNoAutofill";
 import { compartirArchivoNativo } from "@/lib/compartirNativo";
+import { useSession } from "@/context/SessionContext";
 
 type Estado = "editando" | "publicando";
 type Tab = "imagen" | "video" | "video3d";
@@ -37,6 +38,18 @@ export function CompartirRecorridoModal({
   onClose: () => void;
   onPublicado?: () => void;
 }) {
+  const { sesion } = useSession();
+  // Foto de perfil para la portada del video (ver generarVideo) -- no viaja
+  // en la sesión (esa solo guarda nombre/rol/token), así que se pide una
+  // vez al abrir el modal, igual que hace MapaView.tsx para su propio uso.
+  const [miFotoUrl, setMiFotoUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!token) return;
+    apiGet<{ fotoUrl: string | null }>("/perfil/mio", token)
+      .then((p) => setMiFotoUrl(p.fotoUrl))
+      .catch(() => {});
+  }, [token]);
+
   const [titulo, setTitulo] = useState("");
   const [comentario, setComentario] = useState("");
   const noAutofillTitulo = useNoAutofill();
@@ -196,6 +209,8 @@ export function CompartirRecorridoModal({
         onProgreso: setProgresoVideo,
         fotoDataUrl: fotoVideoDataUrl ?? undefined,
         estiloFoto: fotoVideoDataUrl ? estiloFotoVideo : undefined,
+        avatarUrl: miFotoUrl,
+        nombreUsuario: sesion?.nombre,
       });
       if (videoBlobUrlRef.current) URL.revokeObjectURL(videoBlobUrlRef.current);
       const url = URL.createObjectURL(nuevoBlob);

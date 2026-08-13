@@ -251,6 +251,14 @@ async function generarMapaReal(
   puntos: PuntoGps[],
   anchoDestino: number,
   altoDestino: number,
+  // El video rediseñado pasa false acá: las etiquetas de calles/lugares
+  // horneadas en el tile (fuente fija del proveedor, se ve borrosa al
+  // reescalarse y peor todavía tras la recompresión de WhatsApp/redes)
+  // se reemplazan por una casilla propia con el sector, dibujada nítida en
+  // cada cuadro (ver dibujarEtiquetaSector en dibujarCuadroVideo). La
+  // tarjeta estática (generarTarjetaRecorrido) sigue pidiendo las
+  // etiquetas como siempre.
+  incluirEtiquetas: boolean = true,
 ): Promise<MapaGenerado | null> {
   try {
     const lats = puntos.map((p) => p.lat);
@@ -269,7 +277,9 @@ async function generarMapaReal(
 
     const [imagenesBase, imagenesEtiquetas] = await Promise.all([
       Promise.all(tiles.map((t) => cargarTileComoImagen(urlTile(TILE_SATELITE_URL, zoom, t.x, t.y)))),
-      Promise.all(tiles.map((t) => cargarTileComoImagen(urlTile(TILE_ETIQUETAS_URL, zoom, t.x, t.y)))),
+      incluirEtiquetas
+        ? Promise.all(tiles.map((t) => cargarTileComoImagen(urlTile(TILE_ETIQUETAS_URL, zoom, t.x, t.y))))
+        : Promise.resolve(tiles.map(() => null)),
     ]);
     if (imagenesBase.every((img) => img === null)) return null;
 
@@ -541,10 +551,20 @@ export interface OpcionesVideoRecorrido {
   // sigue igual pero sin ningún paso de foto.
   fotoDataUrl?: string;
   estiloFoto?: EstiloFotoVideo;
+  // Portada opcional al arranque del video con la foto de perfil + nombre
+  // del usuario (estilo Relive/Strava) -- si no se pasa nombreUsuario, no
+  // hay intro (avatarUrl solo tiene efecto si también hay nombreUsuario).
+  // avatarUrl puede ser remota (se descarga y convierte a data URL acá
+  // mismo, igual que el logo) -- si falla o no se pasa, se dibuja un
+  // círculo con la inicial del nombre en vez de dejar la portada vacía.
+  avatarUrl?: string | null;
+  nombreUsuario?: string;
+  duracionIntroSeg?: number;
 }
 
 const DURACION_ANIM_SEG_DEFECTO = 11;
 const DURACION_FINAL_SEG_DEFECTO = 3;
+const DURACION_INTRO_SEG_DEFECTO = 1.8;
 const FPS_DEFECTO = 24;
 
 // Tamaño del video rediseñado: vertical 9:16 real (a diferencia de la
@@ -697,7 +717,7 @@ async function cargarImagenOpcional(src: string | null): Promise<HTMLImageElemen
   }
 }
 
-function dibujarRectRedondeado(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+function trazarRectRedondeado(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
   ctx.beginPath();
   ctx.moveTo(x + r, y);
   ctx.arcTo(x + w, y, x + w, y + h, r);
@@ -705,7 +725,75 @@ function dibujarRectRedondeado(ctx: CanvasRenderingContext2D, x: number, y: numb
   ctx.arcTo(x, y + h, x, y, r);
   ctx.arcTo(x, y, x + w, y, r);
   ctx.closePath();
+}
+
+function dibujarRectRedondeado(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  trazarRectRedondeado(ctx, x, y, w, h, r);
   ctx.fill();
+}
+
+// Círculo genérico con foto (o inicial del nombre como respaldo si no hay
+// foto) -- comparte dibujo entre el logo, el avatar de la intro y el pin de
+// foto en el mapa.
+function dibujarCirculoConImagen(
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement | null,
+  cx: number,
+  cy: number,
+  r: number,
+  inicial: string,
+) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fillStyle = "#0d0a06";
+  ctx.fill();
+  ctx.clip();
+  if (img) {
+    dibujarImagenCover(ctx, img, cx - r, cy - r, r * 2, r * 2);
+  } else if (inicial) {
+    ctx.fillStyle = DORADO;
+    ctx.font = `800 ${Math.round(r * 1.1)}px Arial, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(inicial.toUpperCase(), cx, cy + r * 0.05);
+  }
+  ctx.restore();
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.strokeStyle = DORADO_BORDE;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+}
+
+// Casilla con el nombre del sector (ej. "Puerto Montt"), clavada sobre el
+// mapa como una etiqueta de lugar real -- reemplaza las etiquetas horneadas
+// en los tiles del proveedor (borrosas al reescalar/comprimir, ver
+// generarMapaReal) por una propia, siempre nítida.
+function dibujarEtiquetaSector(ctx: CanvasRenderingContext2D, cx: number, cy: number, texto: string) {
+  ctx.font = "700 22px Arial, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  const anchoTexto = ctx.measureText(texto).width;
+  const paddingX = 20;
+  const anchoCaja = anchoTexto + paddingX * 2;
+  const altoCaja = 44;
+
+  ctx.save();
+  ctx.shadowColor = "rgba(0,0,0,0.6)";
+  ctx.shadowBlur = 12;
+  ctx.fillStyle = "rgba(13,10,6,0.82)";
+  trazarRectRedondeado(ctx, cx - anchoCaja / 2, cy - altoCaja / 2, anchoCaja, altoCaja, altoCaja / 2);
+  ctx.fill();
+  ctx.restore();
+
+  trazarRectRedondeado(ctx, cx - anchoCaja / 2, cy - altoCaja / 2, anchoCaja, altoCaja, altoCaja / 2);
+  ctx.strokeStyle = DORADO_BORDE;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  ctx.fillStyle = DORADO;
+  ctx.fillText(texto, cx, cy + 1);
 }
 
 function dibujarPunto(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, color: string, resplandor = false) {
@@ -901,6 +989,10 @@ function dibujarCuadroVideo(
     ctx.fillRect(0, 0, ANCHO_VIDEO, ALTO_VIDEO);
   }
 
+  if (datos.sector) {
+    dibujarEtiquetaSector(ctx, focoCentroPx.x, focoCentroPx.y - 70, datos.sector);
+  }
+
   ctx.beginPath();
   frame.puntosTrazo.forEach((p, i) => {
     const px = x(p.lon);
@@ -955,6 +1047,52 @@ function dibujarCuadroVideo(
   dibujarLogo(ctx, logoImg, ANCHO_VIDEO - 58, 58, 32);
 }
 
+// Portada al arranque del video (estilo Relive/Strava): el mapa completo
+// del recorrido de fondo, atenuado, con la foto de perfil del usuario y su
+// nombre encima -- se sostiene unos segundos antes de que arranque el
+// trazo. mapaImg ya está centrado/ajustado al recorrido completo (mismo
+// punto que usa el cuadro panorámico final, focoCentroPx, con escala 1).
+function dibujarIntroVideo(
+  ctx: CanvasRenderingContext2D,
+  mapaImg: HTMLImageElement | null,
+  focoCentroPx: { x: number; y: number },
+  avatarImg: HTMLImageElement | null,
+  nombreUsuario: string,
+) {
+  ctx.clearRect(0, 0, ANCHO_VIDEO, ALTO_VIDEO);
+  ctx.textBaseline = "alphabetic";
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, ANCHO_VIDEO, ALTO_VIDEO);
+  ctx.clip();
+  ctx.translate(ANCHO_VIDEO / 2, ALTO_VIDEO / 2);
+  ctx.translate(-focoCentroPx.x, -focoCentroPx.y);
+  if (mapaImg) {
+    ctx.drawImage(mapaImg, 0, 0, ANCHO_VIDEO, ALTO_VIDEO);
+  } else {
+    ctx.fillStyle = "#1a1108";
+    ctx.fillRect(0, 0, ANCHO_VIDEO, ALTO_VIDEO);
+  }
+  ctx.restore();
+
+  ctx.fillStyle = "rgba(13,10,6,0.6)";
+  ctx.fillRect(0, 0, ANCHO_VIDEO, ALTO_VIDEO);
+
+  const cxAvatar = ANCHO_VIDEO / 2;
+  const cyAvatar = ALTO_VIDEO / 2 - 40;
+  const rAvatar = 80;
+  dibujarCirculoConImagen(ctx, avatarImg, cxAvatar, cyAvatar, rAvatar, nombreUsuario.charAt(0));
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = DORADO;
+  ctx.font = "800 34px Arial, sans-serif";
+  ctx.fillText(nombreUsuario, cxAvatar, cyAvatar + rAvatar + 56);
+  ctx.fillStyle = GRIS_TEXTO;
+  ctx.font = "600 15px Arial, sans-serif";
+  ctx.fillText("LEGIÓN ROLLER", cxAvatar, cyAvatar + rAvatar + 82);
+}
+
 // Genera un video corto (.webm) del recorrido "dibujándose" sobre el mismo
 // mapa satelital de la tarjeta estática, con la distancia y el tiempo
 // subiendo en vivo — pensado específicamente para compartir en redes
@@ -974,10 +1112,13 @@ export async function generarVideoRecorrido(
   const {
     duracionAnimSeg = DURACION_ANIM_SEG_DEFECTO,
     duracionFinalSeg = DURACION_FINAL_SEG_DEFECTO,
+    duracionIntroSeg = DURACION_INTRO_SEG_DEFECTO,
     fps = FPS_DEFECTO,
     onProgreso,
     fotoDataUrl = null,
     estiloFoto = null,
+    avatarUrl = null,
+    nombreUsuario,
   } = opciones;
 
   if (typeof MediaRecorder === "undefined") {
@@ -987,24 +1128,26 @@ export async function generarVideoRecorrido(
     throw new Error("El recorrido no tiene suficientes puntos para animar.");
   }
 
-  const [logoDataUrl, mapa] = await Promise.all([
+  const [logoDataUrl, mapa, avatarDataUrl] = await Promise.all([
     cargarImagenComoDataUrl("/logo-legion-roller-mini.png"),
-    generarMapaReal(datos.puntos, ANCHO_VIDEO, ALTO_VIDEO),
+    generarMapaReal(datos.puntos, ANCHO_VIDEO, ALTO_VIDEO, false),
+    avatarUrl ? cargarImagenComoDataUrl(avatarUrl) : Promise.resolve(null),
   ]);
 
-  // Las imágenes (mapa, logo, foto) se decodifican UNA sola vez acá, antes
-  // de arrancar la animación -- la versión anterior reincrustaba el mapa
-  // completo (base64) dentro de un SVG nuevo en CADA cuadro y lo volvía a
-  // rasterizar, lo que con el mapa ahora a pantalla completa tardaba tanto
+  // Las imágenes (mapa, logo, foto, avatar) se decodifican UNA sola vez acá,
+  // antes de arrancar la animación -- la versión anterior reincrustaba el
+  // mapa completo (base64) dentro de un SVG nuevo en CADA cuadro y lo volvía
+  // a rasterizar, lo que con el mapa ahora a pantalla completa tardaba tanto
   // por cuadro que el video terminaba grabándose muchísimo más lento que en
   // tiempo real (se notaba como "cuadro por cuadro"). Con las imágenes ya
   // decodificadas, dibujar un cuadro es un puñado de drawImage()/stroke()
   // directos sobre el canvas -- sin async, sin volver a parsear texto
   // gigante -- así que corre a la velocidad real que pide el fps.
-  const [mapaImg, logoImg, fotoImg] = await Promise.all([
+  const [mapaImg, logoImg, fotoImg, avatarImg] = await Promise.all([
     cargarImagenOpcional(mapa?.dataUrl ?? null),
     cargarImagenOpcional(logoDataUrl),
     cargarImagenOpcional(fotoDataUrl),
+    cargarImagenOpcional(avatarDataUrl),
   ]);
 
   const distanciaAcumuladaKm = [0];
@@ -1098,6 +1241,11 @@ export async function generarVideoRecorrido(
   });
 
   mediaRecorder.start();
+
+  if (nombreUsuario && nombreUsuario.trim()) {
+    dibujarIntroVideo(ctx, mapaImg, focoCentroPx, avatarImg, nombreUsuario.trim());
+    await new Promise((r) => setTimeout(r, duracionIntroSeg * 1000));
+  }
 
   const totalFrames = Math.round(duracionAnimSeg * fps);
   const intervaloMs = 1000 / fps;
