@@ -135,6 +135,20 @@ const MS_PAUSA_TOLERADA_EN_TRAMO_RAPIDO = 90 * 1000;
 // grabado como parte de la ruta y la distancia patinada.
 const PRECISION_MAXIMA_PUNTO_GRABADO_M = 35;
 
+// Cerca del agua el GPS puede reportar buena precisión (dentro del umbral de
+// arriba) y aun así estar decenas de metros lejos de donde la persona está
+// parada de verdad (reflejo de la señal sobre el mar). Ese caso puntual pasa
+// el filtro de precisión, pero sigue siendo un salto físicamente imposible
+// para patinaje si se compara contra el último punto YA grabado. A diferencia
+// de un salto en medio del recorrido (que después "vuelve" y queda como un
+// pico visible en el trazado), si el salto ocurre justo en el ÚLTIMO punto no
+// hay ninguna lectura posterior que lo desmienta -- termina siendo el punto
+// final mostrado en el resumen aunque sea basura (reporte real: el punto fin
+// de una ruta por la costa quedó tirado en la playa). Umbral bien por encima
+// de cualquier patinada real, incluso una bajada rápida, para no descartar
+// tramos genuinos.
+const KMH_SALTO_AISLADO_IMPOSIBLE = 70;
+
 // Zoom usado para centrar el mapa automáticamente al activar un modo (más cercano
 // que el zoom inicial de la sección 1 del PDF, pensado para ubicarte de un vistazo).
 const ZOOM_CENTRADO_AUTOMATICO = 16;
@@ -572,6 +586,19 @@ export function MapaView() {
     }
   }
 
+  // Ver KMH_SALTO_AISLADO_IMPOSIBLE arriba: filtro previo a
+  // revisarVelocidadSospechosa, para un solo punto que ya de entrada es
+  // imposible (no hace falta que se sostenga en el tiempo).
+  function esSaltoAisladoImposible(puntoNuevo: PuntoGps): boolean {
+    const anteriores = puntosGrabadosRef.current;
+    const anterior = anteriores[anteriores.length - 1];
+    if (!anterior) return false;
+    const dtSeg = (puntoNuevo.timestamp - anterior.timestamp) / 1000;
+    if (dtSeg < 1) return false;
+    const kmh = (distanciaHaversineKm(anterior, puntoNuevo) / dtSeg) * 3600;
+    return kmh > KMH_SALTO_AISLADO_IMPOSIBLE;
+  }
+
   // Anti-trampa: compara el punto nuevo contra el último ya grabado. Si la
   // velocidad implícita supera KMH_VELOCIDAD_SOSPECHOSA de forma sostenida por
   // MS_VELOCIDAD_SOSPECHOSA_SOSTENIDA, descarta todo ese tramo (nada de lo
@@ -736,10 +763,12 @@ export function MapaView() {
           pos.accuracy <= PRECISION_MAXIMA_PUNTO_GRABADO_M
         ) {
           const puntoGrabado = { ...punto, timestamp: Date.now() };
-          const acabaDePausar = revisarVelocidadSospechosa(puntoGrabado);
-          if (!acabaDePausar) {
-            setPuntosGrabados((prev) => [...prev, puntoGrabado]);
-            if (grabacionActivaModulo) grabacionActivaModulo.puntos.push(puntoGrabado);
+          if (!esSaltoAisladoImposible(puntoGrabado)) {
+            const acabaDePausar = revisarVelocidadSospechosa(puntoGrabado);
+            if (!acabaDePausar) {
+              setPuntosGrabados((prev) => [...prev, puntoGrabado]);
+              if (grabacionActivaModulo) grabacionActivaModulo.puntos.push(puntoGrabado);
+            }
           }
         }
 
