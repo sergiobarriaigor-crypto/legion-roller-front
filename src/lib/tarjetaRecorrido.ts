@@ -583,6 +583,16 @@ const FUNDIDO_INTRO_SEG = 0.6;
 const DURACION_CIERRE_SEG_DEFECTO = 2.2;
 const FPS_DEFECTO = 24;
 
+// Cuánto tarda en aparecer/desaparecer y cuánto se sostiene cada etiqueta de
+// sector (ver EtiquetaTiempoVideo más abajo) -- reemplaza al pin clavado
+// sobre el mapa: en un recorrido largo la cámara se mueve/acerca bastante
+// (sobre todo en el formato vertical del video) y una etiqueta que viaja
+// pegada a su punto real terminaba paseándose por toda la pantalla o
+// quedando pegada a un borde. Como letrero fijo (estilo subtítulo) se lee
+// igual de bien sin importar cuánto se mueva la cámara detrás.
+const FADE_ETIQUETA_SEG = 0.45;
+const HOLD_ETIQUETA_SEG = 2.0;
+
 // Tamaño del video rediseñado: vertical 9:16 real (a diferencia de la
 // tarjeta 800x1150), porque ya no hay marco de tarjeta -- el mapa ocupa la
 // pantalla completa, así que tiene sentido usar la proporción real de un
@@ -782,53 +792,68 @@ function dibujarCirculoConImagen(
   ctx.stroke();
 }
 
-// Casilla con el nombre del sector (ej. "Puerto Montt"), clavada sobre el
-// mapa como una etiqueta de lugar real -- reemplaza las etiquetas horneadas
-// en los tiles del proveedor (borrosas al reescalar/comprimir, ver
-// generarMapaReal) por una propia, siempre nítida. A propósito chica y
-// discreta (estilo Relive/Google Maps: una etiqueta de lugar real, no un
-// letrero) -- una versión grande se sentía más como un cartel que como un
-// nombre de lugar en el mapa.
-function dibujarEtiquetaSector(ctx: CanvasRenderingContext2D, mapX: number, mapY: number, texto: string) {
-  ctx.font = "700 15px Arial, sans-serif";
+// Ventana de aparición/desaparición de una etiqueta de sector, precalculada
+// una sola vez en generarVideoRecorrido() a partir de su distanciaKm real --
+// ver FADE_ETIQUETA_SEG/HOLD_ETIQUETA_SEG. Todo en unidades de fraccionTotal
+// (0 a 1, la misma fracción que ya recibe dibujarCuadroVideo) para no tener
+// que pasar el tiempo real en segundos por todo el pipeline de dibujo.
+interface EtiquetaTiempoVideo {
+  nombre: string;
+  inicioFraccion: number;
+  finFadeInFraccion: number;
+  finHoldFraccion: number;
+  finFraccion: number;
+}
+
+function alphaEtiqueta(et: EtiquetaTiempoVideo, fraccionTotal: number): number {
+  if (fraccionTotal < et.inicioFraccion || fraccionTotal > et.finFraccion) return 0;
+  if (fraccionTotal < et.finFadeInFraccion) {
+    return et.finFadeInFraccion > et.inicioFraccion
+      ? (fraccionTotal - et.inicioFraccion) / (et.finFadeInFraccion - et.inicioFraccion)
+      : 1;
+  }
+  if (fraccionTotal < et.finHoldFraccion) return 1;
+  return et.finFraccion > et.finHoldFraccion
+    ? 1 - (fraccionTotal - et.finHoldFraccion) / (et.finFraccion - et.finHoldFraccion)
+    : 0;
+}
+
+// Letrero con el nombre del sector (ej. "Antonio Varas"), estilo subtítulo:
+// posición FIJA en pantalla (no clavado sobre el mapa) -- a diferencia de la
+// versión anterior, no se mueve ni se acerca/aleja con la cámara. Aparece
+// con un fundido de entrada, se sostiene un rato y se desvanece solo, en vez
+// de seguir pegado a su punto real (que en un recorrido largo, con la cámara
+// moviéndose bastante en el formato vertical, terminaba paseándose por la
+// pantalla o quedando forzado contra un borde).
+function dibujarCaptionSector(ctx: CanvasRenderingContext2D, texto: string, alpha: number) {
+  if (alpha <= 0) return;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.font = "700 20px Arial, sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   const anchoTexto = ctx.measureText(texto).width;
-  const paddingX = 12;
+  const paddingX = 22;
   const anchoCaja = anchoTexto + paddingX * 2;
-  const altoCaja = 26;
+  const altoCaja = 46;
+  const cx = ANCHO_VIDEO / 2;
+  const cy = ALTO_VIDEO - 130;
 
-  // Se dibuja con la transformación de cámara (pan/zoom) ya aplicada -- se
-  // clampea en espacio de PANTALLA, invirtiendo esa transformación, para
-  // que la casilla nunca quede cortada en el borde sin importar dónde esté
-  // el punto real en el mapa ni cuánto haya acercado/alejado la cámara en
-  // este cuadro puntual.
-  const transform = ctx.getTransform();
-  const escala = Math.hypot(transform.a, transform.b) || 1;
-  const margenPantalla = 12;
-  const screenX = transform.a * mapX + transform.c * mapY + transform.e;
-  const screenXClamp = Math.min(
-    Math.max(screenX, margenPantalla + anchoCaja / 2),
-    ANCHO_VIDEO - margenPantalla - anchoCaja / 2,
-  );
-  const cx = mapX + (screenXClamp - screenX) / escala;
-  const cy = mapY;
-
-  ctx.save();
-  ctx.shadowColor = "rgba(0,0,0,0.6)";
-  ctx.shadowBlur = 8;
-  ctx.fillStyle = "rgba(13,10,6,0.8)";
-  trazarRectRedondeado(ctx, cx - anchoCaja / 2, cy - altoCaja / 2, anchoCaja, altoCaja, altoCaja / 2);
-  ctx.fill();
-  ctx.restore();
+  ctx.shadowColor = "rgba(0,0,0,0.65)";
+  ctx.shadowBlur = 10;
+  ctx.fillStyle = "rgba(13,10,6,0.85)";
+  dibujarRectRedondeado(ctx, cx - anchoCaja / 2, cy - altoCaja / 2, anchoCaja, altoCaja, altoCaja / 2);
+  ctx.shadowColor = "transparent";
+  ctx.shadowBlur = 0;
 
   trazarRectRedondeado(ctx, cx - anchoCaja / 2, cy - altoCaja / 2, anchoCaja, altoCaja, altoCaja / 2);
   ctx.strokeStyle = DORADO_BORDE;
-  ctx.lineWidth = 1.2;
+  ctx.lineWidth = 1.4;
   ctx.stroke();
 
   ctx.fillStyle = DORADO;
   ctx.fillText(texto, cx, cy + 1);
+  ctx.restore();
 }
 
 // Color del trazo según qué tan rápido se iba en ese tramo -- mismo tono
@@ -966,11 +991,11 @@ interface ConfigVideo {
   estiloFoto: EstiloFotoVideo | null;
   puntoFotoMapa: PuntoGps | null;
   distanciaFotoMapaKm: number;
-  // Hasta 3 etiquetas de lugar (ver DatosTarjetaRecorrido.sectoresRuta),
-  // cada una revelándose sobre el mapa recién cuando el trazo llega a su
-  // distanciaKm -- igual criterio que la marca de velocidad máxima y el pin
-  // de foto, en vez de una sola etiqueta fija todo el video.
-  sectoresRuta: { lat: number; lon: number; nombre: string; distanciaKm: number }[];
+  // Hasta 3 etiquetas de lugar (ver DatosTarjetaRecorrido.sectoresRuta), cada
+  // una con su propia ventana de aparición/desaparición ya calculada a
+  // partir de su distanciaKm real -- se dibujan como letrero fijo en
+  // pantalla (dibujarCaptionSector), no clavadas sobre el mapa.
+  etiquetasTiempo: EtiquetaTiempoVideo[];
   // Velocidad (km/h) de cada tramo entre puntos consecutivos, para colorear
   // el trazo según qué tan rápido se iba ahí -- velocidadesKmh[j] es la
   // velocidad LLEGANDO al punto j (0 para j=0). kmhReferenciaColor es el
@@ -1095,27 +1120,34 @@ function dibujarCuadroVideo(
     dibujarPinFoto(ctx, config.fotoImg, x(config.puntoFotoMapa.lon), y(config.puntoFotoMapa.lat), 30);
   }
 
-  // Las etiquetas de sector se dibujan al final (encima de todo lo demás,
-  // como una etiqueta real de mapa) y cada una recién cuando el trazo llega
-  // a su propia distancia -- así en un recorrido largo van apareciendo de a
-  // una en su ubicación real, en vez de una sola fija todo el video.
-  for (const etiqueta of config.sectoresRuta) {
-    if (distanciaMostrar >= etiqueta.distanciaKm) {
-      dibujarEtiquetaSector(ctx, x(etiqueta.lon), y(etiqueta.lat) - 40, etiqueta.nombre);
-    }
-  }
-
   ctx.restore();
+
+  // Etiqueta de sector activa: letrero fijo en pantalla (no se mueve con el
+  // mapa), así que se dibuja DESPUÉS del ctx.restore() de la cámara. Si dos
+  // ventanas llegaran a solaparse (recorrido corto con sectores muy
+  // seguidos), gana la más reciente -- se prefiere un corte limpio de una
+  // etiqueta a otra en vez de mostrar dos superpuestas.
+  let etiquetaActiva: { nombre: string; alpha: number } | null = null;
+  for (const et of config.etiquetasTiempo) {
+    const alpha = alphaEtiqueta(et, fraccionTotal);
+    if (alpha > 0) etiquetaActiva = { nombre: et.nombre, alpha };
+  }
+  if (etiquetaActiva) dibujarCaptionSector(ctx, etiquetaActiva.nombre, etiquetaActiva.alpha);
 
   // Cuadro de cierre (panorámica, sin foto o con estiloFoto "mapa"): la
   // barra de arriba se agranda un poco para sumar vel. promedio/máxima como
   // resumen final -- antes solo quedaban distancia/tiempo, que ya vienen
   // mostrándose desde el principio del video.
   const contadorAltura = frame.mostrarFin ? 160 : 118;
-  // Más opaca cuando suma el resumen final -- a media opacidad, el gris
-  // chico de esa línea se perdía contra mapas satelitales claros.
-  ctx.fillStyle = frame.mostrarFin ? "rgba(13,10,6,0.68)" : "rgba(13,10,6,0.5)";
+  // Más opaca que antes en ambos estados -- contra mapas satelitales claros
+  // (nieve, arena, hormigón) el texto se perdía incluso con la sombra de
+  // abajo; subir la opacidad de la barra es lo que de verdad garantiza
+  // contraste, la sombra sola no alcanzaba.
+  ctx.fillStyle = frame.mostrarFin ? "rgba(13,10,6,0.75)" : "rgba(13,10,6,0.62)";
   ctx.fillRect(0, 0, ANCHO_VIDEO, contadorAltura);
+  ctx.save();
+  ctx.shadowColor = "rgba(0,0,0,0.85)";
+  ctx.shadowBlur = 6;
   ctx.textAlign = "left";
   ctx.fillStyle = DORADO;
   ctx.font = "800 38px Arial, sans-serif";
@@ -1129,6 +1161,7 @@ function dibujarCuadroVideo(
   ctx.fillStyle = GRIS_TEXTO;
   ctx.font = "600 15px Arial, sans-serif";
   ctx.fillText("TIEMPO", ANCHO_VIDEO / 2 + 20, 76);
+  ctx.restore();
 
   if (frame.mostrarFin) {
     ctx.save();
@@ -1302,6 +1335,29 @@ export async function generarVideoRecorrido(
     indiceFotoMapa++;
   }
 
+  // Convierte cada etiqueta de DatosTarjetaRecorrido.sectoresRuta (lat/lon +
+  // distanciaKm real) en su ventana de aparición dentro de la animación --
+  // distanciaMostrar avanza LINEAL con fraccionTotal durante el trazo (ver
+  // estadoEnFraccion), así que alcanza con despejar en qué fraccionTotal se
+  // cruza esa distancia, sin necesitar la posición geográfica para nada más
+  // (la etiqueta ya no se dibuja sobre el mapa, ver dibujarCaptionSector).
+  const etiquetasTiempo: EtiquetaTiempoVideo[] = (datos.sectoresRuta ?? []).map((etiqueta) => {
+    const inicioFraccion =
+      datos.distanciaKm > 0
+        ? Math.min(FRACCION_TRAZO_COMPLETO, (etiqueta.distanciaKm / datos.distanciaKm) * FRACCION_TRAZO_COMPLETO)
+        : 0;
+    const fadeInFraccion = FADE_ETIQUETA_SEG / duracionAnimSeg;
+    const holdFraccion = HOLD_ETIQUETA_SEG / duracionAnimSeg;
+    const fadeOutFraccion = FADE_ETIQUETA_SEG / duracionAnimSeg;
+    return {
+      nombre: etiqueta.nombre,
+      inicioFraccion,
+      finFadeInFraccion: inicioFraccion + fadeInFraccion,
+      finHoldFraccion: inicioFraccion + fadeInFraccion + holdFraccion,
+      finFraccion: inicioFraccion + fadeInFraccion + holdFraccion + fadeOutFraccion,
+    };
+  });
+
   const config: ConfigVideo = {
     puntoVelMax,
     distanciaVelMaxKm: indiceVelMax >= 0 ? distanciaAcumuladaKm[indiceVelMax] : Infinity,
@@ -1310,7 +1366,7 @@ export async function generarVideoRecorrido(
     estiloFoto,
     puntoFotoMapa: estiloFoto === "mapa" && fotoImg ? datos.puntos[indiceFotoMapa] : null,
     distanciaFotoMapaKm: distanciaAcumuladaKm[indiceFotoMapa] ?? Infinity,
-    sectoresRuta: datos.sectoresRuta ?? [],
+    etiquetasTiempo,
     velocidadesKmh,
     kmhReferenciaColor: Math.max(kmhVelMax, 8),
   };
