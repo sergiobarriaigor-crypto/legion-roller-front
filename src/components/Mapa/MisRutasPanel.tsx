@@ -11,8 +11,8 @@ import {
   IconShare,
 } from "@tabler/icons-react";
 import { apiGet, apiPatch, apiDelete, ApiError } from "@/lib/api";
-import { velocidadMaximaKmH, simplificarRutaParaDibujo, type PuntoGps } from "@/lib/geo";
-import { useNombreLugar } from "@/lib/sectores";
+import { velocidadMaximaKmH, distanciaHaversineKm, simplificarRutaParaDibujo, type PuntoGps } from "@/lib/geo";
+import { useNombreLugar, useNombreLugarEspecifico } from "@/lib/sectores";
 import { NombreLugar } from "@/components/Mapa/NombreLugar";
 import { CompartirRecorridoModal } from "@/components/Mapa/CompartirRecorridoModal";
 import { Toast } from "@/components/Toast";
@@ -184,6 +184,50 @@ function FichaRecorrido({
   });
   const sector = useNombreLugar(inicio.lat, inicio.lon);
 
+  // Hasta 3 etiquetas de lugar para el video (inicio, medio, fin) --
+  // reemplaza la única etiqueta fija de antes, que en un recorrido largo se
+  // quedaba corta (ver conversación con el usuario: "si hago 70km ¿solo
+  // muestra una etiqueta?" -- sí, y encima a veces era solo "Puerto Montt",
+  // redundante en una app ya enfocada ahí). Los 3 hooks se llaman siempre,
+  // en el mismo orden (regla de React), aunque el recorrido sea corto -- se
+  // filtran y deduplican recién abajo.
+  const distanciasAcumuladas = [0];
+  for (let i = 1; i < puntos.length; i++) {
+    distanciasAcumuladas.push(distanciasAcumuladas[i - 1] + distanciaHaversineKm(puntos[i - 1], puntos[i]));
+  }
+  const distanciaTotalPuntos = distanciasAcumuladas[distanciasAcumuladas.length - 1] ?? 0;
+  let indiceMedio = 0;
+  while (
+    indiceMedio < distanciasAcumuladas.length - 1 &&
+    distanciasAcumuladas[indiceMedio] < distanciaTotalPuntos / 2
+  ) {
+    indiceMedio++;
+  }
+  const puntoMedio = puntos[indiceMedio];
+
+  const nombreInicio = useNombreLugarEspecifico(inicio.lat, inicio.lon);
+  const nombreMedio = useNombreLugarEspecifico(puntoMedio.lat, puntoMedio.lon);
+  const nombreFin = useNombreLugarEspecifico(fin.lat, fin.lon);
+
+  // Se descartan los sin nombre específico (ver useNombreLugarEspecifico) y
+  // los que repiten el nombre de una etiqueta ya aceptada -- un recorrido
+  // corto o de ida y vuelta no necesita la misma etiqueta 3 veces.
+  const sectoresRuta: { lat: number; lon: number; nombre: string; distanciaKm: number }[] = [];
+  for (const candidato of [
+    { punto: inicio, nombre: nombreInicio, distanciaKm: 0 },
+    { punto: puntoMedio, nombre: nombreMedio, distanciaKm: distanciasAcumuladas[indiceMedio] },
+    { punto: fin, nombre: nombreFin, distanciaKm: distanciaTotalPuntos },
+  ]) {
+    if (!candidato.nombre) continue;
+    if (sectoresRuta.some((s) => s.nombre.toLowerCase() === candidato.nombre!.toLowerCase())) continue;
+    sectoresRuta.push({
+      lat: candidato.punto.lat,
+      lon: candidato.punto.lon,
+      nombre: candidato.nombre,
+      distanciaKm: candidato.distanciaKm,
+    });
+  }
+
   return (
     <div className="flex flex-col gap-3">
       {/* Encabezado discreto: solo contexto (fecha/hora/lugar), texto chico a propósito. */}
@@ -266,6 +310,7 @@ function FichaRecorrido({
             velocidadMaxima,
             fecha: fechaCompleta,
             sector,
+            sectoresRuta,
           }}
           onClose={() => setMostrarCompartir(false)}
           onPublicado={onPublicado}

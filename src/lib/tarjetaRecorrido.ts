@@ -11,6 +11,12 @@ export interface DatosTarjetaRecorrido {
   sector: string;
   titulo?: string;
   comentario?: string;
+  // Hasta 3 etiquetas de lugar repartidas por distancia (inicio/medio/fin,
+  // ya deduplicadas -- ver MisRutasPanel.tsx), cada una con su propia
+  // posición real en el mapa. Solo las usa el video (generarVideoRecorrido);
+  // la tarjeta estática sigue mostrando `sector` como texto simple junto a
+  // la fecha, sin cambios.
+  sectoresRuta?: { lat: number; lon: number; nombre: string; distanciaKm: number }[];
 }
 
 const ANCHO = 800;
@@ -802,6 +808,19 @@ function dibujarEtiquetaSector(ctx: CanvasRenderingContext2D, cx: number, cy: nu
   ctx.fillText(texto, cx, cy + 1);
 }
 
+// Color del trazo según qué tan rápido se iba en ese tramo -- mismo tono
+// dorado de la marca en toda su gama (nunca sale del tema de la app), solo
+// varía qué tan clara/brillante se ve: más oscura y bronce en los tramos
+// lentos, blanco-dorada en los más rápidos. kmhReferencia es la velocidad
+// que se pinta al tope (normalmente la máxima real del recorrido), así el
+// gradiente siempre usa el rango completo sin importar qué tan rápido fue
+// el usuario en total.
+function colorPorVelocidad(kmh: number, kmhReferencia: number): string {
+  const t = Math.min(1, Math.max(0, kmh / kmhReferencia));
+  const luminosidad = 38 + t * 40;
+  return `hsl(42, 85%, ${luminosidad}%)`;
+}
+
 function dibujarPunto(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, color: string, resplandor = false) {
   if (resplandor) {
     ctx.save();
@@ -920,6 +939,18 @@ interface ConfigVideo {
   estiloFoto: EstiloFotoVideo | null;
   puntoFotoMapa: PuntoGps | null;
   distanciaFotoMapaKm: number;
+  // Hasta 3 etiquetas de lugar (ver DatosTarjetaRecorrido.sectoresRuta),
+  // cada una revelándose sobre el mapa recién cuando el trazo llega a su
+  // distanciaKm -- igual criterio que la marca de velocidad máxima y el pin
+  // de foto, en vez de una sola etiqueta fija todo el video.
+  sectoresRuta: { lat: number; lon: number; nombre: string; distanciaKm: number }[];
+  // Velocidad (km/h) de cada tramo entre puntos consecutivos, para colorear
+  // el trazo según qué tan rápido se iba ahí -- velocidadesKmh[j] es la
+  // velocidad LLEGANDO al punto j (0 para j=0). kmhReferenciaColor es el
+  // valor que se pinta más "caliente" (blanco-dorado), normalmente la
+  // velocidad máxima real de este recorrido.
+  velocidadesKmh: number[];
+  kmhReferenciaColor: number;
 }
 
 // Dibuja cada cuadro del video rediseñado directamente en el canvas (sin
@@ -1000,22 +1031,22 @@ function dibujarCuadroVideo(
     ctx.fillRect(0, 0, ANCHO_VIDEO, ALTO_VIDEO);
   }
 
-  if (datos.sector) {
-    dibujarEtiquetaSector(ctx, focoCentroPx.x, focoCentroPx.y - 50, datos.sector);
-  }
-
-  ctx.beginPath();
-  frame.puntosTrazo.forEach((p, i) => {
-    const px = x(p.lon);
-    const py = y(p.lat);
-    if (i === 0) ctx.moveTo(px, py);
-    else ctx.lineTo(px, py);
-  });
-  ctx.strokeStyle = DORADO;
+  // El trazo se dibuja tramo a tramo (no una sola polyline) para poder
+  // colorear cada segmento según la velocidad real ahí -- más dorado/claro
+  // en los tramos rápidos, más bronce/oscuro en los lentos.
   ctx.lineWidth = 6;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
-  ctx.stroke();
+  for (let k = 0; k < frame.puntosTrazo.length - 1; k++) {
+    const a = frame.puntosTrazo[k];
+    const b = frame.puntosTrazo[k + 1];
+    const kmh = config.velocidadesKmh[k + 1] ?? 0;
+    ctx.beginPath();
+    ctx.moveTo(x(a.lon), y(a.lat));
+    ctx.lineTo(x(b.lon), y(b.lat));
+    ctx.strokeStyle = colorPorVelocidad(kmh, config.kmhReferenciaColor);
+    ctx.stroke();
+  }
 
   dibujarPunto(ctx, x(inicio.lon), y(inicio.lat), 10, "#5fae4e");
   if (frame.mostrarFin) dibujarPunto(ctx, x(fin.lon), y(fin.lat), 10, "#d8342f");
@@ -1037,10 +1068,25 @@ function dibujarCuadroVideo(
     dibujarPinFoto(ctx, config.fotoImg, x(config.puntoFotoMapa.lon), y(config.puntoFotoMapa.lat), 30);
   }
 
+  // Las etiquetas de sector se dibujan al final (encima de todo lo demás,
+  // como una etiqueta real de mapa) y cada una recién cuando el trazo llega
+  // a su propia distancia -- así en un recorrido largo van apareciendo de a
+  // una en su ubicación real, en vez de una sola fija todo el video.
+  for (const etiqueta of config.sectoresRuta) {
+    if (distanciaMostrar >= etiqueta.distanciaKm) {
+      dibujarEtiquetaSector(ctx, x(etiqueta.lon), y(etiqueta.lat) - 40, etiqueta.nombre);
+    }
+  }
+
   ctx.restore();
 
+  // Cuadro de cierre (panorámica, sin foto o con estiloFoto "mapa"): la
+  // barra de arriba se agranda un poco para sumar vel. promedio/máxima como
+  // resumen final -- antes solo quedaban distancia/tiempo, que ya vienen
+  // mostrándose desde el principio del video.
+  const contadorAltura = frame.mostrarFin ? 156 : 118;
   ctx.fillStyle = "rgba(13,10,6,0.5)";
-  ctx.fillRect(0, 0, ANCHO_VIDEO, 118);
+  ctx.fillRect(0, 0, ANCHO_VIDEO, contadorAltura);
   ctx.textAlign = "left";
   ctx.fillStyle = DORADO;
   ctx.font = "800 38px Arial, sans-serif";
@@ -1054,6 +1100,17 @@ function dibujarCuadroVideo(
   ctx.fillStyle = GRIS_TEXTO;
   ctx.font = "600 15px Arial, sans-serif";
   ctx.fillText("TIEMPO", ANCHO_VIDEO / 2 + 20, 76);
+
+  if (frame.mostrarFin) {
+    ctx.textAlign = "center";
+    ctx.fillStyle = GRIS_TEXTO;
+    ctx.font = "600 17px Arial, sans-serif";
+    ctx.fillText(
+      `VEL. PROMEDIO ${Math.round(datos.velocidadPromedio)} km/h  ·  VEL. MÁXIMA ${Math.round(datos.velocidadMaxima)} km/h`,
+      ANCHO_VIDEO / 2,
+      108,
+    );
+  }
 
   dibujarLogo(ctx, ANCHO_VIDEO - 58, 58, 32);
 }
@@ -1150,10 +1207,12 @@ export async function generarVideoRecorrido(
   ]);
 
   const distanciaAcumuladaKm = [0];
+  const velocidadesKmh = [0];
   for (let i = 1; i < datos.puntos.length; i++) {
-    distanciaAcumuladaKm.push(
-      distanciaAcumuladaKm[i - 1] + distanciaHaversineKm(datos.puntos[i - 1], datos.puntos[i]),
-    );
+    const distTramoKm = distanciaHaversineKm(datos.puntos[i - 1], datos.puntos[i]);
+    distanciaAcumuladaKm.push(distanciaAcumuladaKm[i - 1] + distTramoKm);
+    const dtSeg = (datos.puntos[i].timestamp - datos.puntos[i - 1].timestamp) / 1000;
+    velocidadesKmh.push(dtSeg > 0 ? (distTramoKm / dtSeg) * 3600 : 0);
   }
 
   const { punto: puntoVelMax, indice: indiceVelMax, kmh: kmhVelMax } = velocidadMaximaConPunto(datos.puntos);
@@ -1178,6 +1237,9 @@ export async function generarVideoRecorrido(
     estiloFoto,
     puntoFotoMapa: estiloFoto === "mapa" && fotoImg ? datos.puntos[indiceFotoMapa] : null,
     distanciaFotoMapaKm: distanciaAcumuladaKm[indiceFotoMapa] ?? Infinity,
+    sectoresRuta: datos.sectoresRuta ?? [],
+    velocidadesKmh,
+    kmhReferenciaColor: Math.max(kmhVelMax, 8),
   };
 
   const lats = datos.puntos.map((p) => p.lat);

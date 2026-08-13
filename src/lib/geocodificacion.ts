@@ -58,13 +58,12 @@ function nombreConCiudad(address: DireccionNominatim, displayName: string): stri
   return acortarNombre(displayName);
 }
 
-// Geocodificación inversa: dado un lat/lon real (el GPS del dispositivo),
-// devuelve el nombre real del lugar en el que está parado el usuario —
-// reemplaza a la vieja lista fija de 6 sectores conocidos, que solo ordenaba
-// esos mismos 6 por cercanía en vez de decir de verdad dónde está.
 // zoom=16 pide un nivel de detalle de barrio/sector (ni la casa exacta ni
 // solo la ciudad); addressdetails=1 trae el desglose que arma nombreConCiudad.
-export async function reverseGeocodificar(lat: number, lon: number): Promise<LugarBuscado | null> {
+async function reverseFetchDetalle(
+  lat: number,
+  lon: number,
+): Promise<{ displayName: string; address?: DireccionNominatim } | null> {
   try {
     const res = await fetch(
       `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&accept-language=es&zoom=16&addressdetails=1`,
@@ -72,14 +71,40 @@ export async function reverseGeocodificar(lat: number, lon: number): Promise<Lug
     if (!res.ok) return null;
     const data: unknown = await res.json();
     if (!data || typeof data !== "object" || !("display_name" in data)) return null;
-    const { display_name, address } = data as {
-      display_name: string;
-      address?: DireccionNominatim;
-    };
-    return { nombre: address ? nombreConCiudad(address, display_name) : acortarNombre(display_name) };
+    const { display_name, address } = data as { display_name: string; address?: DireccionNominatim };
+    return { displayName: display_name, address };
   } catch {
     return null;
   }
+}
+
+// Geocodificación inversa: dado un lat/lon real (el GPS del dispositivo),
+// devuelve el nombre real del lugar en el que está parado el usuario —
+// reemplaza a la vieja lista fija de 6 sectores conocidos, que solo ordenaba
+// esos mismos 6 por cercanía en vez de decir de verdad dónde está.
+export async function reverseGeocodificar(lat: number, lon: number): Promise<LugarBuscado | null> {
+  const detalle = await reverseFetchDetalle(lat, lon);
+  if (!detalle) return null;
+  const nombre = detalle.address
+    ? nombreConCiudad(detalle.address, detalle.displayName)
+    : acortarNombre(detalle.displayName);
+  return { nombre };
+}
+
+// Igual que reverseGeocodificar, pero devuelve null si Nominatim solo pudo
+// resolver hasta el nivel de ciudad (sin calle/barrio) -- pensado para las
+// etiquetas de lugar que se clavan sobre el mapa del video del recorrido
+// (ver tarjetaRecorrido.ts): "Puerto Montt" solo no aporta nada ahí, la app
+// ya está enfocada en esa ciudad. Se prefiere no mostrar nada a mostrar un
+// nombre redundante.
+export async function reverseGeocodificarEspecifico(lat: number, lon: number): Promise<string | null> {
+  const detalle = await reverseFetchDetalle(lat, lon);
+  if (!detalle?.address) return null;
+  const { road, pedestrian, neighbourhood, suburb } = detalle.address;
+  const lugar = road || pedestrian || neighbourhood || suburb;
+  if (!lugar) return null;
+  const ciudad = detalle.address.city || detalle.address.town || detalle.address.village || detalle.address.municipality;
+  return ciudad && lugar !== ciudad ? `${lugar}, ${ciudad}` : lugar;
 }
 
 // Solo el nombre de la ciudad/comuna (sin calle ni barrio) — zoom=10 pide un

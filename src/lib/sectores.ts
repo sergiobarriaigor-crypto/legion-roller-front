@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { distanciaHaversineKm } from "@/lib/geo";
-import { reverseGeocodificarConCache } from "@/lib/geocodificacion";
+import { reverseGeocodificarConCache, reverseGeocodificarEspecifico } from "@/lib/geocodificacion";
 
 interface Sector {
   nombre: string;
@@ -52,6 +52,27 @@ export function useNombreLugar(lat: number, lon: number): string {
     let cancelado = false;
     reverseGeocodificarConCache(lat, lon).then((real) => {
       if (!cancelado && real) setNombre(real);
+    });
+    return () => {
+      cancelado = true;
+    };
+  }, [lat, lon]);
+
+  return nombre;
+}
+
+// Variante para las etiquetas de lugar del video del recorrido (ver
+// tarjetaRecorrido.ts): a diferencia de useNombreLugar, NO cae a un nombre
+// de respaldo -- devuelve null mientras no haya resultado o si Nominatim
+// solo resolvió hasta el nivel de ciudad (un "Puerto Montt" solo no aporta
+// nada ahí, la app ya está enfocada en esa ciudad).
+export function useNombreLugarEspecifico(lat: number, lon: number): string | null {
+  const [nombre, setNombre] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelado = false;
+    reverseGeocodificarEspecifico(lat, lon).then((real) => {
+      if (!cancelado) setNombre(real);
     });
     return () => {
       cancelado = true;
