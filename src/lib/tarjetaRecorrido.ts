@@ -17,6 +17,9 @@ export interface DatosTarjetaRecorrido {
   // la tarjeta estática sigue mostrando `sector` como texto simple junto a
   // la fecha, sin cambios.
   sectoresRuta?: { lat: number; lon: number; nombre: string; distanciaKm: number }[];
+  // Ciudad (sin barrio/calle) para la pantalla de cierre del video --
+  // logo grande + este nombre debajo, después de la panorámica final.
+  ciudad?: string;
 }
 
 const ANCHO = 800;
@@ -566,6 +569,9 @@ export interface OpcionesVideoRecorrido {
   avatarUrl?: string | null;
   nombreUsuario?: string;
   duracionIntroSeg?: number;
+  // Cuánto se sostiene el cuadro de cierre (logo grande + ciudad) al final
+  // de todo, después de la panorámica (o de la foto de portada).
+  duracionCierreSeg?: number;
 }
 
 const DURACION_ANIM_SEG_DEFECTO = 11;
@@ -574,6 +580,7 @@ const DURACION_INTRO_SEG_DEFECTO = 1.8;
 // Cuánto tarda la portada en desvanecerse hacia el cuadro animado -- sin
 // esto el corte de la portada al trazo era de golpe, un salto brusco.
 const FUNDIDO_INTRO_SEG = 0.6;
+const DURACION_CIERRE_SEG_DEFECTO = 2.2;
 const FPS_DEFECTO = 24;
 
 // Tamaño del video rediseñado: vertical 9:16 real (a diferencia de la
@@ -837,32 +844,6 @@ function dibujarPunto(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: 
   if (resplandor) ctx.restore();
 }
 
-// Insignia simplificada (monograma "LR" dibujado con texto, no una imagen)
-// para el video: el logo real (montañas, alas, patineta, texto chico) tiene
-// demasiado detalle fino para sobrevivir chico + comprimido -- terminaba
-// viéndose pixelado sin importar cuánto se agrandara (ver conversación con
-// el usuario). Un monograma vectorial es nítido a cualquier tamaño y
-// resiste cualquier recompresión (WhatsApp, etc.) porque es texto, no una
-// imagen rasterizada.
-function dibujarLogo(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number) {
-  ctx.save();
-  ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI * 2);
-  ctx.fillStyle = "#0d0a06";
-  ctx.fill();
-  ctx.fillStyle = DORADO;
-  ctx.font = `800 ${Math.round(r * 0.95)}px Arial, sans-serif`;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText("LR", cx, cy + r * 0.05);
-  ctx.restore();
-  ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI * 2);
-  ctx.strokeStyle = DORADO_BORDE;
-  ctx.lineWidth = 1.3;
-  ctx.stroke();
-}
-
 function dibujarMarcaVelMax(ctx: CanvasRenderingContext2D, cx: number, cy: number, kmh: number) {
   ctx.save();
   ctx.shadowColor = DORADO;
@@ -1006,7 +987,6 @@ function dibujarCuadroVideo(
     );
     ctx.font = "600 18px Arial, sans-serif";
     ctx.fillText("LEGIÓN ROLLER", ANCHO_VIDEO / 2, ALTO_VIDEO - 60);
-    dibujarLogo(ctx, ANCHO_VIDEO - 58, 58, 32);
     return;
   }
 
@@ -1111,8 +1091,6 @@ function dibujarCuadroVideo(
       108,
     );
   }
-
-  dibujarLogo(ctx, ANCHO_VIDEO - 58, 58, 32);
 }
 
 // Portada al arranque del video (estilo Relive/Strava): la foto de perfil
@@ -1150,6 +1128,35 @@ function dibujarOverlayIntro(
   ctx.restore();
 }
 
+// Cuadro de cierre final (después de la panorámica, o de la foto de portada
+// si se eligió estiloFoto "final"): el logo real de la Legión en grande
+// (acá SÍ se usa la imagen -- a este tamaño, ~260px, el detalle del emblema
+// se ve bien, a diferencia del corner badge chico que se reemplazó por el
+// monograma vectorial) y la ciudad debajo. Fondo sólido de marca, sin mapa
+// -- es un cierre de cortina, no otro cuadro del recorrido.
+function dibujarCierreVideo(ctx: CanvasRenderingContext2D, logoGrandeImg: HTMLImageElement | null, ciudad: string) {
+  ctx.clearRect(0, 0, ANCHO_VIDEO, ALTO_VIDEO);
+  ctx.fillStyle = "#0d0a06";
+  ctx.fillRect(0, 0, ANCHO_VIDEO, ALTO_VIDEO);
+  ctx.textBaseline = "alphabetic";
+
+  const cx = ANCHO_VIDEO / 2;
+  const cy = ALTO_VIDEO / 2 - 50;
+  const r = 130;
+  dibujarCirculoConImagen(ctx, logoGrandeImg, cx, cy, r, "L");
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = DORADO;
+  ctx.font = "800 32px Arial, sans-serif";
+  ctx.fillText("LEGIÓN ROLLER", cx, cy + r + 60);
+
+  if (ciudad) {
+    ctx.fillStyle = GRIS_TEXTO;
+    ctx.font = "600 20px Arial, sans-serif";
+    ctx.fillText(ciudad, cx, cy + r + 92);
+  }
+}
+
 // Genera un video corto (.webm) del recorrido "dibujándose" sobre el mismo
 // mapa satelital de la tarjeta estática, con la distancia y el tiempo
 // subiendo en vivo — pensado específicamente para compartir en redes
@@ -1170,6 +1177,7 @@ export async function generarVideoRecorrido(
     duracionAnimSeg = DURACION_ANIM_SEG_DEFECTO,
     duracionFinalSeg = DURACION_FINAL_SEG_DEFECTO,
     duracionIntroSeg = DURACION_INTRO_SEG_DEFECTO,
+    duracionCierreSeg = DURACION_CIERRE_SEG_DEFECTO,
     fps = FPS_DEFECTO,
     onProgreso,
     fotoDataUrl = null,
@@ -1185,25 +1193,29 @@ export async function generarVideoRecorrido(
     throw new Error("El recorrido no tiene suficientes puntos para animar.");
   }
 
-  const [mapa, avatarDataUrl] = await Promise.all([
+  const [logoGrandeDataUrl, mapa, avatarDataUrl] = await Promise.all([
+    cargarImagenComoDataUrl("/logo-legion-roller.png"),
     generarMapaReal(datos.puntos, ANCHO_VIDEO, ALTO_VIDEO, false),
     avatarUrl ? cargarImagenComoDataUrl(avatarUrl) : Promise.resolve(null),
   ]);
 
-  // Las imágenes (mapa, foto, avatar) se decodifican UNA sola vez acá, antes
-  // de arrancar la animación -- la versión anterior reincrustaba el mapa
-  // completo (base64) dentro de un SVG nuevo en CADA cuadro y lo volvía a
-  // rasterizar, lo que con el mapa ahora a pantalla completa tardaba tanto
+  // Las imágenes (mapa, foto, avatar, logo) se decodifican UNA sola vez acá,
+  // antes de arrancar la animación -- la versión anterior reincrustaba el
+  // mapa completo (base64) dentro de un SVG nuevo en CADA cuadro y lo volvía
+  // a rasterizar, lo que con el mapa ahora a pantalla completa tardaba tanto
   // por cuadro que el video terminaba grabándose muchísimo más lento que en
   // tiempo real (se notaba como "cuadro por cuadro"). Con las imágenes ya
   // decodificadas, dibujar un cuadro es un puñado de drawImage()/stroke()
   // directos sobre el canvas -- sin async, sin volver a parsear texto
-  // gigante -- así que corre a la velocidad real que pide el fps. El logo ya
-  // no se carga acá -- el video usa un monograma vectorial (ver dibujarLogo).
-  const [mapaImg, fotoImg, avatarImg] = await Promise.all([
+  // gigante -- así que corre a la velocidad real que pide el fps. El logo
+  // grande (real, con todo su detalle) solo se usa en el cuadro de cierre
+  // final -- ahí es lo bastante grande para verse bien; el corner badge
+  // chico que se veía pixelado se sacó del video.
+  const [mapaImg, fotoImg, avatarImg, logoGrandeImg] = await Promise.all([
     cargarImagenOpcional(mapa?.dataUrl ?? null),
     cargarImagenOpcional(fotoDataUrl),
     cargarImagenOpcional(avatarDataUrl),
+    cargarImagenOpcional(logoGrandeDataUrl),
   ]);
 
   const distanciaAcumuladaKm = [0];
@@ -1349,6 +1361,11 @@ export async function generarVideoRecorrido(
   const mostrarFotoFinal = estiloFoto === "final" && !!fotoImg;
   dibujarFrame(1, mostrarFotoFinal);
   await new Promise((r) => setTimeout(r, duracionFinalSeg * 1000));
+
+  // Cuadro de cierre final: logo grande + ciudad, después de todo lo
+  // demás (panorámica o foto de portada).
+  dibujarCierreVideo(ctx, logoGrandeImg, datos.ciudad ?? "");
+  await new Promise((r) => setTimeout(r, duracionCierreSeg * 1000));
 
   mediaRecorder.stop();
   onProgreso?.(1);

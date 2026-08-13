@@ -12,7 +12,7 @@ import {
 } from "@tabler/icons-react";
 import { apiGet, apiPatch, apiDelete, ApiError } from "@/lib/api";
 import { velocidadMaximaKmH, distanciaHaversineKm, simplificarRutaParaDibujo, type PuntoGps } from "@/lib/geo";
-import { useNombreLugar, useNombreLugarEspecifico } from "@/lib/sectores";
+import { useNombreLugar, useNombreLugarEspecifico, useCiudad } from "@/lib/sectores";
 import { NombreLugar } from "@/components/Mapa/NombreLugar";
 import { CompartirRecorridoModal } from "@/components/Mapa/CompartirRecorridoModal";
 import { Toast } from "@/components/Toast";
@@ -183,6 +183,8 @@ function FichaRecorrido({
     minute: "2-digit",
   });
   const sector = useNombreLugar(inicio.lat, inicio.lon);
+  // Para la pantalla de cierre del video (logo grande + ciudad debajo).
+  const ciudad = useCiudad(inicio.lat, inicio.lon);
 
   // Hasta 3 etiquetas de lugar para el video (inicio, medio, fin) --
   // reemplaza la única etiqueta fija de antes, que en un recorrido largo se
@@ -311,6 +313,7 @@ function FichaRecorrido({
             fecha: fechaCompleta,
             sector,
             sectoresRuta,
+            ciudad: ciudad ?? undefined,
           }}
           onClose={() => setMostrarCompartir(false)}
           onPublicado={onPublicado}

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { distanciaHaversineKm } from "@/lib/geo";
-import { reverseGeocodificarConCache, reverseGeocodificarEspecifico } from "@/lib/geocodificacion";
+import { reverseGeocodificarConCache, reverseGeocodificarEspecifico, obtenerCiudad } from "@/lib/geocodificacion";
 
 interface Sector {
   nombre: string;
@@ -59,6 +59,26 @@ export function useNombreLugar(lat: number, lon: number): string {
   }, [lat, lon]);
 
   return nombre;
+}
+
+// Solo el nombre de la ciudad (sin barrio/calle) -- pensado para la
+// pantalla de cierre del video del recorrido (logo grande + ciudad debajo,
+// ver tarjetaRecorrido.ts), donde no interesa el barrio exacto, solo "en
+// qué ciudad pasó esto".
+export function useCiudad(lat: number, lon: number): string | null {
+  const [ciudad, setCiudad] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelado = false;
+    obtenerCiudad(lat, lon).then((real) => {
+      if (!cancelado) setCiudad(real);
+    });
+    return () => {
+      cancelado = true;
+    };
+  }, [lat, lon]);
+
+  return ciudad;
 }
 
 // Variante para las etiquetas de lugar del video del recorrido (ver
