@@ -91,20 +91,18 @@ export async function reverseGeocodificar(lat: number, lon: number): Promise<Lug
   return { nombre };
 }
 
-// Igual que reverseGeocodificar, pero devuelve null si Nominatim solo pudo
-// resolver hasta el nivel de ciudad (sin calle/barrio) -- pensado para las
-// etiquetas de lugar que se clavan sobre el mapa del video del recorrido
-// (ver tarjetaRecorrido.ts): "Puerto Montt" solo no aporta nada ahí, la app
-// ya está enfocada en esa ciudad. Se prefiere no mostrar nada a mostrar un
-// nombre redundante.
+// Igual que reverseGeocodificar, pero devuelve solo la calle/barrio (sin
+// ciudad) y null si Nominatim no pudo resolver hasta ese nivel -- pensado
+// para las etiquetas de lugar que se clavan sobre el mapa del video del
+// recorrido (ver tarjetaRecorrido.ts). "Puerto Montt" solo no aporta nada
+// ahí (la app ya está enfocada en esa ciudad), y agregarla junto a la
+// calle es redundante: la ciudad ya se muestra aparte, una sola vez, en el
+// cuadro de cierre del video.
 export async function reverseGeocodificarEspecifico(lat: number, lon: number): Promise<string | null> {
   const detalle = await reverseFetchDetalle(lat, lon);
   if (!detalle?.address) return null;
   const { road, pedestrian, neighbourhood, suburb } = detalle.address;
-  const lugar = road || pedestrian || neighbourhood || suburb;
-  if (!lugar) return null;
-  const ciudad = detalle.address.city || detalle.address.town || detalle.address.village || detalle.address.municipality;
-  return ciudad && lugar !== ciudad ? `${lugar}, ${ciudad}` : lugar;
+  return road || pedestrian || neighbourhood || suburb || null;
 }
 
 // Solo el nombre de la ciudad/comuna (sin calle ni barrio) — zoom=10 pide un
