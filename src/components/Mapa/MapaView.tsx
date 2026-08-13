@@ -512,6 +512,21 @@ export function MapaView() {
   // y se reactiva al tocar "Centrar en mi ubicación".
   const siguiendoRef = useRef(false);
 
+  // Un flyTo/setView propio con un zoom distinto al actual también dispara
+  // "zoomstart" (Leaflet lo hace desde adentro de flyTo/setView mismos, de
+  // forma síncrona, sin distinguir si el cambio de zoom vino de un gesto o
+  // de código) -- ver el listener de "zoomstart" más abajo, agregado para
+  // cubrir el pellizco (pinch) que no dispara "dragstart". Sin esto, un
+  // flyTo propio a un zoom fijo (ej. al centrar automáticamente al arrancar
+  // "Patinando") se auto-cancelaría al toque: dispara zoomstart, que apaga
+  // el seguimiento que la misma línea siguiente acababa de prender.
+  const moviendoCamaraProgramaticamenteRef = useRef(false);
+  function moverCamaraProgramaticamente(fn: () => void) {
+    moviendoCamaraProgramaticamenteRef.current = true;
+    fn();
+    moviendoCamaraProgramaticamenteRef.current = false;
+  }
+
   // Mantiene en sincronía el ref local (para leer dentro de callbacks de
   // este montaje) y la variable de módulo (para que el próximo montaje, tras
   // un cambio de pestaña, sepa si debe volver a seguirte o respetar que
@@ -581,7 +596,9 @@ export function MapaView() {
           Date.now() - inicioDesplazamientoExploracionRef.current >=
           MS_MOVIMIENTO_SOSTENIDO_EXPLORACION
         ) {
-          mapRef.current.flyTo([punto.lat, punto.lon], mapRef.current.getZoom());
+          moverCamaraProgramaticamente(() =>
+            mapRef.current!.flyTo([punto.lat, punto.lon], mapRef.current!.getZoom()),
+          );
           marcarSiguiendo(true);
           inicioDesplazamientoExploracionRef.current = null;
         }
@@ -756,7 +773,9 @@ export function MapaView() {
           // carga) — se ubica directo, sin animación, no hay nada de qué
           // "deslizarse" y ya se está ocultando el indicador en este mismo
           // instante.
-          mapRef.current.setView([nueva.lat, nueva.lon], ZOOM_CENTRADO_AUTOMATICO);
+          moverCamaraProgramaticamente(() =>
+            mapRef.current!.setView([nueva.lat, nueva.lon], ZOOM_CENTRADO_AUTOMATICO),
+          );
           return;
         }
 
@@ -766,7 +785,9 @@ export function MapaView() {
           { lat: nueva.lat, lon: nueva.lon, timestamp: 0 },
         );
         if (distanciaKm > UMBRAL_ACTUALIZACION_KM) {
-          mapRef.current.flyTo([nueva.lat, nueva.lon], mapRef.current.getZoom());
+          moverCamaraProgramaticamente(() =>
+            mapRef.current!.flyTo([nueva.lat, nueva.lon], mapRef.current!.getZoom()),
+          );
         }
       })
       .catch(() => {
@@ -849,7 +870,9 @@ export function MapaView() {
 
         if (necesitaCentrarInicialRef.current && mapRef.current) {
           necesitaCentrarInicialRef.current = false;
-          mapRef.current.flyTo([punto.lat, punto.lon], ZOOM_CENTRADO_AUTOMATICO);
+          moverCamaraProgramaticamente(() =>
+            mapRef.current!.flyTo([punto.lat, punto.lon], ZOOM_CENTRADO_AUTOMATICO),
+          );
           marcarSiguiendo(true);
         } else if (siguiendoRef.current && mapRef.current) {
           // Modo seguimiento: recentra el mapa en cada posición nueva, como en
@@ -895,7 +918,9 @@ export function MapaView() {
             // mapa recién creado justo donde lo había dejado (ver `centro` más
             // abajo) — forzar el centrado acá lo habría ignorado por completo.
             if (siguiendoAlRemontar) {
-              mapRef.current?.setView([mia.lat, mia.lon], ZOOM_CENTRADO_AUTOMATICO);
+              moverCamaraProgramaticamente(() =>
+                mapRef.current?.setView([mia.lat, mia.lon], ZOOM_CENTRADO_AUTOMATICO),
+              );
             }
 
             // Además de restaurar lo visual, retoma la grabación real de km/
@@ -1394,7 +1419,9 @@ export function MapaView() {
       return;
     }
     if (!mapRef.current) return;
-    mapRef.current.flyTo([punto.lat, punto.lon], mapRef.current.getZoom());
+    moverCamaraProgramaticamente(() =>
+      mapRef.current!.flyTo([punto.lat, punto.lon], mapRef.current!.getZoom()),
+    );
     marcarSiguiendo(true);
   }
 
@@ -1425,15 +1452,25 @@ export function MapaView() {
 
   // Modo "Exploración": apenas el usuario arrastra el mapa a mano (ej. para
   // ver a otros patinadores cerca), se apaga el modo seguimiento (Leaflet
-  // solo dispara "dragstart" ante un gesto real, nunca ante un
+  // dispara "dragstart" ante un arrastre real, nunca ante un
   // panTo/flyTo/setView programático). La cámara queda fija ahí — aunque el
   // GPS siga actualizando mi posición en segundo plano — hasta que el
   // usuario toque "Centrar en mi ubicación" o se detecte que empezó a
   // desplazarse de verdad (ver registrarMovimiento).
+  //
+  // "zoomstart" se escucha además de "dragstart" porque un gesto de
+  // pellizcar (pinch) para alejar/acercar en el celular no siempre arrastra
+  // el centro del mapa -- si es un pellizco simétrico, Leaflet solo dispara
+  // "zoomstart", nunca "dragstart". Sin este segundo listener, siguiendoRef
+  // seguía en true durante ese gesto y la lectura GPS siguiente (llega casi
+  // al instante mientras hay un modo activo) recentraba el mapa de golpe,
+  // deshaciendo el pellizco apenas el dedo se levantaba (reporte real:
+  // "al querer desplazarme por el mapa vuelve al punto de mi avatar").
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
     function detenerSeguimiento() {
+      if (moviendoCamaraProgramaticamenteRef.current) return;
       marcarSiguiendo(false);
       exploracionManualActiva = true;
       inicioDesplazamientoExploracionRef.current = null;
@@ -1448,9 +1485,11 @@ export function MapaView() {
       ultimaVistaMapa = { lat: c.lat, lon: c.lng, zoom: map.getZoom() };
     }
     map.on("dragstart", detenerSeguimiento);
+    map.on("zoomstart", detenerSeguimiento);
     map.on("moveend", guardarVista);
     return () => {
       map.off("dragstart", detenerSeguimiento);
+      map.off("zoomstart", detenerSeguimiento);
       map.off("moveend", guardarVista);
     };
   }, []);
