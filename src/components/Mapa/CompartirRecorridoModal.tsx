@@ -2,9 +2,15 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Capacitor } from "@capacitor/core";
-import { IconShare, IconUpload, IconCube3dSphere, IconX } from "@tabler/icons-react";
+import { IconShare, IconUpload, IconCube3dSphere, IconX, IconPhoto, IconTrash } from "@tabler/icons-react";
 import { apiUpload, apiPost, ApiError } from "@/lib/api";
-import { generarTarjetaRecorrido, generarVideoRecorrido, type DatosTarjetaRecorrido } from "@/lib/tarjetaRecorrido";
+import {
+  generarTarjetaRecorrido,
+  generarVideoRecorrido,
+  type DatosTarjetaRecorrido,
+  type EstiloFotoVideo,
+} from "@/lib/tarjetaRecorrido";
+import { leerArchivoComoDataUrl } from "@/lib/imagenDataUrl";
 import {
   solicitarFlyover,
   estadoFlyoverPorRecorrido,
@@ -59,6 +65,13 @@ export function CompartirRecorridoModal({
   const [progresoVideo, setProgresoVideo] = useState(0);
   const [errorVideo, setErrorVideo] = useState("");
   const videoBlobUrlRef = useRef<string | null>(null);
+  // Foto opcional del video (nunca obligatoria, ver tarjetaRecorrido.ts) --
+  // se elige ANTES de generar, en la pantalla de configuración de la
+  // pestaña "Video" (a diferencia de antes, que arrancaba a grabar solo con
+  // entrar a la pestaña).
+  const [fotoVideoDataUrl, setFotoVideoDataUrl] = useState<string | null>(null);
+  const [estiloFotoVideo, setEstiloFotoVideo] = useState<EstiloFotoVideo>("final");
+  const inputFotoVideoRef = useRef<HTMLInputElement>(null);
 
   // Video 3D (flyover): a diferencia del video de arriba, se renderiza en el
   // servidor (navegador headless + MapLibre) porque muchos celulares no
@@ -179,7 +192,11 @@ export function CompartirRecorridoModal({
     setErrorVideo("");
     setProgresoVideo(0);
     try {
-      const nuevoBlob = await generarVideoRecorrido(datos, { onProgreso: setProgresoVideo });
+      const nuevoBlob = await generarVideoRecorrido(datos, {
+        onProgreso: setProgresoVideo,
+        fotoDataUrl: fotoVideoDataUrl ?? undefined,
+        estiloFoto: fotoVideoDataUrl ? estiloFotoVideo : undefined,
+      });
       if (videoBlobUrlRef.current) URL.revokeObjectURL(videoBlobUrlRef.current);
       const url = URL.createObjectURL(nuevoBlob);
       videoBlobUrlRef.current = url;
@@ -192,9 +209,24 @@ export function CompartirRecorridoModal({
     }
   }
 
+  function generarVideoDeNuevo() {
+    if (videoBlobUrlRef.current) URL.revokeObjectURL(videoBlobUrlRef.current);
+    videoBlobUrlRef.current = null;
+    setVideoBlob(null);
+    setVideoUrl(null);
+    setErrorVideo("");
+  }
+
+  async function manejarSeleccionFotoVideo(e: React.ChangeEvent<HTMLInputElement>) {
+    const archivo = e.target.files?.[0];
+    e.target.value = "";
+    if (!archivo) return;
+    const dataUrl = await leerArchivoComoDataUrl(archivo);
+    if (dataUrl) setFotoVideoDataUrl(dataUrl);
+  }
+
   function elegirTab(nuevoTab: Tab) {
     setTab(nuevoTab);
-    if (nuevoTab === "video" && !videoBlob && !generandoVideo) generarVideo();
     if (nuevoTab === "video3d" && estadoFlyover === null && !cargandoFlyover) {
       consultarEstadoFlyoverInicial();
     }
@@ -366,10 +398,7 @@ export function CompartirRecorridoModal({
                   Generando video... {Math.round(progresoVideo * 100)}%
                 </p>
               )}
-              {!generandoVideo && errorVideo && (
-                <p className="px-6 text-center text-xs text-fill-warning">{errorVideo}</p>
-              )}
-              {!generandoVideo && !errorVideo && videoUrl && (
+              {!generandoVideo && videoUrl && (
                 <video
                   src={videoUrl}
                   className="h-full w-full object-contain"
@@ -378,6 +407,83 @@ export function CompartirRecorridoModal({
                   muted
                   playsInline
                 />
+              )}
+              {!generandoVideo && !videoUrl && (
+                <div className="flex flex-col items-center gap-3 px-6 text-center">
+                  {errorVideo && <p className="text-xs text-fill-warning">{errorVideo}</p>}
+                  <p className="text-xs text-text-secondary">
+                    El mapa se dibuja solo, con tu velocidad máxima marcada en el recorrido. Podés
+                    agregarle una foto (opcional).
+                  </p>
+                  <input
+                    ref={inputFotoVideoRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={manejarSeleccionFotoVideo}
+                  />
+                  {!fotoVideoDataUrl && (
+                    <button
+                      type="button"
+                      onClick={() => inputFotoVideoRef.current?.click()}
+                      className="flex items-center gap-1.5 rounded-app border border-border-accent px-3 py-1.5 text-xs text-text-accent"
+                    >
+                      <IconPhoto size={14} />
+                      Agregar foto
+                    </button>
+                  )}
+                  {fotoVideoDataUrl && (
+                    <div className="flex flex-col items-center gap-2.5">
+                      <div className="relative">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={fotoVideoDataUrl}
+                          alt="Foto elegida"
+                          className="h-16 w-16 rounded-full border border-border-accent object-cover"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setFotoVideoDataUrl(null)}
+                          aria-label="Quitar foto"
+                          className="absolute -right-1 -top-1 rounded-full bg-surface-2 p-1 text-text-secondary"
+                        >
+                          <IconTrash size={12} />
+                        </button>
+                      </div>
+                      <div className="flex gap-1.5 rounded-app bg-surface-2 p-1">
+                        <button
+                          type="button"
+                          onClick={() => setEstiloFotoVideo("final")}
+                          className={`rounded-app px-3 py-1.5 text-xs font-semibold ${
+                            estiloFotoVideo === "final"
+                              ? "bg-fill-primary text-on-primary"
+                              : "text-text-secondary"
+                          }`}
+                        >
+                          Al final
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEstiloFotoVideo("mapa")}
+                          className={`rounded-app px-3 py-1.5 text-xs font-semibold ${
+                            estiloFotoVideo === "mapa"
+                              ? "bg-fill-primary text-on-primary"
+                              : "text-text-secondary"
+                          }`}
+                        >
+                          En el mapa
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={generarVideo}
+                    className="btn-hero rounded-app px-4 py-1.5 text-xs"
+                  >
+                    Generar video
+                  </button>
+                </div>
               )}
             </>
           )}
@@ -524,6 +630,15 @@ export function CompartirRecorridoModal({
             className="self-center text-[11px] text-text-secondary underline"
           >
             Generar en otro estilo
+          </button>
+        )}
+        {tab === "video" && videoUrl && (
+          <button
+            type="button"
+            onClick={generarVideoDeNuevo}
+            className="self-center text-[11px] text-text-secondary underline"
+          >
+            Generar de nuevo
           </button>
         )}
 

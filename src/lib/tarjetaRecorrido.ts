@@ -1,4 +1,4 @@
-import { distanciaHaversineKm, type PuntoGps } from "./geo";
+import { distanciaHaversineKm, velocidadMaximaConPunto, type PuntoGps } from "./geo";
 import { cargarImagenComoDataUrl } from "./imagenDataUrl";
 
 export interface DatosTarjetaRecorrido {
@@ -120,13 +120,24 @@ function latAPixelY(lat: number, zoom: number): number {
 }
 
 // Elige el zoom más alto (más detalle) tal que el recorrido completo entre
-// dentro del recuadro del mapa, dejando aire alrededor (no pegado a los bordes).
-function elegirZoom(minLat: number, maxLat: number, minLon: number, maxLon: number): number {
+// dentro del recuadro del mapa, dejando aire alrededor (no pegado a los
+// bordes). anchoDestino/altoDestino parametrizados (en vez de MAPA_ANCHO/
+// MAPA_ALTO fijos) para que el mismo cálculo sirva tanto para el recuadro
+// chico de la tarjeta como para el video a pantalla completa (ver
+// generarMapaReal más abajo).
+function elegirZoom(
+  minLat: number,
+  maxLat: number,
+  minLon: number,
+  maxLon: number,
+  anchoDestino: number,
+  altoDestino: number,
+): number {
   const MARGEN = 0.78;
   for (let z = 18; z >= 3; z--) {
     const spanX = lonAPixelX(maxLon, z) - lonAPixelX(minLon, z);
     const spanY = latAPixelY(minLat, z) - latAPixelY(maxLat, z);
-    if (spanX <= MAPA_ANCHO * MARGEN && spanY <= MAPA_ALTO * MARGEN) return z;
+    if (spanX <= anchoDestino * MARGEN && spanY <= altoDestino * MARGEN) return z;
   }
   return 3;
 }
@@ -138,12 +149,18 @@ interface TileParaDibujar {
   destY: number;
 }
 
-function calcularTilesNecesarios(centroPxX: number, centroPxY: number, zoom: number): TileParaDibujar[] {
+function calcularTilesNecesarios(
+  centroPxX: number,
+  centroPxY: number,
+  zoom: number,
+  anchoDestino: number,
+  altoDestino: number,
+): TileParaDibujar[] {
   const maxTile = 2 ** zoom;
-  const inicioPxX = centroPxX - MAPA_ANCHO / 2;
-  const inicioPxY = centroPxY - MAPA_ALTO / 2;
-  const finPxX = centroPxX + MAPA_ANCHO / 2;
-  const finPxY = centroPxY + MAPA_ALTO / 2;
+  const inicioPxX = centroPxX - anchoDestino / 2;
+  const inicioPxY = centroPxY - altoDestino / 2;
+  const finPxX = centroPxX + anchoDestino / 2;
+  const finPxY = centroPxY + altoDestino / 2;
 
   const tileXInicio = Math.floor(inicioPxX / TAM_TILE);
   const tileXFin = Math.floor((finPxX - 1) / TAM_TILE);
@@ -230,7 +247,11 @@ interface MapaGenerado {
 // con contenido cross-origin. Si no hay conexión o los tiles no cargan,
 // devuelve null y el llamador usa un mapa vectorial de respaldo — la
 // tarjeta nunca se rompe por esto.
-async function generarMapaReal(puntos: PuntoGps[]): Promise<MapaGenerado | null> {
+async function generarMapaReal(
+  puntos: PuntoGps[],
+  anchoDestino: number,
+  altoDestino: number,
+): Promise<MapaGenerado | null> {
   try {
     const lats = puntos.map((p) => p.lat);
     const lons = puntos.map((p) => p.lon);
@@ -239,12 +260,12 @@ async function generarMapaReal(puntos: PuntoGps[]): Promise<MapaGenerado | null>
     const minLon = Math.min(...lons);
     const maxLon = Math.max(...lons);
 
-    const zoom = elegirZoom(minLat, maxLat, minLon, maxLon);
+    const zoom = elegirZoom(minLat, maxLat, minLon, maxLon, anchoDestino, altoDestino);
     const centroPxX = lonAPixelX((minLon + maxLon) / 2, zoom);
     const centroPxY = latAPixelY((minLat + maxLat) / 2, zoom);
 
-    const tiles = calcularTilesNecesarios(centroPxX, centroPxY, zoom);
-    if (tiles.length === 0 || tiles.length > 30) return null;
+    const tiles = calcularTilesNecesarios(centroPxX, centroPxY, zoom, anchoDestino, altoDestino);
+    if (tiles.length === 0 || tiles.length > 48) return null;
 
     const [imagenesBase, imagenesEtiquetas] = await Promise.all([
       Promise.all(tiles.map((t) => cargarTileComoImagen(urlTile(TILE_SATELITE_URL, zoom, t.x, t.y)))),
@@ -258,8 +279,8 @@ async function generarMapaReal(puntos: PuntoGps[]): Promise<MapaGenerado | null>
     // así que acá se estiran al dibujarse (misma nitidez que ya se ve en el
     // mapa satelital dentro de la app).
     const canvas = document.createElement("canvas");
-    canvas.width = MAPA_ANCHO * ESCALA;
-    canvas.height = MAPA_ALTO * ESCALA;
+    canvas.width = anchoDestino * ESCALA;
+    canvas.height = altoDestino * ESCALA;
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
     ctx.fillStyle = "#1a1108";
@@ -466,7 +487,7 @@ export async function generarTarjetaRecorrido(datos: DatosTarjetaRecorrido): Pro
   const [logoDataUrl, fondoDataUrl, mapa] = await Promise.all([
     cargarImagenComoDataUrl("/logo-legion-roller.png"),
     cargarImagenComoDataUrl("/fondo-mis-rutas.jpg"),
-    generarMapaReal(datos.puntos),
+    generarMapaReal(datos.puntos, MAPA_ANCHO, MAPA_ALTO),
   ]);
   const svg = construirSvg(datos, logoDataUrl, fondoDataUrl, mapa, undefined, LAYOUT_COMPACTO);
   const svgDataUrl = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`;
@@ -497,21 +518,58 @@ export async function generarTarjetaRecorrido(datos: DatosTarjetaRecorrido): Pro
   });
 }
 
+// Estilo de la foto opcional del video: "final" la muestra a pantalla
+// completa en el cuadro de cierre (como una portada); "mapa" la clava como
+// un pin circular sobre el mapa, en el punto donde va la ruta (por defecto,
+// la mitad del recorrido por distancia) -- se revela recién cuando el trazo
+// animado llega a ese punto, igual que la marca de velocidad máxima.
+export type EstiloFotoVideo = "final" | "mapa";
+
 export interface OpcionesVideoRecorrido {
-  // Duración de la animación (el trazo dibujándose) — NO la duración real
-  // del recorrido, que puede ser de horas. Pensado para redes sociales, no
-  // para ver el paseo en tiempo real.
+  // Duración de la animación (el trazo dibujándose + la cámara alejándose al
+  // final) — NO la duración real del recorrido, que puede ser de horas.
+  // Pensado para redes sociales, no para ver el paseo en tiempo real. Más
+  // larga que antes a propósito: se ve más fluida, no hay apuro por cortarla
+  // corta.
   duracionAnimSeg?: number;
-  // Cuánto se mantiene congelado el último cuadro (con las 4 estadísticas ya
-  // completas) antes de cortar el video, para que alcance a leerse.
+  // Cuánto se mantiene congelado el cuadro final (panorámica completa, o la
+  // foto de cierre si se eligió "final") antes de cortar el video.
   duracionFinalSeg?: number;
   fps?: number;
   onProgreso?: (fraccion: number) => void;
+  // Foto opcional (nunca obligatoria) -- si no se pasa fotoDataUrl, el video
+  // sigue igual pero sin ningún paso de foto.
+  fotoDataUrl?: string;
+  estiloFoto?: EstiloFotoVideo;
 }
 
-const DURACION_ANIM_SEG_DEFECTO = 6;
-const DURACION_FINAL_SEG_DEFECTO = 2;
+const DURACION_ANIM_SEG_DEFECTO = 11;
+const DURACION_FINAL_SEG_DEFECTO = 3;
 const FPS_DEFECTO = 24;
+
+// Tamaño del video rediseñado: vertical 9:16 real (a diferencia de la
+// tarjeta 800x1150), porque ya no hay marco de tarjeta -- el mapa ocupa la
+// pantalla completa, así que tiene sentido usar la proporción real de un
+// video para redes en vez de heredar la proporción de la tarjeta estática.
+const ANCHO_VIDEO = 720;
+const ALTO_VIDEO = 1280;
+
+// La cámara "persigue" el punto actual con este acercamiento durante el
+// dibujado del trazo (estilo Relive), y en el último tramo de la animación
+// se aleja hasta volver a 1 (panorámica del recorrido completo). Es un zoom
+// óptico sobre la MISMA imagen de mapa ya cargada (no se piden tiles nuevos
+// por cuadro) -- barato de calcular, aunque pierde algo de nitidez cuanto
+// más cerca, aceptable para un video comprimido.
+const ESCALA_CAMARA_CERCANA = 1.35;
+// Fracción de duracionAnimSeg en la que el trazo ya terminó de dibujarse y
+// arranca el alejamiento final -- el resto (hasta 1) es pura transición de
+// cámara, sin más avance de distancia/tiempo.
+const FRACCION_TRAZO_COMPLETO = 0.82;
+
+function suavizar(t: number): number {
+  const c = Math.min(1, Math.max(0, t));
+  return c * c * (3 - 2 * c);
+}
 
 function elegirMimeTypeVideo(): string {
   const candidatos = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
@@ -569,6 +627,203 @@ function estadoEnFraccion(
   };
 }
 
+interface EstadoCamara {
+  cx: number;
+  cy: number;
+  escala: number;
+}
+
+// Durante el trazo (fraccionTotal hasta FRACCION_TRAZO_COMPLETO) la cámara
+// sigue de cerca el punto actual, con el acercamiento fijo de
+// ESCALA_CAMARA_CERCANA. En el tramo final se aleja con una curva suave
+// (suavizar(), no lineal, para que se sienta como una desaceleración real de
+// cámara) hasta volver a escala 1 centrada en el recorrido completo -- la
+// panorámica de cierre.
+function estadoCamara(
+  fraccionTotal: number,
+  focoTrazando: { x: number; y: number },
+  focoCentro: { x: number; y: number },
+): EstadoCamara {
+  if (fraccionTotal <= FRACCION_TRAZO_COMPLETO) {
+    return { cx: focoTrazando.x, cy: focoTrazando.y, escala: ESCALA_CAMARA_CERCANA };
+  }
+  const t = suavizar((fraccionTotal - FRACCION_TRAZO_COMPLETO) / (1 - FRACCION_TRAZO_COMPLETO));
+  return {
+    cx: focoTrazando.x + (focoCentro.x - focoTrazando.x) * t,
+    cy: focoTrazando.y + (focoCentro.y - focoTrazando.y) * t,
+    escala: ESCALA_CAMARA_CERCANA + (1 - ESCALA_CAMARA_CERCANA) * t,
+  };
+}
+
+// Pin circular con la foto del usuario clavado en un punto del mapa (estilo
+// Relive/Strava) -- una "gota" dorada con la foto recortada en círculo
+// adentro, apoyada justo sobre el punto exacto.
+function pinFotoSvg(cx: number, cyPunta: number, radio: number, fotoHref: string, idClip: string): string {
+  const cyCentro = cyPunta - radio - 8;
+  const anchoBase = radio * 0.6;
+  return `
+    <path d="M ${cx} ${cyPunta} L ${cx - anchoBase} ${cyCentro + radio * 0.65} A ${radio + 5} ${radio + 5} 0 1 1 ${cx + anchoBase} ${cyCentro + radio * 0.65} Z" fill="#0d0a06" stroke="${DORADO_BORDE}" stroke-width="2.5"/>
+    <clipPath id="${idClip}"><circle cx="${cx}" cy="${cyCentro}" r="${radio}"/></clipPath>
+    <image href="${fotoHref}" x="${cx - radio}" y="${cyCentro - radio}" width="${radio * 2}" height="${radio * 2}" preserveAspectRatio="xMidYMid slice" clip-path="url(#${idClip})"/>
+    <circle cx="${cx}" cy="${cyCentro}" r="${radio}" fill="none" stroke="${DORADO_BORDE}" stroke-width="2.5"/>
+  `;
+}
+
+interface ConfigVideo {
+  puntoVelMax: PuntoGps | null;
+  distanciaVelMaxKm: number;
+  kmhVelMax: number;
+  fotoDataUrl: string | null;
+  estiloFoto: EstiloFotoVideo | null;
+  puntoFotoMapa: PuntoGps | null;
+  distanciaFotoMapaKm: number;
+}
+
+// Arma cada cuadro del video rediseñado: mapa a pantalla completa (sin
+// marcos ni casillas -- a diferencia de construirSvg(), que sigue siendo
+// la tarjeta de siempre para el PNG de Post), contador de distancia/tiempo
+// flotando arriba, marca de velocidad máxima que se prende al pasar el
+// trazo por ese punto, y el cuadro de cierre (panorámica completa, con o
+// sin foto según config.estiloFoto).
+function construirSvgVideo(
+  datos: DatosTarjetaRecorrido,
+  logoDataUrl: string | null,
+  mapa: MapaGenerado | null,
+  frame: FrameAnimado,
+  fraccionTotal: number,
+  config: ConfigVideo,
+  mostrarFotoFinal: boolean,
+): string {
+  const { puntos } = datos;
+  const lats = puntos.map((p) => p.lat);
+  const lons = puntos.map((p) => p.lon);
+  const minLat = Math.min(...lats);
+  const maxLat = Math.max(...lats);
+  const minLon = Math.min(...lons);
+  const maxLon = Math.max(...lons);
+  const rangoLat = maxLat - minLat || 0.0001;
+  const rangoLon = maxLon - minLon || 0.0001;
+  const margenInterno = 50;
+
+  let x: (lon: number) => number;
+  let y: (lat: number) => number;
+  if (mapa) {
+    x = (lon: number) => lonAPixelX(lon, mapa.zoom) - mapa.centroPxX + ANCHO_VIDEO / 2;
+    y = (lat: number) => latAPixelY(lat, mapa.zoom) - mapa.centroPxY + ALTO_VIDEO / 2;
+  } else {
+    x = (lon: number) =>
+      margenInterno + ((lon - minLon) / rangoLon) * (ANCHO_VIDEO - margenInterno * 2);
+    y = (lat: number) =>
+      margenInterno + ((maxLat - lat) / rangoLat) * (ALTO_VIDEO - margenInterno * 2);
+  }
+
+  const distanciaMostrar = frame.distanciaKm;
+  const duracionMostrar = frame.duracionSeg;
+
+  const marcaSvg = logoDataUrl
+    ? `<clipPath id="clipLogo"><circle cx="${ANCHO_VIDEO - 46}" cy="46" r="24"/></clipPath>
+       <circle cx="${ANCHO_VIDEO - 46}" cy="46" r="26" fill="#0d0a06" opacity="0.75"/>
+       <image href="${logoDataUrl}" x="${ANCHO_VIDEO - 70}" y="22" width="48" height="48" clip-path="url(#clipLogo)"/>
+       <circle cx="${ANCHO_VIDEO - 46}" cy="46" r="24" fill="none" stroke="${DORADO_BORDE}" stroke-width="1.3"/>`
+    : "";
+
+  // Cuadro de cierre con foto a pantalla completa (opción "final"): ya no
+  // hay mapa en este cuadro, solo la foto + degradé + resumen del recorrido.
+  if (mostrarFotoFinal && config.fotoDataUrl) {
+    return `
+      <svg width="${ANCHO_VIDEO}" height="${ALTO_VIDEO}" viewBox="0 0 ${ANCHO_VIDEO} ${ALTO_VIDEO}" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="degradeFoto" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="45%" stop-color="#0d0a06" stop-opacity="0"/>
+            <stop offset="100%" stop-color="#0d0a06" stop-opacity="0.88"/>
+          </linearGradient>
+        </defs>
+        <clipPath id="clipFotoFinal"><rect width="${ANCHO_VIDEO}" height="${ALTO_VIDEO}"/></clipPath>
+        <image href="${config.fotoDataUrl}" x="0" y="0" width="${ANCHO_VIDEO}" height="${ALTO_VIDEO}" preserveAspectRatio="xMidYMid slice" clip-path="url(#clipFotoFinal)"/>
+        <rect width="${ANCHO_VIDEO}" height="${ALTO_VIDEO}" fill="url(#degradeFoto)"/>
+        ${marcaSvg}
+        <text x="${ANCHO_VIDEO / 2}" y="${ALTO_VIDEO - 190}" text-anchor="middle" font-family="Arial, sans-serif" font-size="46" font-weight="800" fill="${DORADO}">${distanciaMostrar.toFixed(2)} km &#183; ${Math.round(duracionMostrar / 60)} min</text>
+        <text x="${ANCHO_VIDEO / 2}" y="${ALTO_VIDEO - 148}" text-anchor="middle" font-family="Arial, sans-serif" font-size="22" fill="${GRIS_TEXTO}">VEL. PROMEDIO ${Math.round(datos.velocidadPromedio)} km/h &#183; VEL. MÁXIMA ${Math.round(datos.velocidadMaxima)} km/h</text>
+        <text x="${ANCHO_VIDEO / 2}" y="${ALTO_VIDEO - 60}" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" font-weight="600" letter-spacing="3" fill="${GRIS_TEXTO}">LEGIÓN ROLLER</text>
+      </svg>
+    `;
+  }
+
+  const inicio = puntos[0];
+  const fin = puntos[puntos.length - 1];
+  const focoActual = frame.posicionActual ?? fin;
+  const focoTrazandoPx = { x: x(focoActual.lon), y: y(focoActual.lat) };
+  const focoCentroPx = mapa
+    ? { x: ANCHO_VIDEO / 2, y: ALTO_VIDEO / 2 }
+    : { x: x((minLon + maxLon) / 2), y: y((minLat + maxLat) / 2) };
+  const camara = estadoCamara(fraccionTotal, focoTrazandoPx, focoCentroPx);
+
+  const trazo = frame.puntosTrazo.map((p) => `${x(p.lon)},${y(p.lat)}`).join(" ");
+
+  const mapaFondoSvg = mapa
+    ? `<image href="${mapa.dataUrl}" x="0" y="0" width="${ANCHO_VIDEO}" height="${ALTO_VIDEO}" preserveAspectRatio="none"/>`
+    : `<rect x="0" y="0" width="${ANCHO_VIDEO}" height="${ALTO_VIDEO}" fill="#1a1108"/>`;
+
+  const mostrarVelMax =
+    config.puntoVelMax !== null && distanciaMostrar >= config.distanciaVelMaxKm;
+  const velMaxSvg =
+    mostrarVelMax && config.puntoVelMax
+      ? `<g transform="translate(${x(config.puntoVelMax.lon)}, ${y(config.puntoVelMax.lat)})">
+           <circle r="10" fill="none" stroke="${DORADO}" stroke-width="1.5" opacity="0.55" filter="url(#resplandorDorado)"/>
+           <circle r="6" fill="${DORADO}" stroke="#0d0a06" stroke-width="2"/>
+           <rect x="12" y="-13" width="82" height="26" rx="13" fill="#0d0a06" opacity="0.8"/>
+           <text x="24" y="4" font-family="Arial, sans-serif" font-size="15" fill="${DORADO}">&#9889;</text>
+           <text x="36" y="5" font-family="Arial, sans-serif" font-size="14" font-weight="700" fill="${DORADO}">${Math.round(config.kmhVelMax)} km/h</text>
+         </g>`
+      : "";
+
+  const mostrarFotoMapa =
+    config.estiloFoto === "mapa" &&
+    config.fotoDataUrl &&
+    config.puntoFotoMapa !== null &&
+    distanciaMostrar >= config.distanciaFotoMapaKm;
+  const fotoMapaSvg =
+    mostrarFotoMapa && config.fotoDataUrl && config.puntoFotoMapa
+      ? pinFotoSvg(x(config.puntoFotoMapa.lon), y(config.puntoFotoMapa.lat), 30, config.fotoDataUrl, "clipFotoMapa")
+      : "";
+
+  const contadorSvg = `
+    <rect x="0" y="0" width="${ANCHO_VIDEO}" height="118" fill="#0d0a06" opacity="0.5"/>
+    <text x="28" y="52" font-family="Arial, sans-serif" font-size="38" font-weight="800" fill="${DORADO}">${distanciaMostrar.toFixed(2)} km</text>
+    <text x="28" y="76" font-family="Arial, sans-serif" font-size="15" font-weight="600" letter-spacing="1" fill="${GRIS_TEXTO}">DISTANCIA</text>
+    <text x="${ANCHO_VIDEO / 2 + 20}" y="52" font-family="Arial, sans-serif" font-size="38" font-weight="800" fill="${DORADO}">${Math.round(duracionMostrar / 60)} min</text>
+    <text x="${ANCHO_VIDEO / 2 + 20}" y="76" font-family="Arial, sans-serif" font-size="15" font-weight="600" letter-spacing="1" fill="${GRIS_TEXTO}">TIEMPO</text>
+  `;
+
+  return `
+    <svg width="${ANCHO_VIDEO}" height="${ALTO_VIDEO}" viewBox="0 0 ${ANCHO_VIDEO} ${ALTO_VIDEO}" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <filter id="resplandorDorado" x="-60%" y="-60%" width="220%" height="220%">
+          <feGaussianBlur stdDeviation="4" result="blur"/>
+          <feMerge>
+            <feMergeNode in="blur"/>
+            <feMergeNode in="SourceGraphic"/>
+          </feMerge>
+        </filter>
+      </defs>
+      <clipPath id="recorteVideo"><rect width="${ANCHO_VIDEO}" height="${ALTO_VIDEO}"/></clipPath>
+      <g clip-path="url(#recorteVideo)">
+        <g transform="translate(${ANCHO_VIDEO / 2}, ${ALTO_VIDEO / 2}) scale(${camara.escala}) translate(${-camara.cx}, ${-camara.cy})">
+          ${mapaFondoSvg}
+          <polyline points="${trazo}" fill="none" stroke="${DORADO}" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="${x(inicio.lon)}" cy="${y(inicio.lat)}" r="10" fill="#5fae4e" stroke="#0d0a06" stroke-width="3"/>
+          ${frame.mostrarFin ? `<circle cx="${x(fin.lon)}" cy="${y(fin.lat)}" r="10" fill="#d8342f" stroke="#0d0a06" stroke-width="3"/>` : ""}
+          ${frame.posicionActual ? `<circle cx="${x(frame.posicionActual.lon)}" cy="${y(frame.posicionActual.lat)}" r="9" fill="${DORADO}" stroke="#0d0a06" stroke-width="3" filter="url(#resplandorDorado)"/>` : ""}
+          ${velMaxSvg}
+          ${fotoMapaSvg}
+        </g>
+      </g>
+      ${contadorSvg}
+      ${marcaSvg}
+    </svg>
+  `;
+}
+
 // Genera un video corto (.webm) del recorrido "dibujándose" sobre el mismo
 // mapa satelital de la tarjeta estática, con la distancia y el tiempo
 // subiendo en vivo — pensado específicamente para compartir en redes
@@ -590,6 +845,8 @@ export async function generarVideoRecorrido(
     duracionFinalSeg = DURACION_FINAL_SEG_DEFECTO,
     fps = FPS_DEFECTO,
     onProgreso,
+    fotoDataUrl = null,
+    estiloFoto = null,
   } = opciones;
 
   if (typeof MediaRecorder === "undefined") {
@@ -599,10 +856,9 @@ export async function generarVideoRecorrido(
     throw new Error("El recorrido no tiene suficientes puntos para animar.");
   }
 
-  const [logoDataUrl, fondoDataUrl, mapa] = await Promise.all([
-    cargarImagenComoDataUrl("/logo-legion-roller.png"),
-    cargarImagenComoDataUrl("/fondo-mis-rutas.jpg"),
-    generarMapaReal(datos.puntos),
+  const [logoDataUrl, mapa] = await Promise.all([
+    cargarImagenComoDataUrl("/logo-legion-roller-mini.png"),
+    generarMapaReal(datos.puntos, ANCHO_VIDEO, ALTO_VIDEO),
   ]);
 
   const distanciaAcumuladaKm = [0];
@@ -612,15 +868,40 @@ export async function generarVideoRecorrido(
     );
   }
 
+  const { punto: puntoVelMax, indice: indiceVelMax, kmh: kmhVelMax } = velocidadMaximaConPunto(datos.puntos);
+  // El pin de "foto en el mapa" se clava, por defecto, en la mitad del
+  // recorrido POR DISTANCIA (no por índice ni por tiempo -- así se ve
+  // centrado en el trazo incluso si el usuario se detuvo mucho rato en un
+  // tramo, lo que dejaría muchos más puntos ahí).
+  const mitadDistanciaKm = datos.distanciaKm / 2;
+  let indiceFotoMapa = 0;
+  while (
+    indiceFotoMapa < distanciaAcumuladaKm.length - 1 &&
+    distanciaAcumuladaKm[indiceFotoMapa] < mitadDistanciaKm
+  ) {
+    indiceFotoMapa++;
+  }
+
+  const config: ConfigVideo = {
+    puntoVelMax,
+    distanciaVelMaxKm: indiceVelMax >= 0 ? distanciaAcumuladaKm[indiceVelMax] : Infinity,
+    kmhVelMax,
+    fotoDataUrl,
+    estiloFoto,
+    puntoFotoMapa: estiloFoto === "mapa" && fotoDataUrl ? datos.puntos[indiceFotoMapa] : null,
+    distanciaFotoMapaKm: distanciaAcumuladaKm[indiceFotoMapa] ?? Infinity,
+  };
+
   const canvas = document.createElement("canvas");
-  canvas.width = ANCHO * ESCALA;
-  canvas.height = ALTO * ESCALA;
+  canvas.width = ANCHO_VIDEO;
+  canvas.height = ALTO_VIDEO;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("No se pudo preparar el video.");
 
-  async function dibujarFrame(fraccion: number) {
-    const frame = estadoEnFraccion(datos, distanciaAcumuladaKm, fraccion);
-    const svg = construirSvg(datos, logoDataUrl, fondoDataUrl, mapa, frame);
+  async function dibujarFrame(fraccionTotal: number, mostrarFotoFinal: boolean) {
+    const fraccionTrazo = Math.min(1, fraccionTotal / FRACCION_TRAZO_COMPLETO);
+    const frame = estadoEnFraccion(datos, distanciaAcumuladaKm, fraccionTrazo);
+    const svg = construirSvgVideo(datos, logoDataUrl, mapa, frame, fraccionTotal, config, mostrarFotoFinal);
     const svgDataUrl = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`;
     await new Promise<void>((resolve, reject) => {
       const img = new Image();
@@ -636,7 +917,7 @@ export async function generarVideoRecorrido(
 
   // Primer cuadro dibujado ANTES de arrancar a grabar, para no capturar un
   // instante en blanco mientras carga la primera imagen.
-  await dibujarFrame(0);
+  await dibujarFrame(0, false);
 
   const stream = canvas.captureStream(fps);
   const mediaRecorder = new MediaRecorder(stream, { mimeType: elegirMimeTypeVideo() });
@@ -654,14 +935,16 @@ export async function generarVideoRecorrido(
   const totalFrames = Math.round(duracionAnimSeg * fps);
   const intervaloMs = 1000 / fps;
   for (let f = 0; f <= totalFrames; f++) {
-    await dibujarFrame(f / totalFrames);
+    await dibujarFrame(f / totalFrames, false);
     onProgreso?.(f / totalFrames);
     await new Promise((r) => setTimeout(r, intervaloMs));
   }
 
-  // Cuadro final (con las 4 estadísticas completas) congelado unos segundos
-  // más, para que en redes sociales alcance a leerse antes de que corte.
-  await dibujarFrame(1);
+  // Cuadro final congelado unos segundos más, para que en redes sociales
+  // alcance a leerse antes de que corte -- panorámica del recorrido
+  // completo, o la foto de portada si el usuario eligió estiloFoto "final".
+  const mostrarFotoFinal = estiloFoto === "final" && !!fotoDataUrl;
+  await dibujarFrame(1, mostrarFotoFinal);
   await new Promise((r) => setTimeout(r, duracionFinalSeg * 1000));
 
   mediaRecorder.stop();

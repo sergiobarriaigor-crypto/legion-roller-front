@@ -59,6 +59,38 @@ export function velocidadMaximaKmH(puntos: PuntoGps[]): number {
   return maxima;
 }
 
+export interface VelocidadMaximaConPunto {
+  kmh: number;
+  // Punto e índice (dentro de `puntos`) donde se alcanzó -- el índice sirve
+  // para ubicar el tramo dentro de una animación (ver tarjetaRecorrido.ts,
+  // que necesita saber en qué fracción del recorrido "prender" la marca de
+  // velocidad máxima sobre el mapa). null si el recorrido no tiene ningún
+  // tramo confiable (ver DT_MINIMO_CONFIABLE_SEG).
+  punto: PuntoGps | null;
+  indice: number;
+}
+
+// Misma lógica que velocidadMaximaKmH, pero además devuelve DÓNDE pasó --
+// pensado para el video del recorrido, que marca ese punto sobre el mapa en
+// vez de mostrar solo el número.
+export function velocidadMaximaConPunto(puntos: PuntoGps[]): VelocidadMaximaConPunto {
+  let maxima = 0;
+  let punto: PuntoGps | null = null;
+  let indice = -1;
+  for (let i = 1; i < puntos.length; i++) {
+    const dtSeg = (puntos[i].timestamp - puntos[i - 1].timestamp) / 1000;
+    if (dtSeg < DT_MINIMO_CONFIABLE_SEG) continue;
+    const distKm = distanciaHaversineKm(puntos[i - 1], puntos[i]);
+    const kmh = (distKm / dtSeg) * 3600;
+    if (kmh > maxima && kmh <= VELOCIDAD_PLAUSIBLE_MAX_KMH) {
+      maxima = kmh;
+      punto = puntos[i];
+      indice = i;
+    }
+  }
+  return { kmh: maxima, punto, indice };
+}
+
 // El GPS real nunca cae justo en la línea recta -- un tramo recto de verdad
 // se ve con un zigzag de unos metros que nunca pasó. Esto es SOLO para
 // dibujar la línea (Polyline del mapa, vista previa chica de Mis Rutas) --

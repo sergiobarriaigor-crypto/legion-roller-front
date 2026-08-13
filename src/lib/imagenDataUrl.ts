@@ -36,3 +36,16 @@ export function cargarImagenComoDataUrl(ruta: string): Promise<string | null> {
     .catch(() => null)
     .finally(() => clearTimeout(idTimeout));
 }
+
+// Convierte un archivo ya elegido localmente (<input type="file">) a data
+// URL -- a diferencia de cargarImagenComoDataUrl() de arriba, no hay que
+// pedirlo por red (el archivo ya está en memoria), así que es directo
+// File -> FileReader sin fetch ni timeout.
+export function leerArchivoComoDataUrl(archivo: File): Promise<string | null> {
+  return new Promise((resolve) => {
+    const lector = new FileReader();
+    lector.onload = () => resolve(typeof lector.result === "string" ? lector.result : null);
+    lector.onerror = () => resolve(null);
+    lector.readAsDataURL(archivo);
+  });
+}
