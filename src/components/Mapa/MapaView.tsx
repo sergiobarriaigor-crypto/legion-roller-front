@@ -870,10 +870,22 @@ export function MapaView() {
 
         if (necesitaCentrarInicialRef.current && mapRef.current) {
           necesitaCentrarInicialRef.current = false;
-          moverCamaraProgramaticamente(() =>
-            mapRef.current!.flyTo([punto.lat, punto.lon], ZOOM_CENTRADO_AUTOMATICO),
-          );
-          marcarSiguiendo(true);
+          // El primer fix real del GPS (sobre todo en frío, con el plugin
+          // nativo en segundo plano) puede tardar bastante en llegar --
+          // varios segundos, a veces más de 20. Si en ese lapso el usuario
+          // ya agarró el mapa a mano para explorar (arrastre o pellizco,
+          // ver exploracionManualActiva), este centrado automático no debe
+          // pelearle la cámara: sin este chequeo, apenas llegaba ese primer
+          // fix se descartaba de golpe cualquier exploración manual ya en
+          // curso, aunque el usuario llevara rato mirando otra parte del
+          // mapa tranquilo (reporte real: "al querer navegar por el mapa,
+          // vuelve a mi avatar activado").
+          if (!exploracionManualActiva) {
+            moverCamaraProgramaticamente(() =>
+              mapRef.current!.flyTo([punto.lat, punto.lon], ZOOM_CENTRADO_AUTOMATICO),
+            );
+            marcarSiguiendo(true);
+          }
         } else if (siguiendoRef.current && mapRef.current) {
           // Modo seguimiento: recentra el mapa en cada posición nueva, como en
           // la navegación de Google Maps, mientras el usuario no lo haya
