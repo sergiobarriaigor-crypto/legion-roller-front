@@ -256,6 +256,14 @@ interface MapaGenerado {
 // con contenido cross-origin. Si no hay conexión o los tiles no cargan,
 // devuelve null y el llamador usa un mapa vectorial de respaldo — la
 // tarjeta nunca se rompe por esto.
+// Tope de tiles a pedir por capa. El video con cámara rotable (ver
+// generarVideoRecorrido) pide una zona bastante más grande que lo que
+// realmente se ve en pantalla en cada instante -- necesita ese margen para
+// que, al rotar, nunca se asome un borde sin imagen (ver TAMANO_MAPA_VIDEO)
+// -- así que el tope original (pensado solo para el recuadro chico de la
+// tarjeta) se sube para darle espacio a ese caso.
+const MAX_TILES_MAPA = 90;
+
 async function generarMapaReal(
   puntos: PuntoGps[],
   anchoDestino: number,
@@ -268,6 +276,16 @@ async function generarMapaReal(
   // tarjeta estática (generarTarjetaRecorrido) sigue pidiendo las
   // etiquetas como siempre.
   incluirEtiquetas: boolean = true,
+  // anchoFetch/altoFetch: tamaño real del área de tiles a descargar y
+  // componer, que puede ser MAYOR que anchoDestino/altoDestino -- el zoom
+  // se elige igual para que el recorrido entre en anchoDestino/altoDestino
+  // (así la vista final panorámica del video sigue calzando con la
+  // pantalla), pero se descarga un área más grande alrededor del mismo
+  // centro para tener margen extra (lo usa la cámara rotable del video).
+  // Por defecto igual a anchoDestino/altoDestino (comportamiento de
+  // siempre para la tarjeta estática).
+  anchoFetch: number = anchoDestino,
+  altoFetch: number = altoDestino,
 ): Promise<MapaGenerado | null> {
   try {
     const lats = puntos.map((p) => p.lat);
@@ -281,8 +299,8 @@ async function generarMapaReal(
     const centroPxX = lonAPixelX((minLon + maxLon) / 2, zoom);
     const centroPxY = latAPixelY((minLat + maxLat) / 2, zoom);
 
-    const tiles = calcularTilesNecesarios(centroPxX, centroPxY, zoom, anchoDestino, altoDestino);
-    if (tiles.length === 0 || tiles.length > 48) return null;
+    const tiles = calcularTilesNecesarios(centroPxX, centroPxY, zoom, anchoFetch, altoFetch);
+    if (tiles.length === 0 || tiles.length > MAX_TILES_MAPA) return null;
 
     const [imagenesBase, imagenesEtiquetas] = await Promise.all([
       Promise.all(tiles.map((t) => cargarTileComoImagen(urlTile(TILE_SATELITE_URL, zoom, t.x, t.y)))),
@@ -298,8 +316,8 @@ async function generarMapaReal(
     // así que acá se estiran al dibujarse (misma nitidez que ya se ve en el
     // mapa satelital dentro de la app).
     const canvas = document.createElement("canvas");
-    canvas.width = anchoDestino * ESCALA;
-    canvas.height = altoDestino * ESCALA;
+    canvas.width = anchoFetch * ESCALA;
+    canvas.height = altoFetch * ESCALA;
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
     ctx.fillStyle = "#1a1108";
@@ -583,16 +601,6 @@ const FUNDIDO_INTRO_SEG = 0.6;
 const DURACION_CIERRE_SEG_DEFECTO = 2.2;
 const FPS_DEFECTO = 24;
 
-// Cuánto tarda en aparecer/desaparecer y cuánto se sostiene cada etiqueta de
-// sector (ver EtiquetaTiempoVideo más abajo) -- reemplaza al pin clavado
-// sobre el mapa: en un recorrido largo la cámara se mueve/acerca bastante
-// (sobre todo en el formato vertical del video) y una etiqueta que viaja
-// pegada a su punto real terminaba paseándose por toda la pantalla o
-// quedando pegada a un borde. Como letrero fijo (estilo subtítulo) se lee
-// igual de bien sin importar cuánto se mueva la cámara detrás.
-const FADE_ETIQUETA_SEG = 0.45;
-const HOLD_ETIQUETA_SEG = 2.0;
-
 // Tamaño del video rediseñado: vertical 9:16 real (a diferencia de la
 // tarjeta 800x1150), porque ya no hay marco de tarjeta -- el mapa ocupa la
 // pantalla completa, así que tiene sentido usar la proporción real de un
@@ -611,6 +619,17 @@ const ESCALA_CAMARA_CERCANA = 1.35;
 // arranca el alejamiento final -- el resto (hasta 1) es pura transición de
 // cámara, sin más avance de distancia/tiempo.
 const FRACCION_TRAZO_COMPLETO = 0.82;
+
+// Lado del área de mapa (cuadrada) que se descarga para el video -- mucho
+// más grande que ANCHO_VIDEO x ALTO_VIDEO a propósito: con la cámara
+// rotando para apuntar siempre en la dirección de avance (rumbo), un
+// rectángulo que antes cabía justo en la pantalla, al girar, necesita
+// imagen de mapa más allá de sus propios bordes originales (una franja
+// rotada "sobresale" de su caja sin rotar) -- si no hay margen ahí aparece
+// un hueco sin imagen. 1600px de lado le da margen de sobra al radio que
+// necesita cualquier rotación durante el acercamiento cercano (ver
+// estadoCamara) sin disparar la cantidad de tiles a descargar.
+const TAMANO_MAPA_VIDEO = 1600;
 
 function suavizar(t: number): number {
   const c = Math.min(1, Math.max(0, t));
@@ -685,43 +704,56 @@ interface EstadoCamara {
   cx: number;
   cy: number;
   escala: number;
+  // Ángulo (radianes) que se le resta a la vista para que la dirección de
+  // avance quede siempre apuntando hacia arriba en pantalla (rumbo) -- 0 =
+  // mapa norte-arriba, sin rotar.
+  rotacion: number;
 }
 
 // Durante el trazo (fraccionTotal hasta FRACCION_TRAZO_COMPLETO) la cámara
 // sigue de cerca el punto actual, con el acercamiento fijo de
-// ESCALA_CAMARA_CERCANA. En el tramo final se aleja con una curva suave
-// (suavizar(), no lineal, para que se sienta como una desaceleración real de
-// cámara) hasta volver a escala 1 centrada en el recorrido completo -- la
-// panorámica de cierre.
+// ESCALA_CAMARA_CERCANA, y rota para que la dirección de avance (rumbo)
+// apunte siempre hacia arriba (estilo navegador GPS). En el tramo final se
+// aleja con una curva suave (suavizar(), no lineal, para que se sienta como
+// una desaceleración real de cámara) hasta volver a escala 1 y rotación 0
+// (norte arriba) centrada en el recorrido completo -- la panorámica de
+// cierre.
 //
 // El punto perseguido se "clampea" (nunca se deja centrar la cámara más
-// cerca del borde de lo que el acercamiento permite) -- el mapa cargado
-// cubre EXACTAMENTE el cuadro a escala 1, así que perseguir de cerca (1.35x)
-// un punto pegado al borde (típicamente el de inicio/fin) dejaría ver, más
-// allá del borde del mapa, un vacío sin imagen (franja negra). Con el
-// clamp, cerca del borde la cámara deja de seguir el punto exacto y se
-// queda quieta en el máximo desplazamiento que el mapa cargado alcanza a
-// cubrir -- se pierde algo de precisión del seguimiento justo ahí, pero
-// nunca se sale del mapa real.
+// cerca del borde de lo que el acercamiento + la rotación permiten). Con
+// rotación activa, el radio seguro no es simplemente medio ancho/alto de
+// pantalla (como bastaba sin rotar): una vista rectangular girada barre un
+// área más grande que su propia caja sin rotar, así que el margen debe
+// alcanzar para el caso más ancho posible -- el círculo que envuelve toda
+// la pantalla visible (su diagonal/2), sin importar el ángulo de ese
+// instante. TAMANO_MAPA_VIDEO (el mapa cargado, mucho más grande que la
+// pantalla, ver esa constante) es lo que le da a este radio espacio de
+// sobra sin asomar un borde sin imagen.
 function estadoCamara(
   fraccionTotal: number,
   focoTrazando: { x: number; y: number },
   focoCentro: { x: number; y: number },
+  rumboActual: number,
 ): EstadoCamara {
   const mitadVisibleX = ANCHO_VIDEO / (2 * ESCALA_CAMARA_CERCANA);
   const mitadVisibleY = ALTO_VIDEO / (2 * ESCALA_CAMARA_CERCANA);
+  const radioSeguroRotacion = Math.hypot(mitadVisibleX, mitadVisibleY);
+  const mitadMapaVideo = TAMANO_MAPA_VIDEO / 2;
+  const mitadSeguraX = Math.max(0, mitadMapaVideo - radioSeguroRotacion);
+  const mitadSeguraY = Math.max(0, mitadMapaVideo - radioSeguroRotacion);
   const focoCercano = {
-    x: Math.min(Math.max(focoTrazando.x, mitadVisibleX), ANCHO_VIDEO - mitadVisibleX),
-    y: Math.min(Math.max(focoTrazando.y, mitadVisibleY), ALTO_VIDEO - mitadVisibleY),
+    x: clamp(focoTrazando.x, ANCHO_VIDEO / 2 - mitadSeguraX, ANCHO_VIDEO / 2 + mitadSeguraX),
+    y: clamp(focoTrazando.y, ALTO_VIDEO / 2 - mitadSeguraY, ALTO_VIDEO / 2 + mitadSeguraY),
   };
   if (fraccionTotal <= FRACCION_TRAZO_COMPLETO) {
-    return { cx: focoCercano.x, cy: focoCercano.y, escala: ESCALA_CAMARA_CERCANA };
+    return { cx: focoCercano.x, cy: focoCercano.y, escala: ESCALA_CAMARA_CERCANA, rotacion: rumboActual };
   }
   const t = suavizar((fraccionTotal - FRACCION_TRAZO_COMPLETO) / (1 - FRACCION_TRAZO_COMPLETO));
   return {
     cx: focoCercano.x + (focoCentro.x - focoCercano.x) * t,
     cy: focoCercano.y + (focoCentro.y - focoCercano.y) * t,
     escala: ESCALA_CAMARA_CERCANA + (1 - ESCALA_CAMARA_CERCANA) * t,
+    rotacion: rumboActual * (1 - t),
   };
 }
 
@@ -792,68 +824,66 @@ function dibujarCirculoConImagen(
   ctx.stroke();
 }
 
-// Ventana de aparición/desaparición de una etiqueta de sector, precalculada
-// una sola vez en generarVideoRecorrido() a partir de su distanciaKm real --
-// ver FADE_ETIQUETA_SEG/HOLD_ETIQUETA_SEG. Todo en unidades de fraccionTotal
-// (0 a 1, la misma fracción que ya recibe dibujarCuadroVideo) para no tener
-// que pasar el tiempo real en segundos por todo el pipeline de dibujo.
-interface EtiquetaTiempoVideo {
-  nombre: string;
-  inicioFraccion: number;
-  finFadeInFraccion: number;
-  finHoldFraccion: number;
-  finFraccion: number;
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.min(Math.max(v, lo), hi);
 }
 
-function alphaEtiqueta(et: EtiquetaTiempoVideo, fraccionTotal: number): number {
-  if (fraccionTotal < et.inicioFraccion || fraccionTotal > et.finFraccion) return 0;
-  if (fraccionTotal < et.finFadeInFraccion) {
-    return et.finFadeInFraccion > et.inicioFraccion
-      ? (fraccionTotal - et.inicioFraccion) / (et.finFadeInFraccion - et.inicioFraccion)
-      : 1;
-  }
-  if (fraccionTotal < et.finHoldFraccion) return 1;
-  return et.finFraccion > et.finHoldFraccion
-    ? 1 - (fraccionTotal - et.finHoldFraccion) / (et.finFraccion - et.finHoldFraccion)
-    : 0;
-}
-
-// Letrero con el nombre del sector (ej. "Antonio Varas"), estilo subtítulo:
-// posición FIJA en pantalla (no clavado sobre el mapa) -- a diferencia de la
-// versión anterior, no se mueve ni se acerca/aleja con la cámara. Aparece
-// con un fundido de entrada, se sostiene un rato y se desvanece solo, en vez
-// de seguir pegado a su punto real (que en un recorrido largo, con la cámara
-// moviéndose bastante en el formato vertical, terminaba paseándose por la
-// pantalla o quedando forzado contra un borde).
-function dibujarCaptionSector(ctx: CanvasRenderingContext2D, texto: string, alpha: number) {
-  if (alpha <= 0) return;
-  ctx.save();
-  ctx.globalAlpha = alpha;
-  ctx.font = "700 20px Arial, sans-serif";
+// Casilla con el nombre del sector (ej. "Antonio Varas"), clavada sobre el
+// mapa en su posición geográfica real -- se revela cuando el trazo llega a
+// su distanciaKm y desde ahí queda fija ahí el resto del video (va
+// "quedando atrás" a medida que el trazo sigue avanzando; en la toma final
+// panorámica ya se cumplieron todas las distancias, así que las 3 etiquetas
+// se ven juntas sobre el recorrido completo). Se dibuja con la
+// transformación de cámara (pan/zoom/rotación) ya aplicada -- se clampea en
+// espacio de PANTALLA, invirtiendo esa transformación completa (2x2, no
+// sólo el eje X), para que la casilla nunca quede cortada en ningún borde
+// sin importar dónde esté el punto real, cuánto haya acercado la cámara ni
+// cuánto haya rotado en este cuadro puntual.
+function dibujarEtiquetaSector(ctx: CanvasRenderingContext2D, mapX: number, mapY: number, texto: string) {
+  ctx.font = "700 15px Arial, sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   const anchoTexto = ctx.measureText(texto).width;
-  const paddingX = 22;
+  const paddingX = 12;
   const anchoCaja = anchoTexto + paddingX * 2;
-  const altoCaja = 46;
-  const cx = ANCHO_VIDEO / 2;
-  const cy = ALTO_VIDEO - 130;
+  const altoCaja = 26;
 
-  ctx.shadowColor = "rgba(0,0,0,0.65)";
-  ctx.shadowBlur = 10;
-  ctx.fillStyle = "rgba(13,10,6,0.85)";
-  dibujarRectRedondeado(ctx, cx - anchoCaja / 2, cy - altoCaja / 2, anchoCaja, altoCaja, altoCaja / 2);
-  ctx.shadowColor = "transparent";
-  ctx.shadowBlur = 0;
+  const t = ctx.getTransform();
+  const margenPantalla = 12;
+  const screenX = t.a * mapX + t.c * mapY + t.e;
+  const screenY = t.b * mapX + t.d * mapY + t.f;
+  const screenXClamp = clamp(screenX, margenPantalla + anchoCaja / 2, ANCHO_VIDEO - margenPantalla - anchoCaja / 2);
+  const screenYClamp = clamp(screenY, margenPantalla + altoCaja / 2, ALTO_VIDEO - margenPantalla - altoCaja / 2);
+
+  // Resuelve el sistema 2x2 [a c; b d] * (cx,cy) = (screenXClamp,screenYClamp)
+  // -e,-f -- la inversión completa (no solo en X) hace falta porque con la
+  // cámara rotando, un punto cerca del borde superior/inferior también
+  // puede terminar cortado en X o Y según el ángulo de ese instante.
+  const det = t.a * t.d - t.b * t.c;
+  let cx = mapX;
+  let cy = mapY;
+  if (Math.abs(det) > 1e-6) {
+    const dxScreen = screenXClamp - screenX;
+    const dyScreen = screenYClamp - screenY;
+    cx = mapX + (t.d * dxScreen - t.c * dyScreen) / det;
+    cy = mapY + (-t.b * dxScreen + t.a * dyScreen) / det;
+  }
+
+  ctx.save();
+  ctx.shadowColor = "rgba(0,0,0,0.6)";
+  ctx.shadowBlur = 8;
+  ctx.fillStyle = "rgba(13,10,6,0.8)";
+  trazarRectRedondeado(ctx, cx - anchoCaja / 2, cy - altoCaja / 2, anchoCaja, altoCaja, altoCaja / 2);
+  ctx.fill();
+  ctx.restore();
 
   trazarRectRedondeado(ctx, cx - anchoCaja / 2, cy - altoCaja / 2, anchoCaja, altoCaja, altoCaja / 2);
   ctx.strokeStyle = DORADO_BORDE;
-  ctx.lineWidth = 1.4;
+  ctx.lineWidth = 1.2;
   ctx.stroke();
 
   ctx.fillStyle = DORADO;
   ctx.fillText(texto, cx, cy + 1);
-  ctx.restore();
 }
 
 // Color del trazo según qué tan rápido se iba en ese tramo -- mismo tono
@@ -991,11 +1021,11 @@ interface ConfigVideo {
   estiloFoto: EstiloFotoVideo | null;
   puntoFotoMapa: PuntoGps | null;
   distanciaFotoMapaKm: number;
-  // Hasta 3 etiquetas de lugar (ver DatosTarjetaRecorrido.sectoresRuta), cada
-  // una con su propia ventana de aparición/desaparición ya calculada a
-  // partir de su distanciaKm real -- se dibujan como letrero fijo en
-  // pantalla (dibujarCaptionSector), no clavadas sobre el mapa.
-  etiquetasTiempo: EtiquetaTiempoVideo[];
+  // Hasta 3 etiquetas de lugar (ver DatosTarjetaRecorrido.sectoresRuta),
+  // cada una revelándose sobre el mapa recién cuando el trazo llega a su
+  // distanciaKm -- igual criterio que la marca de velocidad máxima y el pin
+  // de foto, en vez de una sola etiqueta fija todo el video.
+  sectoresRuta: { lat: number; lon: number; nombre: string; distanciaKm: number }[];
   // Velocidad (km/h) de cada tramo entre puntos consecutivos, para colorear
   // el trazo según qué tan rápido se iba ahí -- velocidadesKmh[j] es la
   // velocidad LLEGANDO al punto j (0 para j=0). kmhReferenciaColor es el
@@ -1024,6 +1054,7 @@ function dibujarCuadroVideo(
   config: ConfigVideo,
   mostrarFotoFinal: boolean,
   pulsoVelMax = 0,
+  rumboActual = 0,
 ) {
   const { puntos } = datos;
   const distanciaMostrar = frame.distanciaKm;
@@ -1066,7 +1097,7 @@ function dibujarCuadroVideo(
   const fin = puntos[puntos.length - 1];
   const focoActual = frame.posicionActual ?? fin;
   const focoTrazandoPx = { x: x(focoActual.lon), y: y(focoActual.lat) };
-  const camara = estadoCamara(fraccionTotal, focoTrazandoPx, focoCentroPx);
+  const camara = estadoCamara(fraccionTotal, focoTrazandoPx, focoCentroPx, rumboActual);
 
   ctx.save();
   ctx.beginPath();
@@ -1074,13 +1105,23 @@ function dibujarCuadroVideo(
   ctx.clip();
   ctx.translate(ANCHO_VIDEO / 2, ALTO_VIDEO / 2);
   ctx.scale(camara.escala, camara.escala);
+  ctx.rotate(-camara.rotacion);
   ctx.translate(-camara.cx, -camara.cy);
 
+  // El mapa cargado es más grande que la pantalla (TAMANO_MAPA_VIDEO, ver esa
+  // constante) -- se dibuja/rellena centrado en el mismo punto que antes
+  // (route-center, que x()/y() ya calibran a ANCHO_VIDEO/2,ALTO_VIDEO/2), así
+  // que el offset es negativo: el margen extra queda "fuera" del cuadro sin
+  // rotar, listo para cuando la rotación lo necesite. El relleno de respaldo
+  // (sin mapa real cargado) usa el mismo área grande -- si solo rellenara
+  // ANCHO_VIDEO x ALTO_VIDEO, al rotar se asomarían esquinas sin pintar.
+  const offsetX = (ANCHO_VIDEO - TAMANO_MAPA_VIDEO) / 2;
+  const offsetY = (ALTO_VIDEO - TAMANO_MAPA_VIDEO) / 2;
   if (mapaImg) {
-    ctx.drawImage(mapaImg, 0, 0, ANCHO_VIDEO, ALTO_VIDEO);
+    ctx.drawImage(mapaImg, offsetX, offsetY, TAMANO_MAPA_VIDEO, TAMANO_MAPA_VIDEO);
   } else {
     ctx.fillStyle = "#1a1108";
-    ctx.fillRect(0, 0, ANCHO_VIDEO, ALTO_VIDEO);
+    ctx.fillRect(offsetX, offsetY, TAMANO_MAPA_VIDEO, TAMANO_MAPA_VIDEO);
   }
 
   // El trazo se dibuja tramo a tramo (no una sola polyline) para poder
@@ -1120,19 +1161,17 @@ function dibujarCuadroVideo(
     dibujarPinFoto(ctx, config.fotoImg, x(config.puntoFotoMapa.lon), y(config.puntoFotoMapa.lat), 30);
   }
 
-  ctx.restore();
-
-  // Etiqueta de sector activa: letrero fijo en pantalla (no se mueve con el
-  // mapa), así que se dibuja DESPUÉS del ctx.restore() de la cámara. Si dos
-  // ventanas llegaran a solaparse (recorrido corto con sectores muy
-  // seguidos), gana la más reciente -- se prefiere un corte limpio de una
-  // etiqueta a otra en vez de mostrar dos superpuestas.
-  let etiquetaActiva: { nombre: string; alpha: number } | null = null;
-  for (const et of config.etiquetasTiempo) {
-    const alpha = alphaEtiqueta(et, fraccionTotal);
-    if (alpha > 0) etiquetaActiva = { nombre: et.nombre, alpha };
+  // Las etiquetas de sector se dibujan al final (encima de todo lo demás,
+  // como una etiqueta real de mapa) y cada una recién cuando el trazo llega
+  // a su propia distancia -- así en un recorrido largo van apareciendo de a
+  // una en su ubicación real, en vez de una sola fija todo el video.
+  for (const etiqueta of config.sectoresRuta) {
+    if (distanciaMostrar >= etiqueta.distanciaKm) {
+      dibujarEtiquetaSector(ctx, x(etiqueta.lon), y(etiqueta.lat) - 40, etiqueta.nombre);
+    }
   }
-  if (etiquetaActiva) dibujarCaptionSector(ctx, etiquetaActiva.nombre, etiquetaActiva.alpha);
+
+  ctx.restore();
 
   // Cuadro de cierre (panorámica, sin foto o con estiloFoto "mapa"): la
   // barra de arriba se agranda un poco para sumar vel. promedio/máxima como
@@ -1289,7 +1328,12 @@ export async function generarVideoRecorrido(
 
   const [logoGrandeDataUrl, mapa, avatarDataUrl] = await Promise.all([
     cargarImagenComoDataUrl("/logo-legion-roller.png"),
-    generarMapaReal(datos.puntos, ANCHO_VIDEO, ALTO_VIDEO, false),
+    // El zoom se elige igual para que el recorrido calce en ANCHO_VIDEO x
+    // ALTO_VIDEO (así la panorámica final no cambia), pero se descarga un
+    // área más grande (TAMANO_MAPA_VIDEO) alrededor del mismo centro -- la
+    // cámara con rotación de rumbo la necesita para no asomar bordes sin
+    // imagen al girar (ver dibujarCuadroVideo/estadoCamara).
+    generarMapaReal(datos.puntos, ANCHO_VIDEO, ALTO_VIDEO, false, TAMANO_MAPA_VIDEO, TAMANO_MAPA_VIDEO),
     avatarUrl ? cargarImagenComoDataUrl(avatarUrl) : Promise.resolve(null),
   ]);
 
@@ -1335,29 +1379,6 @@ export async function generarVideoRecorrido(
     indiceFotoMapa++;
   }
 
-  // Convierte cada etiqueta de DatosTarjetaRecorrido.sectoresRuta (lat/lon +
-  // distanciaKm real) en su ventana de aparición dentro de la animación --
-  // distanciaMostrar avanza LINEAL con fraccionTotal durante el trazo (ver
-  // estadoEnFraccion), así que alcanza con despejar en qué fraccionTotal se
-  // cruza esa distancia, sin necesitar la posición geográfica para nada más
-  // (la etiqueta ya no se dibuja sobre el mapa, ver dibujarCaptionSector).
-  const etiquetasTiempo: EtiquetaTiempoVideo[] = (datos.sectoresRuta ?? []).map((etiqueta) => {
-    const inicioFraccion =
-      datos.distanciaKm > 0
-        ? Math.min(FRACCION_TRAZO_COMPLETO, (etiqueta.distanciaKm / datos.distanciaKm) * FRACCION_TRAZO_COMPLETO)
-        : 0;
-    const fadeInFraccion = FADE_ETIQUETA_SEG / duracionAnimSeg;
-    const holdFraccion = HOLD_ETIQUETA_SEG / duracionAnimSeg;
-    const fadeOutFraccion = FADE_ETIQUETA_SEG / duracionAnimSeg;
-    return {
-      nombre: etiqueta.nombre,
-      inicioFraccion,
-      finFadeInFraccion: inicioFraccion + fadeInFraccion,
-      finHoldFraccion: inicioFraccion + fadeInFraccion + holdFraccion,
-      finFraccion: inicioFraccion + fadeInFraccion + holdFraccion + fadeOutFraccion,
-    };
-  });
-
   const config: ConfigVideo = {
     puntoVelMax,
     distanciaVelMaxKm: indiceVelMax >= 0 ? distanciaAcumuladaKm[indiceVelMax] : Infinity,
@@ -1366,7 +1387,7 @@ export async function generarVideoRecorrido(
     estiloFoto,
     puntoFotoMapa: estiloFoto === "mapa" && fotoImg ? datos.puntos[indiceFotoMapa] : null,
     distanciaFotoMapaKm: distanciaAcumuladaKm[indiceFotoMapa] ?? Infinity,
-    etiquetasTiempo,
+    sectoresRuta: datos.sectoresRuta ?? [],
     velocidadesKmh,
     kmhReferenciaColor: Math.max(kmhVelMax, 8),
   };
@@ -1402,10 +1423,50 @@ export async function generarVideoRecorrido(
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("No se pudo preparar el video.");
 
+  // Rumbo (dirección de avance) suavizado cuadro a cuadro -- se guarda como
+  // vector unitario (no como ángulo) para promediarlo sin problemas de
+  // "salto" al cruzar 360°/0°; ALPHA_RUMBO bajo = reacciona lento a cambios
+  // puntuales (evita que el ruido normal del GPS, sobre todo casi detenido,
+  // haga temblar la rotación de la cámara).
+  let rumboVecX = 0;
+  let rumboVecY = -1;
+  let rumboUltimaFraccion = -1;
+  const ALPHA_RUMBO = 0.12;
+
+  function calcularRumbo(frame: FrameAnimado, fraccionTrazo: number): number {
+    // La pausa de velocidad máxima (ver PAUSA_VELMAX_MS) redibuja varios
+    // cuadros seguidos con el trazo CONGELADO en la misma fracción -- sin
+    // este guard, cada una de esas repeticiones promediaría el mismo tramo
+    // instantáneo de nuevo, y el suavizado terminaría saltando de golpe a
+    // esa dirección puntual en vez de mantenerse estable durante la pausa.
+    const pts = frame.puntosTrazo;
+    if (fraccionTrazo !== rumboUltimaFraccion && pts.length >= 2) {
+      rumboUltimaFraccion = fraccionTrazo;
+      const a = pts[pts.length - 2];
+      const b = pts[pts.length - 1];
+      const dx = x(b.lon) - x(a.lon);
+      const dy = y(b.lat) - y(a.lat);
+      const mag = Math.hypot(dx, dy);
+      if (mag > 0.001) {
+        rumboVecX += (dx / mag - rumboVecX) * ALPHA_RUMBO;
+        rumboVecY += (dy / mag - rumboVecY) * ALPHA_RUMBO;
+        const norm = Math.hypot(rumboVecX, rumboVecY) || 1;
+        rumboVecX /= norm;
+        rumboVecY /= norm;
+      }
+    }
+    // atan2(dx,-dy): ángulo del vector de avance medido en sentido horario
+    // desde "arriba" -- 0 = yendo hacia el norte del mapa (mismo criterio
+    // que un rumbo/bearing de brújula), consistente con cómo ctx.rotate()
+    // gira visualmente en un canvas (eje Y hacia abajo).
+    return Math.atan2(rumboVecX, -rumboVecY);
+  }
+
   function dibujarFrame(fraccionTotal: number, mostrarFotoFinal: boolean, pulsoVelMax = 0) {
     const fraccionTrazo = Math.min(1, fraccionTotal / FRACCION_TRAZO_COMPLETO);
     const frame = estadoEnFraccion(datos, distanciaAcumuladaKm, fraccionTrazo);
-    dibujarCuadroVideo(ctx!, datos, mapaImg, x, y, focoCentroPx, frame, fraccionTotal, config, mostrarFotoFinal, pulsoVelMax);
+    const rumbo = calcularRumbo(frame, fraccionTrazo);
+    dibujarCuadroVideo(ctx!, datos, mapaImg, x, y, focoCentroPx, frame, fraccionTotal, config, mostrarFotoFinal, pulsoVelMax, rumbo);
   }
 
   // Primer cuadro dibujado ANTES de arrancar a grabar, para no capturar un
