@@ -380,6 +380,12 @@ export function MapaView() {
   const [mapeado, setMapeado] = useState(false);
   const mapeadoRef = useRef(false);
   const [puntosGrabados, setPuntosGrabados] = useState<PuntoGps[]>([]);
+  // Antes solo se calculaba la distancia una vez, al finalizar (ver
+  // finalizarModo) -- no había forma de saber "cuánto llevo" a mitad de un
+  // recorrido sin cortarlo. Se recalcula acá en cada punto nuevo (mismos
+  // puntosGrabados que ya se usan para dibujar la línea) para mostrarlo en
+  // vivo mientras el modo sigue activo.
+  const distanciaActualKm = useMemo(() => distanciaTotalKm(puntosGrabados), [puntosGrabados]);
   const [resumen, setResumen] = useState<{ distanciaKm: number; duracionSeg: number } | null>(null);
   const [emergenciasActivas, setEmergenciasActivas] = useState<EmergenciaActiva[]>([]);
   const [mensaje, setMensaje] = useState("");
@@ -1823,6 +1829,9 @@ export function MapaView() {
                 {!posicion && (
                   <p className="text-xs text-text-secondary">Obteniendo tu ubicación por GPS...</p>
                 )}
+                <p className="text-center text-2xl font-bold text-text-accent">
+                  {distanciaActualKm.toFixed(2)} <span className="text-sm font-normal">km recorridos</span>
+                </p>
                 <button
                   type="button"
                   onClick={finalizarModo}
