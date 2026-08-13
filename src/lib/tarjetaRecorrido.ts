@@ -571,6 +571,11 @@ function suavizar(t: number): number {
   return c * c * (3 - 2 * c);
 }
 
+// Pausa real (no cosmética) que se agrega al llegar al punto de velocidad
+// máxima: sin esto, con el trazo ya fluido, la marca aparece y el ojo no
+// alcanza a leerla antes de que la cámara siga de largo.
+const PAUSA_VELMAX_MS = 700;
+
 function elegirMimeTypeVideo(): string {
   const candidatos = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
   for (const candidato of candidatos) {
@@ -580,10 +585,15 @@ function elegirMimeTypeVideo(): string {
 }
 
 // Dado un instante (0 a 1) de la animación, calcula qué parte real del
-// trazo ya se recorrió — usando los timestamps reales de los puntos (no solo
-// el índice), para que el avance respete los tramos donde se fue más rápido
-// o más lento. `distanciaAcumuladaKm[i]` es la distancia recorrida hasta el
-// punto i (precalculada una sola vez, no en cada cuadro).
+// trazo ya se recorrió. Avanza por DISTANCIA recorrida, no por tiempo real
+// transcurrido -- si se avanzara por tiempo, un descanso real del usuario a
+// mitad de recorrido (parado un buen rato en el mismo lugar) haría que el
+// punto animado se quedara "pegado" ahí durante un tramo grande de la
+// animación (esa franja de tiempo real, aunque casi no sumó distancia,
+// pesaría igual que cualquier otra). Por distancia, un tramo sin avance real
+// no consume nada de la animación -- el recorrido se ve continuo y fluido,
+// sin delatar los descansos. `distanciaAcumuladaKm[i]` es la distancia
+// recorrida hasta el punto i (precalculada una sola vez, no en cada cuadro).
 function estadoEnFraccion(
   datos: DatosTarjetaRecorrido,
   distanciaAcumuladaKm: number[],
@@ -600,27 +610,25 @@ function estadoEnFraccion(
     };
   }
 
-  const inicioTs = puntos[0].timestamp;
-  const finTs = puntos[puntos.length - 1].timestamp;
-  const tObjetivo = inicioTs + fraccion * (finTs - inicioTs);
+  const distObjetivoKm = fraccion * datos.distanciaKm;
 
   let i = 0;
-  while (i < puntos.length - 2 && puntos[i + 1].timestamp <= tObjetivo) i++;
+  while (i < puntos.length - 2 && distanciaAcumuladaKm[i + 1] <= distObjetivoKm) i++;
   const actual = puntos[i];
   const siguiente = puntos[i + 1];
-  const dtTramoMs = siguiente.timestamp - actual.timestamp;
-  const progresoTramo = dtTramoMs > 0 ? Math.min(1, Math.max(0, (tObjetivo - actual.timestamp) / dtTramoMs)) : 0;
+  const distTramoKm = distanciaAcumuladaKm[i + 1] - distanciaAcumuladaKm[i];
+  const progresoTramo =
+    distTramoKm > 0 ? Math.min(1, Math.max(0, (distObjetivoKm - distanciaAcumuladaKm[i]) / distTramoKm)) : 0;
 
   const posicionActual: PuntoGps = {
     lat: actual.lat + (siguiente.lat - actual.lat) * progresoTramo,
     lon: actual.lon + (siguiente.lon - actual.lon) * progresoTramo,
-    timestamp: tObjetivo,
+    timestamp: actual.timestamp + (siguiente.timestamp - actual.timestamp) * progresoTramo,
   };
-  const distTramoKm = distanciaAcumuladaKm[i + 1] - distanciaAcumuladaKm[i];
 
   return {
     puntosTrazo: [...puntos.slice(0, i + 1), posicionActual],
-    distanciaKm: distanciaAcumuladaKm[i] + distTramoKm * progresoTramo,
+    distanciaKm: distObjetivoKm,
     duracionSeg: fraccion * datos.duracionSeg,
     posicionActual,
     mostrarFin: false,
@@ -868,7 +876,7 @@ function dibujarCuadroVideo(
     );
     ctx.font = "600 18px Arial, sans-serif";
     ctx.fillText("LEGIÓN ROLLER", ANCHO_VIDEO / 2, ALTO_VIDEO - 60);
-    dibujarLogo(ctx, logoImg, ANCHO_VIDEO - 46, 46, 24);
+    dibujarLogo(ctx, logoImg, ANCHO_VIDEO - 58, 58, 32);
     return;
   }
 
@@ -944,7 +952,7 @@ function dibujarCuadroVideo(
   ctx.font = "600 15px Arial, sans-serif";
   ctx.fillText("TIEMPO", ANCHO_VIDEO / 2 + 20, 76);
 
-  dibujarLogo(ctx, logoImg, ANCHO_VIDEO - 46, 46, 24);
+  dibujarLogo(ctx, logoImg, ANCHO_VIDEO - 58, 58, 32);
 }
 
 // Genera un video corto (.webm) del recorrido "dibujándose" sobre el mismo
@@ -1072,7 +1080,14 @@ export async function generarVideoRecorrido(
   dibujarFrame(0, false);
 
   const stream = canvas.captureStream(fps);
-  const mediaRecorder = new MediaRecorder(stream, { mimeType: elegirMimeTypeVideo() });
+  const mediaRecorder = new MediaRecorder(stream, {
+    mimeType: elegirMimeTypeVideo(),
+    // Sin esto el navegador elige un bitrate bajo por defecto -- se nota
+    // sobre todo en el logo (detalle fino) y cuando la app que recibe el
+    // video (WhatsApp, etc.) lo vuelve a comprimir: partir de un video
+    // menos comprimido deja más margen antes de que se vea "pixelado".
+    videoBitsPerSecond: 5_000_000,
+  });
   const chunks: BlobPart[] = [];
   mediaRecorder.ondataavailable = (e) => {
     if (e.data.size > 0) chunks.push(e.data);
@@ -1086,10 +1101,24 @@ export async function generarVideoRecorrido(
 
   const totalFrames = Math.round(duracionAnimSeg * fps);
   const intervaloMs = 1000 / fps;
+  let pausaVelMaxHecha = false;
   for (let f = 0; f <= totalFrames; f++) {
-    dibujarFrame(f / totalFrames, false);
-    onProgreso?.(f / totalFrames);
+    const fraccionTotal = f / totalFrames;
+    dibujarFrame(fraccionTotal, false);
+    onProgreso?.(fraccionTotal);
     await new Promise((r) => setTimeout(r, intervaloMs));
+
+    // Al llegar al punto de velocidad máxima, se sostiene ese mismo cuadro
+    // (marca ya prendida, sin redibujar) un instante más antes de seguir --
+    // el captureStream repite el último cuadro solo, no hace falta volver a
+    // dibujar nada para lograr la pausa.
+    if (!pausaVelMaxHecha && config.puntoVelMax) {
+      const fraccionTrazo = Math.min(1, fraccionTotal / FRACCION_TRAZO_COMPLETO);
+      if (fraccionTrazo * datos.distanciaKm >= config.distanciaVelMaxKm) {
+        pausaVelMaxHecha = true;
+        await new Promise((r) => setTimeout(r, PAUSA_VELMAX_MS));
+      }
+    }
   }
 
   // Cuadro final congelado unos segundos más, para que en redes sociales
