@@ -137,17 +137,20 @@ const PRECISION_MAXIMA_PUNTO_GRABADO_M = 35;
 
 // Cerca del agua el GPS puede reportar buena precisión (dentro del umbral de
 // arriba) y aun así estar decenas de metros lejos de donde la persona está
-// parada de verdad (reflejo de la señal sobre el mar). Ese caso puntual pasa
-// el filtro de precisión, pero sigue siendo un salto físicamente imposible
-// para patinaje si se compara contra el último punto YA grabado. A diferencia
-// de un salto en medio del recorrido (que después "vuelve" y queda como un
-// pico visible en el trazado), si el salto ocurre justo en el ÚLTIMO punto no
-// hay ninguna lectura posterior que lo desmienta -- termina siendo el punto
-// final mostrado en el resumen aunque sea basura (reporte real: el punto fin
-// de una ruta por la costa quedó tirado en la playa). Umbral bien por encima
-// de cualquier patinada real, incluso una bajada rápida, para no descartar
-// tramos genuinos.
-const KMH_SALTO_AISLADO_IMPOSIBLE = 70;
+// parada de verdad (reflejo de la señal sobre el mar) -- confirmado con dos
+// reportes reales: un punto fin que quedó tirado en la playa, y un "pico" en
+// el trazado en vivo que se metía al agua y volvía. Un umbral de velocidad
+// fijo (probado primero) no alcanza: un salto que se arma en varias lecturas
+// chicas (no una sola instantánea) puede quedar por debajo de cualquier
+// umbral razonable en cada tramo individual, aunque el conjunto sea
+// claramente basura. En vez de adivinar una velocidad "imposible", un punto
+// que se aleja de golpe del último confirmado se guarda como PENDIENTE hasta
+// la lectura siguiente, que es quien decide: si esa siguiente lectura vuelve
+// cerca del último confirmado, el pendiente era un rebote puntual (va y
+// vuelve) y se descarta entero -- ninguno de los dos entra al trazado. Si en
+// cambio la siguiente lectura sigue lejos, era un desplazamiento sostenido
+// real y se agregan ambos. Ver registrarPuntoGrabado más abajo.
+const KMH_SALTO_SOSPECHOSO = 45;
 
 // Zoom usado para centrar el mapa automáticamente al activar un modo (más cercano
 // que el zoom inicial de la sección 1 del PDF, pensado para ubicarte de un vistazo).
@@ -453,6 +456,10 @@ export function MapaView() {
   // geolocalización y temporizadores de larga duración sin closures obsoletas.
   const modoRef = useRef<Modo>(null);
   const puntosGrabadosRef = useRef<PuntoGps[]>([]);
+  // Ver KMH_SALTO_SOSPECHOSO: un punto que salta lejos del último confirmado
+  // se guarda acá hasta que la lectura siguiente confirme o desmienta el
+  // salto (ver registrarPuntoGrabado).
+  const puntoPendienteConfirmarRef = useRef<PuntoGps | null>(null);
   const tokenRef = useRef<string | null>(null);
   const necesitaEnvioInicialRef = useRef(false);
   // Envío de la posición propia mientras hay movimiento real (ver comentario
@@ -586,19 +593,6 @@ export function MapaView() {
     }
   }
 
-  // Ver KMH_SALTO_AISLADO_IMPOSIBLE arriba: filtro previo a
-  // revisarVelocidadSospechosa, para un solo punto que ya de entrada es
-  // imposible (no hace falta que se sostenga en el tiempo).
-  function esSaltoAisladoImposible(puntoNuevo: PuntoGps): boolean {
-    const anteriores = puntosGrabadosRef.current;
-    const anterior = anteriores[anteriores.length - 1];
-    if (!anterior) return false;
-    const dtSeg = (puntoNuevo.timestamp - anterior.timestamp) / 1000;
-    if (dtSeg < 1) return false;
-    const kmh = (distanciaHaversineKm(anterior, puntoNuevo) / dtSeg) * 3600;
-    return kmh > KMH_SALTO_AISLADO_IMPOSIBLE;
-  }
-
   // Anti-trampa: compara el punto nuevo contra el último ya grabado. Si la
   // velocidad implícita supera KMH_VELOCIDAD_SOSPECHOSA de forma sostenida por
   // MS_VELOCIDAD_SOSPECHOSA_SOSTENIDA, descarta todo ese tramo (nada de lo
@@ -669,6 +663,57 @@ export function MapaView() {
       url: "/mapa",
     }).catch(() => {});
     return true;
+  }
+
+  // Ver KMH_SALTO_SOSPECHOSO arriba. Reemplaza al enfoque anterior de un
+  // umbral de velocidad fijo: acá no se rechaza el punto sospechoso de
+  // una -- se retiene hasta la lectura siguiente, que confirma o desmiente
+  // el salto comparándose ella misma contra el último punto YA confirmado
+  // (no contra el pendiente). "Confirma" (se agregan ambos) si la
+  // siguiente lectura también implica una velocidad alta desde el último
+  // confirmado -- entonces el desplazamiento era sostenido, no un rebote.
+  // "Desmiente" (se descarta el pendiente entero, sin agregarlo nunca) si
+  // la siguiente lectura vuelve a una velocidad normal desde el último
+  // confirmado -- entonces el punto pendiente fue un rebote puntual que
+  // "fue y volvió". En ese caso la lectura nueva se reevalúa desde cero
+  // (recursión) porque puede a su vez ser, ella misma, otro salto.
+  function registrarPuntoGrabado(puntoNuevo: PuntoGps) {
+    function kmhEntre(a: PuntoGps, b: PuntoGps): number {
+      const dtSeg = (b.timestamp - a.timestamp) / 1000;
+      if (dtSeg <= 0) return 0;
+      return (distanciaHaversineKm(a, b) / dtSeg) * 3600;
+    }
+
+    function confirmarPunto(p: PuntoGps) {
+      const acabaDePausar = revisarVelocidadSospechosa(p);
+      if (acabaDePausar) return;
+      const nuevos = [...puntosGrabadosRef.current, p];
+      puntosGrabadosRef.current = nuevos;
+      setPuntosGrabados(nuevos);
+      if (grabacionActivaModulo) grabacionActivaModulo.puntos.push(p);
+    }
+
+    const pendiente = puntoPendienteConfirmarRef.current;
+    if (pendiente) {
+      puntoPendienteConfirmarRef.current = null;
+      const ultimoConfirmado = puntosGrabadosRef.current[puntosGrabadosRef.current.length - 1];
+      const siguioLejos = ultimoConfirmado ? kmhEntre(ultimoConfirmado, puntoNuevo) > KMH_SALTO_SOSPECHOSO : true;
+      if (siguioLejos) {
+        confirmarPunto(pendiente);
+        confirmarPunto(puntoNuevo);
+      } else {
+        registrarPuntoGrabado(puntoNuevo);
+      }
+      return;
+    }
+
+    const ultimoConfirmado = puntosGrabadosRef.current[puntosGrabadosRef.current.length - 1];
+    if (ultimoConfirmado && kmhEntre(ultimoConfirmado, puntoNuevo) > KMH_SALTO_SOSPECHOSO) {
+      puntoPendienteConfirmarRef.current = puntoNuevo;
+      return;
+    }
+
+    confirmarPunto(puntoNuevo);
   }
 
   function continuarTrasVelocidad() {
@@ -763,13 +808,7 @@ export function MapaView() {
           pos.accuracy <= PRECISION_MAXIMA_PUNTO_GRABADO_M
         ) {
           const puntoGrabado = { ...punto, timestamp: Date.now() };
-          if (!esSaltoAisladoImposible(puntoGrabado)) {
-            const acabaDePausar = revisarVelocidadSospechosa(puntoGrabado);
-            if (!acabaDePausar) {
-              setPuntosGrabados((prev) => [...prev, puntoGrabado]);
-              if (grabacionActivaModulo) grabacionActivaModulo.puntos.push(puntoGrabado);
-            }
-          }
+          registrarPuntoGrabado(puntoGrabado);
         }
 
         if (necesitaEnvioInicialRef.current && tokenRef.current) {
@@ -1021,6 +1060,7 @@ export function MapaView() {
     // y se muestra después (ver confirmarMapeoSi/No).
     setPuntosGrabados([]);
     puntosGrabadosRef.current = [];
+    puntoPendienteConfirmarRef.current = null;
     inicioGrabacionRef.current = Date.now();
     grabandoRef.current = true;
     mapeadoRef.current = false;
@@ -1143,6 +1183,10 @@ export function MapaView() {
     inicioTramoLentoRef.current = null;
     setAvisoVelocidad(false);
     avisoVelocidadRef.current = false;
+    // Un punto pendiente de confirmar nunca llegó a agregarse a
+    // puntosGrabados -- si la sesión termina justo ahí, se descarta sin más
+    // (no hay lectura siguiente que lo confirme).
+    puntoPendienteConfirmarRef.current = null;
 
     const tokenActual = tokenRef.current;
     const modoActual = modo;
