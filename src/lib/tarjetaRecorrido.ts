@@ -565,6 +565,9 @@ export interface OpcionesVideoRecorrido {
 const DURACION_ANIM_SEG_DEFECTO = 11;
 const DURACION_FINAL_SEG_DEFECTO = 3;
 const DURACION_INTRO_SEG_DEFECTO = 1.8;
+// Cuánto tarda la portada en desvanecerse hacia el cuadro animado -- sin
+// esto el corte de la portada al trazo era de golpe, un salto brusco.
+const FUNDIDO_INTRO_SEG = 0.6;
 const FPS_DEFECTO = 24;
 
 // Tamaño del video rediseñado: vertical 9:16 real (a diferencia de la
@@ -769,27 +772,30 @@ function dibujarCirculoConImagen(
 // Casilla con el nombre del sector (ej. "Puerto Montt"), clavada sobre el
 // mapa como una etiqueta de lugar real -- reemplaza las etiquetas horneadas
 // en los tiles del proveedor (borrosas al reescalar/comprimir, ver
-// generarMapaReal) por una propia, siempre nítida.
+// generarMapaReal) por una propia, siempre nítida. A propósito chica y
+// discreta (estilo Relive/Google Maps: una etiqueta de lugar real, no un
+// letrero) -- una versión grande se sentía más como un cartel que como un
+// nombre de lugar en el mapa.
 function dibujarEtiquetaSector(ctx: CanvasRenderingContext2D, cx: number, cy: number, texto: string) {
-  ctx.font = "700 22px Arial, sans-serif";
+  ctx.font = "700 15px Arial, sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   const anchoTexto = ctx.measureText(texto).width;
-  const paddingX = 20;
+  const paddingX = 12;
   const anchoCaja = anchoTexto + paddingX * 2;
-  const altoCaja = 44;
+  const altoCaja = 26;
 
   ctx.save();
   ctx.shadowColor = "rgba(0,0,0,0.6)";
-  ctx.shadowBlur = 12;
-  ctx.fillStyle = "rgba(13,10,6,0.82)";
+  ctx.shadowBlur = 8;
+  ctx.fillStyle = "rgba(13,10,6,0.8)";
   trazarRectRedondeado(ctx, cx - anchoCaja / 2, cy - altoCaja / 2, anchoCaja, altoCaja, altoCaja / 2);
   ctx.fill();
   ctx.restore();
 
   trazarRectRedondeado(ctx, cx - anchoCaja / 2, cy - altoCaja / 2, anchoCaja, altoCaja, altoCaja / 2);
   ctx.strokeStyle = DORADO_BORDE;
-  ctx.lineWidth = 1.5;
+  ctx.lineWidth = 1.2;
   ctx.stroke();
 
   ctx.fillStyle = DORADO;
@@ -812,18 +818,24 @@ function dibujarPunto(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: 
   if (resplandor) ctx.restore();
 }
 
-function dibujarLogo(ctx: CanvasRenderingContext2D, logoImg: HTMLImageElement | null, cx: number, cy: number, r: number) {
+// Insignia simplificada (monograma "LR" dibujado con texto, no una imagen)
+// para el video: el logo real (montañas, alas, patineta, texto chico) tiene
+// demasiado detalle fino para sobrevivir chico + comprimido -- terminaba
+// viéndose pixelado sin importar cuánto se agrandara (ver conversación con
+// el usuario). Un monograma vectorial es nítido a cualquier tamaño y
+// resiste cualquier recompresión (WhatsApp, etc.) porque es texto, no una
+// imagen rasterizada.
+function dibujarLogo(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number) {
   ctx.save();
   ctx.beginPath();
-  ctx.arc(cx, cy, r + 2, 0, Math.PI * 2);
-  ctx.fillStyle = "rgba(13,10,6,0.75)";
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fillStyle = "#0d0a06";
   ctx.fill();
-  if (logoImg) {
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.clip();
-    ctx.drawImage(logoImg, cx - r, cy - r, r * 2, r * 2);
-  }
+  ctx.fillStyle = DORADO;
+  ctx.font = `800 ${Math.round(r * 0.95)}px Arial, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("LR", cx, cy + r * 0.05);
   ctx.restore();
   ctx.beginPath();
   ctx.arc(cx, cy, r, 0, Math.PI * 2);
@@ -920,7 +932,6 @@ interface ConfigVideo {
 function dibujarCuadroVideo(
   ctx: CanvasRenderingContext2D,
   datos: DatosTarjetaRecorrido,
-  logoImg: HTMLImageElement | null,
   mapaImg: HTMLImageElement | null,
   x: (lon: number) => number,
   y: (lat: number) => number,
@@ -964,7 +975,7 @@ function dibujarCuadroVideo(
     );
     ctx.font = "600 18px Arial, sans-serif";
     ctx.fillText("LEGIÓN ROLLER", ANCHO_VIDEO / 2, ALTO_VIDEO - 60);
-    dibujarLogo(ctx, logoImg, ANCHO_VIDEO - 58, 58, 32);
+    dibujarLogo(ctx, ANCHO_VIDEO - 58, 58, 32);
     return;
   }
 
@@ -990,7 +1001,7 @@ function dibujarCuadroVideo(
   }
 
   if (datos.sector) {
-    dibujarEtiquetaSector(ctx, focoCentroPx.x, focoCentroPx.y - 70, datos.sector);
+    dibujarEtiquetaSector(ctx, focoCentroPx.x, focoCentroPx.y - 50, datos.sector);
   }
 
   ctx.beginPath();
@@ -1044,37 +1055,25 @@ function dibujarCuadroVideo(
   ctx.font = "600 15px Arial, sans-serif";
   ctx.fillText("TIEMPO", ANCHO_VIDEO / 2 + 20, 76);
 
-  dibujarLogo(ctx, logoImg, ANCHO_VIDEO - 58, 58, 32);
+  dibujarLogo(ctx, ANCHO_VIDEO - 58, 58, 32);
 }
 
-// Portada al arranque del video (estilo Relive/Strava): el mapa completo
-// del recorrido de fondo, atenuado, con la foto de perfil del usuario y su
-// nombre encima -- se sostiene unos segundos antes de que arranque el
-// trazo. mapaImg ya está centrado/ajustado al recorrido completo (mismo
-// punto que usa el cuadro panorámico final, focoCentroPx, con escala 1).
-function dibujarIntroVideo(
+// Portada al arranque del video (estilo Relive/Strava): la foto de perfil
+// del usuario y su nombre, superpuestos sobre el cuadro real del video (ya
+// dibujado antes de llamar a esto, ver generarVideoRecorrido) -- no redibuja
+// el mapa de fondo. Recibe `alpha` para poder desvanecerla gradualmente en
+// vez de cortar de golpe al cuadro animado: se llama varias veces seguidas
+// con alpha decreciente (1 -> 0) sobre el mismo cuadro de fondo ya dibujado.
+function dibujarOverlayIntro(
   ctx: CanvasRenderingContext2D,
-  mapaImg: HTMLImageElement | null,
-  focoCentroPx: { x: number; y: number },
   avatarImg: HTMLImageElement | null,
   nombreUsuario: string,
+  alpha: number,
 ) {
-  ctx.clearRect(0, 0, ANCHO_VIDEO, ALTO_VIDEO);
-  ctx.textBaseline = "alphabetic";
-
+  if (alpha <= 0) return;
   ctx.save();
-  ctx.beginPath();
-  ctx.rect(0, 0, ANCHO_VIDEO, ALTO_VIDEO);
-  ctx.clip();
-  ctx.translate(ANCHO_VIDEO / 2, ALTO_VIDEO / 2);
-  ctx.translate(-focoCentroPx.x, -focoCentroPx.y);
-  if (mapaImg) {
-    ctx.drawImage(mapaImg, 0, 0, ANCHO_VIDEO, ALTO_VIDEO);
-  } else {
-    ctx.fillStyle = "#1a1108";
-    ctx.fillRect(0, 0, ANCHO_VIDEO, ALTO_VIDEO);
-  }
-  ctx.restore();
+  ctx.globalAlpha = alpha;
+  ctx.textBaseline = "alphabetic";
 
   ctx.fillStyle = "rgba(13,10,6,0.6)";
   ctx.fillRect(0, 0, ANCHO_VIDEO, ALTO_VIDEO);
@@ -1091,6 +1090,7 @@ function dibujarIntroVideo(
   ctx.fillStyle = GRIS_TEXTO;
   ctx.font = "600 15px Arial, sans-serif";
   ctx.fillText("LEGIÓN ROLLER", cxAvatar, cyAvatar + rAvatar + 82);
+  ctx.restore();
 }
 
 // Genera un video corto (.webm) del recorrido "dibujándose" sobre el mismo
@@ -1128,24 +1128,23 @@ export async function generarVideoRecorrido(
     throw new Error("El recorrido no tiene suficientes puntos para animar.");
   }
 
-  const [logoDataUrl, mapa, avatarDataUrl] = await Promise.all([
-    cargarImagenComoDataUrl("/logo-legion-roller-mini.png"),
+  const [mapa, avatarDataUrl] = await Promise.all([
     generarMapaReal(datos.puntos, ANCHO_VIDEO, ALTO_VIDEO, false),
     avatarUrl ? cargarImagenComoDataUrl(avatarUrl) : Promise.resolve(null),
   ]);
 
-  // Las imágenes (mapa, logo, foto, avatar) se decodifican UNA sola vez acá,
-  // antes de arrancar la animación -- la versión anterior reincrustaba el
-  // mapa completo (base64) dentro de un SVG nuevo en CADA cuadro y lo volvía
-  // a rasterizar, lo que con el mapa ahora a pantalla completa tardaba tanto
+  // Las imágenes (mapa, foto, avatar) se decodifican UNA sola vez acá, antes
+  // de arrancar la animación -- la versión anterior reincrustaba el mapa
+  // completo (base64) dentro de un SVG nuevo en CADA cuadro y lo volvía a
+  // rasterizar, lo que con el mapa ahora a pantalla completa tardaba tanto
   // por cuadro que el video terminaba grabándose muchísimo más lento que en
   // tiempo real (se notaba como "cuadro por cuadro"). Con las imágenes ya
   // decodificadas, dibujar un cuadro es un puñado de drawImage()/stroke()
   // directos sobre el canvas -- sin async, sin volver a parsear texto
-  // gigante -- así que corre a la velocidad real que pide el fps.
-  const [mapaImg, logoImg, fotoImg, avatarImg] = await Promise.all([
+  // gigante -- así que corre a la velocidad real que pide el fps. El logo ya
+  // no se carga acá -- el video usa un monograma vectorial (ver dibujarLogo).
+  const [mapaImg, fotoImg, avatarImg] = await Promise.all([
     cargarImagenOpcional(mapa?.dataUrl ?? null),
-    cargarImagenOpcional(logoDataUrl),
     cargarImagenOpcional(fotoDataUrl),
     cargarImagenOpcional(avatarDataUrl),
   ]);
@@ -1215,7 +1214,7 @@ export async function generarVideoRecorrido(
   function dibujarFrame(fraccionTotal: number, mostrarFotoFinal: boolean) {
     const fraccionTrazo = Math.min(1, fraccionTotal / FRACCION_TRAZO_COMPLETO);
     const frame = estadoEnFraccion(datos, distanciaAcumuladaKm, fraccionTrazo);
-    dibujarCuadroVideo(ctx!, datos, logoImg, mapaImg, x, y, focoCentroPx, frame, fraccionTotal, config, mostrarFotoFinal);
+    dibujarCuadroVideo(ctx!, datos, mapaImg, x, y, focoCentroPx, frame, fraccionTotal, config, mostrarFotoFinal);
   }
 
   // Primer cuadro dibujado ANTES de arrancar a grabar, para no capturar un
@@ -1242,13 +1241,26 @@ export async function generarVideoRecorrido(
 
   mediaRecorder.start();
 
+  const intervaloMs = 1000 / fps;
+
   if (nombreUsuario && nombreUsuario.trim()) {
-    dibujarIntroVideo(ctx, mapaImg, focoCentroPx, avatarImg, nombreUsuario.trim());
+    const nombreLimpio = nombreUsuario.trim();
+    dibujarFrame(0, false);
+    dibujarOverlayIntro(ctx, avatarImg, nombreLimpio, 1);
     await new Promise((r) => setTimeout(r, duracionIntroSeg * 1000));
+
+    // Desvanecido gradual hacia el cuadro animado (el mismo cuadro 0 ya
+    // dibujado abajo, con la barra de contador/logo/etiqueta ya visibles) en
+    // vez de cortar de golpe de la portada al trazo.
+    const framesFundido = Math.max(1, Math.round(FUNDIDO_INTRO_SEG * fps));
+    for (let i = 1; i <= framesFundido; i++) {
+      dibujarFrame(0, false);
+      dibujarOverlayIntro(ctx, avatarImg, nombreLimpio, 1 - i / framesFundido);
+      await new Promise((r) => setTimeout(r, intervaloMs));
+    }
   }
 
   const totalFrames = Math.round(duracionAnimSeg * fps);
-  const intervaloMs = 1000 / fps;
   let pausaVelMaxHecha = false;
   for (let f = 0; f <= totalFrames; f++) {
     const fraccionTotal = f / totalFrames;
