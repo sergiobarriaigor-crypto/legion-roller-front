@@ -789,7 +789,7 @@ function dibujarCirculoConImagen(
 // discreta (estilo Relive/Google Maps: una etiqueta de lugar real, no un
 // letrero) -- una versión grande se sentía más como un cartel que como un
 // nombre de lugar en el mapa.
-function dibujarEtiquetaSector(ctx: CanvasRenderingContext2D, cx: number, cy: number, texto: string) {
+function dibujarEtiquetaSector(ctx: CanvasRenderingContext2D, mapX: number, mapY: number, texto: string) {
   ctx.font = "700 15px Arial, sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
@@ -797,6 +797,22 @@ function dibujarEtiquetaSector(ctx: CanvasRenderingContext2D, cx: number, cy: nu
   const paddingX = 12;
   const anchoCaja = anchoTexto + paddingX * 2;
   const altoCaja = 26;
+
+  // Se dibuja con la transformación de cámara (pan/zoom) ya aplicada -- se
+  // clampea en espacio de PANTALLA, invirtiendo esa transformación, para
+  // que la casilla nunca quede cortada en el borde sin importar dónde esté
+  // el punto real en el mapa ni cuánto haya acercado/alejado la cámara en
+  // este cuadro puntual.
+  const transform = ctx.getTransform();
+  const escala = Math.hypot(transform.a, transform.b) || 1;
+  const margenPantalla = 12;
+  const screenX = transform.a * mapX + transform.c * mapY + transform.e;
+  const screenXClamp = Math.min(
+    Math.max(screenX, margenPantalla + anchoCaja / 2),
+    ANCHO_VIDEO - margenPantalla - anchoCaja / 2,
+  );
+  const cx = mapX + (screenXClamp - screenX) / escala;
+  const cy = mapY;
 
   ctx.save();
   ctx.shadowColor = "rgba(0,0,0,0.6)";
@@ -844,35 +860,52 @@ function dibujarPunto(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: 
   if (resplandor) ctx.restore();
 }
 
-function dibujarMarcaVelMax(ctx: CanvasRenderingContext2D, cx: number, cy: number, kmh: number) {
+// pulso (0 por defecto = estado normal ya asentado): al revelarse la marca
+// se llama varios cuadros seguidos con pulso creciente 0→1 (ver PAUSA_VELMAX_MS
+// en generarVideoRecorrido) para un anillo que se expande y se desvanece --
+// un "ping" real, no un marcador estático -- y después queda en su estado
+// fijo (punto + resplandor + casilla) el resto del video.
+function dibujarMarcaVelMax(ctx: CanvasRenderingContext2D, cx: number, cy: number, kmh: number, pulso = 0) {
+  if (pulso > 0) {
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, 1 - pulso) * 0.6;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 9 + pulso * 30, 0, Math.PI * 2);
+    ctx.strokeStyle = DORADO;
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.restore();
+  }
+
   ctx.save();
   ctx.shadowColor = DORADO;
-  ctx.shadowBlur = 8;
-  ctx.globalAlpha = 0.55;
+  ctx.shadowBlur = 12;
   ctx.beginPath();
-  ctx.arc(cx, cy, 10, 0, Math.PI * 2);
-  ctx.strokeStyle = DORADO;
-  ctx.lineWidth = 1.5;
+  ctx.arc(cx, cy, 8, 0, Math.PI * 2);
+  ctx.fillStyle = DORADO;
+  ctx.fill();
+  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = "#0d0a06";
   ctx.stroke();
   ctx.restore();
 
-  ctx.beginPath();
-  ctx.arc(cx, cy, 6, 0, Math.PI * 2);
-  ctx.fillStyle = DORADO;
-  ctx.fill();
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = "#0d0a06";
-  ctx.stroke();
-
   const texto = `⚡ ${Math.round(kmh)} km/h`;
-  ctx.font = "700 14px Arial, sans-serif";
-  const ancho = ctx.measureText(texto).width + 24;
-  ctx.fillStyle = "rgba(13,10,6,0.8)";
-  dibujarRectRedondeado(ctx, cx + 12, cy - 13, ancho, 26, 13);
+  ctx.font = "800 15px Arial, sans-serif";
+  const ancho = ctx.measureText(texto).width + 28;
+  ctx.save();
+  ctx.shadowColor = "rgba(0,0,0,0.75)";
+  ctx.shadowBlur = 5;
+  ctx.fillStyle = "rgba(13,10,6,0.88)";
+  dibujarRectRedondeado(ctx, cx + 14, cy - 16, ancho, 32, 16);
+  ctx.restore();
+  ctx.strokeStyle = DORADO_BORDE;
+  ctx.lineWidth = 1.4;
+  trazarRectRedondeado(ctx, cx + 14, cy - 16, ancho, 32, 16);
+  ctx.stroke();
   ctx.fillStyle = DORADO;
   ctx.textAlign = "left";
   ctx.textBaseline = "alphabetic";
-  ctx.fillText(texto, cx + 24, cy + 5);
+  ctx.fillText(texto, cx + 28, cy + 6);
 }
 
 // Pin circular con la foto del usuario clavado en un punto del mapa (estilo
@@ -910,6 +943,19 @@ function dibujarImagenCover(ctx: CanvasRenderingContext2D, img: HTMLImageElement
   const anchoDestino = img.width * escala;
   const altoDestino = img.height * escala;
   ctx.drawImage(img, x + (w - anchoDestino) / 2, y + (h - altoDestino) / 2, anchoDestino, altoDestino);
+}
+
+// Dibuja una imagen COMPLETA, sin recortar ni deformar (mismo criterio que
+// CSS object-fit: contain) -- para el logo del cierre: el archivo real ya
+// es una insignia circular con alas que llegan casi al borde de su propio
+// lienzo cuadrado; recortarla en un círculo nuestro (como hacía antes)
+// volvía a cortar esas puntas. Mostrando el archivo tal cual, completo, se
+// ve la insignia entera.
+function dibujarImagenContain(ctx: CanvasRenderingContext2D, img: HTMLImageElement, cx: number, cy: number, tamanoMax: number) {
+  const escala = Math.min(tamanoMax / img.width, tamanoMax / img.height);
+  const w = img.width * escala;
+  const h = img.height * escala;
+  ctx.drawImage(img, cx - w / 2, cy - h / 2, w, h);
 }
 
 interface ConfigVideo {
@@ -952,6 +998,7 @@ function dibujarCuadroVideo(
   fraccionTotal: number,
   config: ConfigVideo,
   mostrarFotoFinal: boolean,
+  pulsoVelMax = 0,
 ) {
   const { puntos } = datos;
   const distanciaMostrar = frame.distanciaKm;
@@ -1036,7 +1083,7 @@ function dibujarCuadroVideo(
 
   const mostrarVelMax = config.puntoVelMax !== null && distanciaMostrar >= config.distanciaVelMaxKm;
   if (mostrarVelMax && config.puntoVelMax) {
-    dibujarMarcaVelMax(ctx, x(config.puntoVelMax.lon), y(config.puntoVelMax.lat), config.kmhVelMax);
+    dibujarMarcaVelMax(ctx, x(config.puntoVelMax.lon), y(config.puntoVelMax.lat), config.kmhVelMax, pulsoVelMax);
   }
 
   const mostrarFotoMapa =
@@ -1064,8 +1111,10 @@ function dibujarCuadroVideo(
   // barra de arriba se agranda un poco para sumar vel. promedio/máxima como
   // resumen final -- antes solo quedaban distancia/tiempo, que ya vienen
   // mostrándose desde el principio del video.
-  const contadorAltura = frame.mostrarFin ? 156 : 118;
-  ctx.fillStyle = "rgba(13,10,6,0.5)";
+  const contadorAltura = frame.mostrarFin ? 160 : 118;
+  // Más opaca cuando suma el resumen final -- a media opacidad, el gris
+  // chico de esa línea se perdía contra mapas satelitales claros.
+  ctx.fillStyle = frame.mostrarFin ? "rgba(13,10,6,0.68)" : "rgba(13,10,6,0.5)";
   ctx.fillRect(0, 0, ANCHO_VIDEO, contadorAltura);
   ctx.textAlign = "left";
   ctx.fillStyle = DORADO;
@@ -1082,14 +1131,18 @@ function dibujarCuadroVideo(
   ctx.fillText("TIEMPO", ANCHO_VIDEO / 2 + 20, 76);
 
   if (frame.mostrarFin) {
+    ctx.save();
     ctx.textAlign = "center";
-    ctx.fillStyle = GRIS_TEXTO;
-    ctx.font = "600 17px Arial, sans-serif";
+    ctx.shadowColor = "rgba(0,0,0,0.85)";
+    ctx.shadowBlur = 6;
+    ctx.fillStyle = DORADO;
+    ctx.font = "800 21px Arial, sans-serif";
     ctx.fillText(
       `VEL. PROMEDIO ${Math.round(datos.velocidadPromedio)} km/h  ·  VEL. MÁXIMA ${Math.round(datos.velocidadMaxima)} km/h`,
       ANCHO_VIDEO / 2,
-      108,
+      110,
     );
+    ctx.restore();
   }
 }
 
@@ -1130,10 +1183,14 @@ function dibujarOverlayIntro(
 
 // Cuadro de cierre final (después de la panorámica, o de la foto de portada
 // si se eligió estiloFoto "final"): el logo real de la Legión en grande
-// (acá SÍ se usa la imagen -- a este tamaño, ~260px, el detalle del emblema
-// se ve bien, a diferencia del corner badge chico que se reemplazó por el
+// (acá SÍ se usa la imagen -- a este tamaño el detalle del emblema se ve
+// bien, a diferencia del corner badge chico que se reemplazó por el
 // monograma vectorial) y la ciudad debajo. Fondo sólido de marca, sin mapa
-// -- es un cierre de cortina, no otro cuadro del recorrido.
+// -- es un cierre de cortina, no otro cuadro del recorrido. El logo se
+// dibuja COMPLETO (dibujarImagenContain), sin recortarlo en un círculo
+// propio -- el archivo ya es una insignia circular con alas que llegan
+// casi al borde de su lienzo; un recorte nuestro encima le cortaba las
+// puntas de las alas.
 function dibujarCierreVideo(ctx: CanvasRenderingContext2D, logoGrandeImg: HTMLImageElement | null, ciudad: string) {
   ctx.clearRect(0, 0, ANCHO_VIDEO, ALTO_VIDEO);
   ctx.fillStyle = "#0d0a06";
@@ -1141,19 +1198,23 @@ function dibujarCierreVideo(ctx: CanvasRenderingContext2D, logoGrandeImg: HTMLIm
   ctx.textBaseline = "alphabetic";
 
   const cx = ANCHO_VIDEO / 2;
-  const cy = ALTO_VIDEO / 2 - 50;
-  const r = 130;
-  dibujarCirculoConImagen(ctx, logoGrandeImg, cx, cy, r, "L");
+  const cy = ALTO_VIDEO / 2 - 60;
+  const tamano = 300;
+  if (logoGrandeImg) {
+    dibujarImagenContain(ctx, logoGrandeImg, cx, cy, tamano);
+  } else {
+    dibujarCirculoConImagen(ctx, null, cx, cy, tamano / 2, "L");
+  }
 
   ctx.textAlign = "center";
   ctx.fillStyle = DORADO;
   ctx.font = "800 32px Arial, sans-serif";
-  ctx.fillText("LEGIÓN ROLLER", cx, cy + r + 60);
+  ctx.fillText("LEGIÓN ROLLER", cx, cy + tamano / 2 + 50);
 
   if (ciudad) {
     ctx.fillStyle = GRIS_TEXTO;
-    ctx.font = "600 20px Arial, sans-serif";
-    ctx.fillText(ciudad, cx, cy + r + 92);
+    ctx.font = "700 26px Arial, sans-serif";
+    ctx.fillText(ciudad, cx, cy + tamano / 2 + 88);
   }
 }
 
@@ -1285,10 +1346,10 @@ export async function generarVideoRecorrido(
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("No se pudo preparar el video.");
 
-  function dibujarFrame(fraccionTotal: number, mostrarFotoFinal: boolean) {
+  function dibujarFrame(fraccionTotal: number, mostrarFotoFinal: boolean, pulsoVelMax = 0) {
     const fraccionTrazo = Math.min(1, fraccionTotal / FRACCION_TRAZO_COMPLETO);
     const frame = estadoEnFraccion(datos, distanciaAcumuladaKm, fraccionTrazo);
-    dibujarCuadroVideo(ctx!, datos, mapaImg, x, y, focoCentroPx, frame, fraccionTotal, config, mostrarFotoFinal);
+    dibujarCuadroVideo(ctx!, datos, mapaImg, x, y, focoCentroPx, frame, fraccionTotal, config, mostrarFotoFinal, pulsoVelMax);
   }
 
   // Primer cuadro dibujado ANTES de arrancar a grabar, para no capturar un
@@ -1342,15 +1403,19 @@ export async function generarVideoRecorrido(
     onProgreso?.(fraccionTotal);
     await new Promise((r) => setTimeout(r, intervaloMs));
 
-    // Al llegar al punto de velocidad máxima, se sostiene ese mismo cuadro
-    // (marca ya prendida, sin redibujar) un instante más antes de seguir --
-    // el captureStream repite el último cuadro solo, no hace falta volver a
-    // dibujar nada para lograr la pausa.
+    // Al llegar al punto de velocidad máxima, en vez de solo pausar se
+    // redibuja unos cuadros más con un anillo que se expande y se
+    // desvanece (ver dibujarMarcaVelMax) -- un "ping" real que llama la
+    // atención, no un marcador estático que aparece de la nada.
     if (!pausaVelMaxHecha && config.puntoVelMax) {
       const fraccionTrazo = Math.min(1, fraccionTotal / FRACCION_TRAZO_COMPLETO);
       if (fraccionTrazo * datos.distanciaKm >= config.distanciaVelMaxKm) {
         pausaVelMaxHecha = true;
-        await new Promise((r) => setTimeout(r, PAUSA_VELMAX_MS));
+        const framesPulso = Math.max(1, Math.round((PAUSA_VELMAX_MS / 1000) * fps));
+        for (let p = 1; p <= framesPulso; p++) {
+          dibujarFrame(fraccionTotal, false, p / framesPulso);
+          await new Promise((r) => setTimeout(r, intervaloMs));
+        }
       }
     }
   }
