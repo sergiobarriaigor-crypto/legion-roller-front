@@ -20,7 +20,6 @@ import {
   generarVideoRecorrido,
   DURACION_VIDEO_ESTIMADA_SEG,
   type DatosTarjetaRecorrido,
-  type EstiloFotoVideo,
 } from "@/lib/tarjetaRecorrido";
 import { EditorEncuadreFoto } from "@/components/EditorEncuadreFoto";
 import {
@@ -93,17 +92,22 @@ export function CompartirRecorridoModal({
   const [progresoVideo, setProgresoVideo] = useState(0);
   const [errorVideo, setErrorVideo] = useState("");
   const videoBlobUrlRef = useRef<string | null>(null);
-  // Fotos opcionales del video (nunca obligatorias, hasta 3, ver
-  // tarjetaRecorrido.ts) -- se eligen ANTES de generar, en la pantalla de
-  // configuración de la pestaña "Video". "Al final" (portada de cierre) solo
-  // admite 1 foto; "En el mapa" admite hasta 3 (pines repartidos por
-  // distancia). Cada foto elegida pasa primero por un editor de encuadre
-  // (arrastrar/zoom, ver EditorEncuadreFoto) antes de sumarse a la lista --
-  // archivoEditandoFoto es el File crudo mientras ese editor está abierto.
-  const [fotosVideoDataUrl, setFotosVideoDataUrl] = useState<string[]>([]);
-  const [estiloFotoVideo, setEstiloFotoVideo] = useState<EstiloFotoVideo>("final");
+  // Fotos opcionales del video (nunca obligatorias, ver tarjetaRecorrido.ts)
+  // -- se eligen ANTES de generar, en la pantalla de configuración de la
+  // pestaña "Video". Las dos secciones son independientes entre sí (se puede
+  // elegir una, la otra, ambas, o ninguna): "Foto de cierre" (0 o 1, a
+  // pantalla completa en el cuadro final) y "Fotos en el mapa" (0 a 3, pines
+  // repartidos por distancia). Cada foto elegida pasa primero por un editor
+  // de encuadre (arrastrar/zoom, ver EditorEncuadreFoto) antes de sumarse --
+  // archivoEditandoFoto es el File crudo mientras ese editor está abierto,
+  // tipoFotoEditando indica a cuál de las dos secciones pertenece (define el
+  // aspecto del recorte: vertical para la de cierre, circular para el pin).
+  const [fotoFinalDataUrl, setFotoFinalDataUrl] = useState<string | null>(null);
+  const [fotosPinDataUrl, setFotosPinDataUrl] = useState<string[]>([]);
   const [archivoEditandoFoto, setArchivoEditandoFoto] = useState<File | null>(null);
-  const inputFotoVideoRef = useRef<HTMLInputElement>(null);
+  const [tipoFotoEditando, setTipoFotoEditando] = useState<"final" | "pin" | null>(null);
+  const inputFotoFinalRef = useRef<HTMLInputElement>(null);
+  const inputFotoPinRef = useRef<HTMLInputElement>(null);
 
   // Música de fondo opcional para el video (mismo catálogo/selector que ya
   // usan las Historias, ver SelectorMusicaHistoria) -- se elige ANTES de
@@ -242,8 +246,8 @@ export function CompartirRecorridoModal({
     try {
       const nuevoBlob = await generarVideoRecorrido(datos, {
         onProgreso: setProgresoVideo,
-        fotosDataUrl: fotosVideoDataUrl.length ? fotosVideoDataUrl : undefined,
-        estiloFoto: fotosVideoDataUrl.length ? estiloFotoVideo : undefined,
+        fotoFinalDataUrl: fotoFinalDataUrl ?? undefined,
+        fotosPinDataUrl: fotosPinDataUrl.length ? fotosPinDataUrl : undefined,
         avatarUrl: miFotoUrl,
         nombreUsuario: sesion?.nombre,
         musicaUrl: musicaElegida?.cancion.archivo,
@@ -269,31 +273,34 @@ export function CompartirRecorridoModal({
     setErrorVideo("");
   }
 
-  function manejarSeleccionFotoVideo(e: React.ChangeEvent<HTMLInputElement>) {
+  function manejarSeleccionFotoFinal(e: React.ChangeEvent<HTMLInputElement>) {
     const archivo = e.target.files?.[0];
     e.target.value = "";
     if (!archivo) return;
+    setTipoFotoEditando("final");
+    setArchivoEditandoFoto(archivo);
+  }
+
+  function manejarSeleccionFotoPin(e: React.ChangeEvent<HTMLInputElement>) {
+    const archivo = e.target.files?.[0];
+    e.target.value = "";
+    if (!archivo) return;
+    setTipoFotoEditando("pin");
     setArchivoEditandoFoto(archivo);
   }
 
   function confirmarFotoEditada(dataUrl: string) {
-    setFotosVideoDataUrl((prev) => [...prev, dataUrl].slice(0, 3));
+    if (tipoFotoEditando === "final") {
+      setFotoFinalDataUrl(dataUrl);
+    } else {
+      setFotosPinDataUrl((prev) => [...prev, dataUrl].slice(0, 3));
+    }
     setArchivoEditandoFoto(null);
+    setTipoFotoEditando(null);
   }
 
-  function quitarFotoVideo(indice: number) {
-    setFotosVideoDataUrl((prev) => prev.filter((_, i) => i !== indice));
-  }
-
-  // Cambiar el estilo mientras ya hay 1 foto elegida invalida su encuadre
-  // (uno se recortó para pantalla completa 9:16, el otro para un pin
-  // circular) -- más simple pedir que la vuelva a encuadrar que tratar de
-  // reusar un recorte que ya no calza con la proporción nueva.
-  function cambiarEstiloFotoVideo(nuevo: EstiloFotoVideo) {
-    if (nuevo === estiloFotoVideo) return;
-    if (nuevo === "final" && fotosVideoDataUrl.length > 1) return;
-    if (fotosVideoDataUrl.length === 1) setFotosVideoDataUrl([]);
-    setEstiloFotoVideo(nuevo);
+  function quitarFotoPin(indice: number) {
+    setFotosPinDataUrl((prev) => prev.filter((_, i) => i !== indice));
   }
 
   function elegirTab(nuevoTab: Tab) {
@@ -518,84 +525,101 @@ export function CompartirRecorridoModal({
                   {errorVideo && <p className="text-xs text-fill-warning">{errorVideo}</p>}
                   <p className="text-xs text-text-secondary">
                     El mapa se dibuja solo, con tu velocidad máxima marcada en el recorrido. Podés
-                    agregarle hasta 3 fotos (opcional).
+                    agregarle fotos (opcional): una de cierre y hasta 3 en el mapa, juntas o por
+                    separado.
                   </p>
                   <input
-                    ref={inputFotoVideoRef}
+                    ref={inputFotoFinalRef}
                     type="file"
                     accept="image/*"
                     className="hidden"
-                    onChange={manejarSeleccionFotoVideo}
+                    onChange={manejarSeleccionFotoFinal}
+                  />
+                  <input
+                    ref={inputFotoPinRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={manejarSeleccionFotoPin}
                   />
                   {archivoEditandoFoto && (
                     <EditorEncuadreFoto
                       archivo={archivoEditandoFoto}
-                      aspecto={estiloFotoVideo === "final" ? "vertical" : "circular"}
+                      aspecto={tipoFotoEditando === "final" ? "vertical" : "circular"}
                       onConfirmar={confirmarFotoEditada}
-                      onCancelar={() => setArchivoEditandoFoto(null)}
+                      onCancelar={() => {
+                        setArchivoEditandoFoto(null);
+                        setTipoFotoEditando(null);
+                      }}
                     />
                   )}
                   {!archivoEditandoFoto && (
                     <>
-                      <div className="flex gap-1.5 rounded-app bg-surface-2 p-1">
-                        <button
-                          type="button"
-                          disabled={fotosVideoDataUrl.length > 1}
-                          onClick={() => cambiarEstiloFotoVideo("final")}
-                          className={`rounded-app px-3 py-1.5 text-xs font-semibold disabled:opacity-40 ${
-                            estiloFotoVideo === "final"
-                              ? "bg-fill-primary text-on-primary"
-                              : "text-text-secondary"
-                          }`}
-                        >
-                          Al final
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => cambiarEstiloFotoVideo("mapa")}
-                          className={`rounded-app px-3 py-1.5 text-xs font-semibold ${
-                            estiloFotoVideo === "mapa"
-                              ? "bg-fill-primary text-on-primary"
-                              : "text-text-secondary"
-                          }`}
-                        >
-                          En el mapa
-                        </button>
+                      <div className="flex flex-col items-center gap-1.5">
+                        <p className="text-[11px] font-semibold text-text-secondary">Foto de cierre</p>
+                        {fotoFinalDataUrl ? (
+                          <div className="relative">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={fotoFinalDataUrl}
+                              alt="Foto de cierre elegida"
+                              className="h-20 w-20 rounded-app border border-border-accent object-cover"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setFotoFinalDataUrl(null)}
+                              aria-label="Quitar foto de cierre"
+                              className="absolute -right-1 -top-1 rounded-full bg-surface-2 p-1 text-text-secondary"
+                            >
+                              <IconTrash size={12} />
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => inputFotoFinalRef.current?.click()}
+                            className="flex items-center gap-1.5 rounded-app border border-border-accent px-3 py-1.5 text-xs text-text-accent"
+                          >
+                            <IconPhoto size={14} />
+                            Agregar foto de cierre
+                          </button>
+                        )}
                       </div>
-                      {fotosVideoDataUrl.length > 0 && (
-                        <div className="flex gap-2">
-                          {fotosVideoDataUrl.map((foto, i) => (
-                            <div key={i} className="relative">
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img
-                                src={foto}
-                                alt="Foto elegida"
-                                className={`h-20 w-20 border border-border-accent object-cover ${
-                                  estiloFotoVideo === "final" ? "rounded-app" : "rounded-full"
-                                }`}
-                              />
-                              <button
-                                type="button"
-                                onClick={() => quitarFotoVideo(i)}
-                                aria-label="Quitar foto"
-                                className="absolute -right-1 -top-1 rounded-full bg-surface-2 p-1 text-text-secondary"
-                              >
-                                <IconTrash size={12} />
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      {fotosVideoDataUrl.length < (estiloFotoVideo === "final" ? 1 : 3) && (
-                        <button
-                          type="button"
-                          onClick={() => inputFotoVideoRef.current?.click()}
-                          className="flex items-center gap-1.5 rounded-app border border-border-accent px-3 py-1.5 text-xs text-text-accent"
-                        >
-                          <IconPhoto size={14} />
-                          Agregar foto
-                        </button>
-                      )}
+                      <div className="flex flex-col items-center gap-1.5">
+                        <p className="text-[11px] font-semibold text-text-secondary">Fotos en el mapa</p>
+                        {fotosPinDataUrl.length > 0 && (
+                          <div className="flex gap-2">
+                            {fotosPinDataUrl.map((foto, i) => (
+                              <div key={i} className="relative">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  src={foto}
+                                  alt="Foto elegida"
+                                  className="h-20 w-20 rounded-full border border-border-accent object-cover"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => quitarFotoPin(i)}
+                                  aria-label="Quitar foto"
+                                  className="absolute -right-1 -top-1 rounded-full bg-surface-2 p-1 text-text-secondary"
+                                >
+                                  <IconTrash size={12} />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {fotosPinDataUrl.length < 3 && (
+                          <button
+                            type="button"
+                            onClick={() => inputFotoPinRef.current?.click()}
+                            className="flex items-center gap-1.5 rounded-app border border-border-accent px-3 py-1.5 text-xs text-text-accent"
+                          >
+                            <IconPhoto size={14} />
+                            Agregar foto en el mapa
+                          </button>
+                        )}
+                      </div>
                       {musicaElegida ? (
                         <div className="flex items-center gap-1.5 rounded-app border border-border-accent px-3 py-1.5 text-xs text-text-accent">
                           <IconMusic size={14} />

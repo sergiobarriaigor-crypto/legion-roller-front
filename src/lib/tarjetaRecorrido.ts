@@ -537,13 +537,6 @@ export async function generarTarjetaRecorrido(datos: DatosTarjetaRecorrido): Pro
   });
 }
 
-// Estilo de la foto opcional del video: "final" la muestra a pantalla
-// completa en el cuadro de cierre (como una portada); "mapa" la clava como
-// un pin circular sobre el mapa, en el punto donde va la ruta (por defecto,
-// la mitad del recorrido por distancia) -- se revela recién cuando el trazo
-// animado llega a ese punto, igual que la marca de velocidad máxima.
-export type EstiloFotoVideo = "final" | "mapa";
-
 export interface OpcionesVideoRecorrido {
   // Duración de la animación (el trazo dibujándose + la cámara alejándose al
   // final) — NO la duración real del recorrido, que puede ser de horas.
@@ -552,18 +545,20 @@ export interface OpcionesVideoRecorrido {
   // corta.
   duracionAnimSeg?: number;
   // Cuánto se mantiene congelado el cuadro final (panorámica completa, o la
-  // foto de cierre si se eligió "final") antes de cortar el video.
+  // foto de cierre si se eligió una) antes de cortar el video.
   duracionFinalSeg?: number;
   fps?: number;
   onProgreso?: (fraccion: number) => void;
-  // Fotos opcionales (nunca obligatorias, hasta 3) -- si no se pasa
-  // fotosDataUrl, el video sigue igual pero sin ningún paso de foto.
-  // estiloFoto "final" solo tiene efecto con exactamente 1 foto (se muestra
-  // a pantalla completa en el cierre); con 2 o 3 fotos, o con estiloFoto
-  // "mapa", cada una se clava como un pin sobre el mapa, repartidas por
-  // distancia del recorrido (ver fraccionesPines).
-  fotosDataUrl?: string[];
-  estiloFoto?: EstiloFotoVideo;
+  // Las dos fotos opcionales son independientes entre sí -- se puede elegir
+  // una, la otra, ambas, o ninguna (nunca obligatorias):
+  // - fotoFinalDataUrl: 1 sola foto a pantalla completa en el cuadro de
+  //   cierre, como una portada.
+  // - fotosPinDataUrl: hasta 3 fotos clavadas como pines circulares sobre el
+  //   mapa, repartidas por distancia del recorrido (ver fraccionesPines) --
+  //   cada una se revela recién cuando el trazo animado llega a ese punto,
+  //   igual que la marca de velocidad máxima.
+  fotoFinalDataUrl?: string;
+  fotosPinDataUrl?: string[];
   // Portada opcional al arranque del video con la foto de perfil + nombre
   // del usuario (estilo Relive/Strava) -- si no se pasa nombreUsuario, no
   // hay intro (avatarUrl solo tiene efecto si también hay nombreUsuario).
@@ -1407,8 +1402,8 @@ export async function generarVideoRecorrido(
     duracionCierreSeg = DURACION_CIERRE_SEG_DEFECTO,
     fps = FPS_DEFECTO,
     onProgreso,
-    fotosDataUrl = [],
-    estiloFoto = null,
+    fotoFinalDataUrl = null,
+    fotosPinDataUrl = [],
     avatarUrl = null,
     nombreUsuario,
     musicaUrl,
@@ -1421,13 +1416,6 @@ export async function generarVideoRecorrido(
   if (datos.puntos.length < 2) {
     throw new Error("El recorrido no tiene suficientes puntos para animar.");
   }
-
-  // "final" (portada de cierre a pantalla completa) solo tiene sentido con
-  // exactamente 1 foto -- con 2 o 3, todas pasan a ser pines sobre el mapa
-  // (ver fraccionesPines), no hay forma de mostrar varias a pantalla
-  // completa en el mismo cuadro.
-  const fotoFinalDataUrl = estiloFoto === "final" && fotosDataUrl.length === 1 ? fotosDataUrl[0] : null;
-  const fotosPinDataUrl = fotoFinalDataUrl ? [] : fotosDataUrl;
 
   const [logoGrandeDataUrl, mapa, avatarDataUrl] = await Promise.all([
     cargarImagenComoDataUrl("/logo-legion-roller.png"),
