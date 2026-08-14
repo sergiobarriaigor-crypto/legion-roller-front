@@ -157,39 +157,46 @@ export function EditorEncuadreFoto({ archivo, aspecto, onConfirmar, onCancelar }
     onConfirmar(canvas.toDataURL(tipo, 0.9));
   }
 
+  // Pantalla completa flotante (mismo wrapper que AjustarEncuadreFoto.tsx) --
+  // así el lienzo, el zoom y los botones nunca dependen del alto/scroll del
+  // panel de atrás (dentro de CompartirRecorridoModal.tsx, un editor
+  // embebido ahí se cortaba y "Usar esta foto"/"Generar video" quedaban
+  // inalcanzables).
   return (
-    <div className="card flex flex-col items-center gap-2 p-3" data-no-swipe>
-      <canvas
-        ref={canvasRef}
-        width={ANCHO_LIENZO}
-        height={altoLienzo}
-        className={`touch-none ${aspecto === "circular" ? "rounded-full" : "rounded-app"}`}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={detenerArrastre}
-        onPointerLeave={detenerArrastre}
-      />
-      <input
-        type="range"
-        min={1}
-        max={ZOOM_MAXIMO}
-        step={0.05}
-        value={zoom}
-        onChange={(e) => cambiarZoom(Number(e.target.value))}
-        className="w-full"
-      />
-      <p className="text-xs text-text-muted">Arrastra para mover, desliza para hacer zoom</p>
-      <div className="flex w-full gap-2">
-        <button type="button" onClick={confirmar} className="btn-hero flex-1 rounded-app px-4 py-2 text-sm">
-          Usar esta foto
-        </button>
-        <button
-          type="button"
-          onClick={onCancelar}
-          className="rounded-app border border-border px-4 py-2 text-sm text-text-secondary"
-        >
-          Cancelar
-        </button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" data-no-swipe>
+      <div className="card flex w-full max-w-xs flex-col items-center gap-2 p-3">
+        <canvas
+          ref={canvasRef}
+          width={ANCHO_LIENZO}
+          height={altoLienzo}
+          className={`touch-none ${aspecto === "circular" ? "rounded-full" : "rounded-app"}`}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={detenerArrastre}
+          onPointerLeave={detenerArrastre}
+        />
+        <input
+          type="range"
+          min={1}
+          max={ZOOM_MAXIMO}
+          step={0.05}
+          value={zoom}
+          onChange={(e) => cambiarZoom(Number(e.target.value))}
+          className="w-full"
+        />
+        <p className="text-xs text-text-muted">Arrastra para mover, desliza para hacer zoom</p>
+        <div className="flex w-full gap-2">
+          <button type="button" onClick={confirmar} className="btn-hero flex-1 rounded-app px-4 py-2 text-sm">
+            Usar esta foto
+          </button>
+          <button
+            type="button"
+            onClick={onCancelar}
+            className="rounded-app border border-border px-4 py-2 text-sm text-text-secondary"
+          >
+            Cancelar
+          </button>
+        </div>
       </div>
     </div>
   );
