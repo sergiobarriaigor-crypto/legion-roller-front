@@ -786,6 +786,17 @@ export default function ConversacionPage() {
               onFocus={() => {
                 noAutofillMensaje.onFocus();
                 composerEnfocadoRef.current = true;
+                // Sin esto, el teclado tapaba el último mensaje y había que
+                // bajar a mano cada vez que se abría el compositor -- se
+                // llama dos veces (al toque, y de nuevo con una demora
+                // corta) porque la animación del teclado tarda un poco más
+                // que el evento de foco en sí; el segundo llamado agarra la
+                // posición ya con el teclado totalmente abierto. A propósito
+                // NO se usa el resize del viewport visual para esto -- ver
+                // el comentario más abajo sobre por qué eso rompía el
+                // teclado en Android.
+                scrollAlFondo();
+                setTimeout(scrollAlFondo, 300);
               }}
               onBlur={() => {
                 composerEnfocadoRef.current = false;
