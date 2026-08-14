@@ -481,7 +481,19 @@ export function CompartirRecorridoModal({
           </button>
         </div>
 
-        <div className="relative flex items-center justify-center overflow-hidden rounded-app bg-surface-2" style={{ height: 320 }}>
+        {/* Mientras se eligen fotos/música (antes de generar), el contenido ya
+            no entra en 320px fijos -- en vez de recortarlo (overflow-hidden),
+            se le da scroll propio para esta sub-pantalla, así "Generar video"
+            nunca queda tapado sin forma de llegar a él. La vista previa real
+            (imagen, video ya generado, 3D) sigue con su tamaño fijo normal. */}
+        <div
+          className={`relative flex rounded-app bg-surface-2 ${
+            tab === "video" && !generandoVideo && !videoUrl
+              ? "items-start justify-center overflow-y-auto py-3"
+              : "items-center justify-center overflow-hidden"
+          }`}
+          style={{ height: 320 }}
+        >
           {tab === "imagen" && (
             <>
               {!previewUrl && <p className="text-xs text-text-secondary">Generando tarjeta...</p>}
