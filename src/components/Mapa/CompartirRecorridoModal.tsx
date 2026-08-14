@@ -125,6 +125,15 @@ export function CompartirRecorridoModal({
   // acciones son independientes entre sí (no se bloquean mutuamente).
   const [publicandoHistoria, setPublicandoHistoria] = useState(false);
 
+  // Menú "+" de opciones para compartir (Imagen/Video) -- reemplaza los
+  // botones apilados de antes por un menú flotante chico, anclado al botón,
+  // con las opciones que apliquen a la pestaña activa. posMenuCompartir se
+  // mide en el momento de abrir (coordenadas reales del botón en pantalla)
+  // para que el menú aparezca justo arriba de él.
+  const [menuCompartirAbierto, setMenuCompartirAbierto] = useState(false);
+  const [posMenuCompartir, setPosMenuCompartir] = useState<{ top: number; left: number } | null>(null);
+  const botonCompartirRef = useRef<HTMLButtonElement>(null);
+
   // Video 3D (flyover): a diferencia del video de arriba, se renderiza en el
   // servidor (navegador headless + MapLibre) porque muchos celulares no
   // soportan WebGL/GPU -- tarda 1-3 min, así que en vez de una barra de
@@ -308,6 +317,21 @@ export function CompartirRecorridoModal({
     if (nuevoTab === "video3d" && estadoFlyover === null && !cargandoFlyover) {
       consultarEstadoFlyoverInicial();
     }
+  }
+
+  function alternarMenuCompartir() {
+    if (menuCompartirAbierto) {
+      setMenuCompartirAbierto(false);
+      return;
+    }
+    const rect = botonCompartirRef.current?.getBoundingClientRect();
+    if (rect) setPosMenuCompartir({ top: rect.top - 8, left: rect.left + rect.width / 2 });
+    setMenuCompartirAbierto(true);
+  }
+
+  function ejecutarYcerrar(accion: () => void) {
+    setMenuCompartirAbierto(false);
+    accion();
   }
 
   async function publicarEnPost() {
@@ -536,9 +560,7 @@ export function CompartirRecorridoModal({
                 <div className="flex flex-col items-center gap-3 px-6 text-center">
                   {errorVideo && <p className="text-xs text-fill-warning">{errorVideo}</p>}
                   <p className="text-xs text-text-secondary">
-                    El mapa se dibuja solo, con tu velocidad máxima marcada en el recorrido. Podés
-                    agregarle fotos (opcional): una de cierre y hasta 3 en el mapa, juntas o por
-                    separado.
+                    El mapa se dibuja solo, con tu velocidad máxima marcada en el recorrido.
                   </p>
                   <input
                     ref={inputFotoFinalRef}
@@ -567,93 +589,92 @@ export function CompartirRecorridoModal({
                   )}
                   {!archivoEditandoFoto && (
                     <>
-                      <div className="flex flex-col items-center gap-1.5">
-                        <p className="text-[11px] font-semibold text-text-secondary">Foto de cierre</p>
-                        {fotoFinalDataUrl ? (
-                          <div className="relative">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                              src={fotoFinalDataUrl}
-                              alt="Foto de cierre elegida"
-                              className="h-20 w-20 rounded-app border border-border-accent object-cover"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => setFotoFinalDataUrl(null)}
-                              aria-label="Quitar foto de cierre"
-                              className="absolute -right-1 -top-1 rounded-full bg-surface-2 p-1 text-text-secondary"
-                            >
-                              <IconTrash size={12} />
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => inputFotoFinalRef.current?.click()}
-                            className="flex items-center gap-1.5 rounded-app border border-border-accent px-3 py-1.5 text-xs text-text-accent"
-                          >
-                            <IconPhoto size={14} />
-                            Agregar foto de cierre
-                          </button>
-                        )}
-                      </div>
-                      <div className="flex flex-col items-center gap-1.5">
-                        <p className="text-[11px] font-semibold text-text-secondary">Fotos en el mapa</p>
-                        {fotosPinDataUrl.length > 0 && (
-                          <div className="flex gap-2">
-                            {fotosPinDataUrl.map((foto, i) => (
-                              <div key={i} className="relative">
-                                {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img
-                                  src={foto}
-                                  alt="Foto elegida"
-                                  className="h-20 w-20 rounded-full border border-border-accent object-cover"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => quitarFotoPin(i)}
-                                  aria-label="Quitar foto"
-                                  className="absolute -right-1 -top-1 rounded-full bg-surface-2 p-1 text-text-secondary"
-                                >
-                                  <IconTrash size={12} />
-                                </button>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        {fotosPinDataUrl.length < 3 && (
-                          <button
-                            type="button"
-                            onClick={() => inputFotoPinRef.current?.click()}
-                            className="flex items-center gap-1.5 rounded-app border border-border-accent px-3 py-1.5 text-xs text-text-accent"
-                          >
-                            <IconPhoto size={14} />
-                            Agregar foto en el mapa
-                          </button>
-                        )}
-                      </div>
-                      {musicaElegida ? (
-                        <div className="flex items-center gap-1.5 rounded-app border border-border-accent px-3 py-1.5 text-xs text-text-accent">
-                          <IconMusic size={14} />
-                          <span className="max-w-[140px] truncate">{musicaElegida.cancion.nombre}</span>
-                          <button
-                            type="button"
-                            onClick={() => setMusicaElegida(null)}
-                            aria-label="Quitar música"
-                            className="text-text-secondary"
-                          >
-                            <IconTrash size={12} />
-                          </button>
-                        </div>
-                      ) : (
+                      {/* 3 tiles chicos en vez de 3 bloques apilados con
+                          título -- cada uno agrega su tipo (deshabilitado al
+                          llegar al máximo); lo ya elegido se ve en la tira de
+                          miniaturas de abajo, no acá. */}
+                      <div className="grid w-full grid-cols-3 gap-2">
                         <button
                           type="button"
-                          onClick={() => setMostrarSelectorMusica(true)}
-                          className="flex items-center gap-1.5 rounded-app border border-border-accent px-3 py-1.5 text-xs text-text-accent"
+                          disabled={!!fotoFinalDataUrl}
+                          onClick={() => inputFotoFinalRef.current?.click()}
+                          className="flex flex-col items-center gap-1 rounded-app border border-border-accent py-2 text-text-accent disabled:opacity-30"
                         >
-                          <IconMusic size={14} />
-                          Agregar música
+                          <IconPhoto size={18} />
+                          <span className="text-[10px]">Cierre</span>
                         </button>
+                        <button
+                          type="button"
+                          disabled={fotosPinDataUrl.length >= 3}
+                          onClick={() => inputFotoPinRef.current?.click()}
+                          className="flex flex-col items-center gap-1 rounded-app border border-border-accent py-2 text-text-accent disabled:opacity-30"
+                        >
+                          <IconPhoto size={18} />
+                          <span className="text-[10px]">En el mapa</span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!!musicaElegida}
+                          onClick={() => setMostrarSelectorMusica(true)}
+                          className="flex flex-col items-center gap-1 rounded-app border border-border-accent py-2 text-text-accent disabled:opacity-30"
+                        >
+                          <IconMusic size={18} />
+                          <span className="text-[10px]">Música</span>
+                        </button>
+                      </div>
+                      {(fotoFinalDataUrl || fotosPinDataUrl.length > 0 || musicaElegida) && (
+                        <div className="flex flex-wrap items-center justify-center gap-2">
+                          {fotoFinalDataUrl && (
+                            <div className="relative">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={fotoFinalDataUrl}
+                                alt="Foto de cierre elegida"
+                                className="h-10 w-10 rounded-app border border-border-accent object-cover"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setFotoFinalDataUrl(null)}
+                                aria-label="Quitar foto de cierre"
+                                className="absolute -right-1 -top-1 rounded-full bg-surface-2 p-0.5 text-text-secondary"
+                              >
+                                <IconTrash size={10} />
+                              </button>
+                            </div>
+                          )}
+                          {fotosPinDataUrl.map((foto, i) => (
+                            <div key={i} className="relative">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={foto}
+                                alt="Foto elegida"
+                                className="h-10 w-10 rounded-full border border-border-accent object-cover"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => quitarFotoPin(i)}
+                                aria-label="Quitar foto"
+                                className="absolute -right-1 -top-1 rounded-full bg-surface-2 p-0.5 text-text-secondary"
+                              >
+                                <IconTrash size={10} />
+                              </button>
+                            </div>
+                          ))}
+                          {musicaElegida && (
+                            <div className="flex items-center gap-1 rounded-full border border-border-accent px-2 py-1 text-[10px] text-text-accent">
+                              <IconMusic size={12} />
+                              <span className="max-w-[70px] truncate">{musicaElegida.cancion.nombre}</span>
+                              <button
+                                type="button"
+                                onClick={() => setMusicaElegida(null)}
+                                aria-label="Quitar música"
+                                className="text-text-secondary"
+                              >
+                                <IconTrash size={10} />
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       )}
                       <button
                         type="button"
@@ -846,47 +867,30 @@ export function CompartirRecorridoModal({
 
         {error && <p className="text-xs text-fill-warning">{error}</p>}
 
-        {(tab === "imagen" || tab === "video") && (
+        {tab === "imagen" || tab === "video" ? (
+          <div className="flex justify-center">
+            <button
+              ref={botonCompartirRef}
+              type="button"
+              onClick={alternarMenuCompartir}
+              aria-label="Opciones para compartir"
+              aria-expanded={menuCompartirAbierto}
+              className="btn-hero flex h-11 w-11 items-center justify-center rounded-full text-lg"
+            >
+              <IconCirclePlus size={22} />
+            </button>
+          </div>
+        ) : (
           <button
             type="button"
-            disabled={
-              estado === "publicando" ||
-              (tab === "imagen" ? cargandoInicial || !blob : generandoVideo || !videoBlob)
-            }
-            onClick={publicarEnPost}
-            className="btn-hero flex items-center justify-center gap-1.5 rounded-app px-4 py-2 text-sm disabled:opacity-50"
-          >
-            <IconUpload size={16} />
-            {estado === "publicando" ? "Publicando..." : "Publicar en Post"}
-          </button>
-        )}
-        {tab === "video" && (
-          <button
-            type="button"
-            disabled={publicandoHistoria || generandoVideo || !videoBlob}
-            onClick={compartirEnHistoria}
+            disabled={compartiendo || estadoFlyover?.estado !== "listo" || !estadoFlyover.videoUrl}
+            onClick={compartirEnRedes}
             className="flex items-center justify-center gap-1.5 rounded-app border border-border-accent px-4 py-2 text-sm text-text-accent disabled:opacity-50"
           >
-            <IconCirclePlus size={16} />
-            {publicandoHistoria ? "Compartiendo..." : "Compartir en Historia"}
+            <IconShare size={16} />
+            {compartiendo ? "Preparando..." : "Compartir en redes sociales"}
           </button>
         )}
-        <button
-          type="button"
-          disabled={
-            compartiendo ||
-            (tab === "imagen"
-              ? cargandoInicial || !blob
-              : tab === "video"
-                ? generandoVideo || !videoBlob
-                : estadoFlyover?.estado !== "listo" || !estadoFlyover.videoUrl)
-          }
-          onClick={compartirEnRedes}
-          className="flex items-center justify-center gap-1.5 rounded-app border border-border-accent px-4 py-2 text-sm text-text-accent disabled:opacity-50"
-        >
-          <IconShare size={16} />
-          {compartiendo ? "Preparando..." : "Compartir en redes sociales"}
-        </button>
 
         <button type="button" onClick={onClose} className="text-xs text-text-secondary underline">
           {tab === "video3d" && (estadoFlyover?.estado === "pendiente" || estadoFlyover?.estado === "procesando")
@@ -909,6 +913,54 @@ export function CompartirRecorridoModal({
             }}
             onCerrar={() => setMostrarSelectorMusica(false)}
           />
+        </div>
+      )}
+      {/* Menú "+" de compartir: anclado al botón (coordenadas medidas al
+          abrir, ver alternarMenuCompartir), no pantalla completa -- el
+          catcher fixed de atrás es solo para cerrar al tocar afuera. */}
+      {menuCompartirAbierto && posMenuCompartir && (
+        <div
+          className="fixed inset-0 z-[60]"
+          onClick={(e) => {
+            e.stopPropagation();
+            setMenuCompartirAbierto(false);
+          }}
+        >
+          <div
+            className="fixed z-[61] w-52 rounded-app border border-border-accent bg-surface-2 p-1.5 shadow-lg"
+            style={{ top: posMenuCompartir.top, left: posMenuCompartir.left, transform: "translate(-50%, -100%)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              disabled={estado === "publicando" || (tab === "imagen" ? cargandoInicial || !blob : generandoVideo || !videoBlob)}
+              onClick={() => ejecutarYcerrar(publicarEnPost)}
+              className="flex w-full items-center gap-2 rounded-app px-3 py-2 text-left text-xs text-text-accent disabled:opacity-40"
+            >
+              <IconUpload size={15} />
+              {estado === "publicando" ? "Publicando..." : "Publicar en Post"}
+            </button>
+            {tab === "video" && (
+              <button
+                type="button"
+                disabled={publicandoHistoria || generandoVideo || !videoBlob}
+                onClick={() => ejecutarYcerrar(compartirEnHistoria)}
+                className="flex w-full items-center gap-2 rounded-app px-3 py-2 text-left text-xs text-text-accent disabled:opacity-40"
+              >
+                <IconCirclePlus size={15} />
+                {publicandoHistoria ? "Compartiendo..." : "Compartir en Historia"}
+              </button>
+            )}
+            <button
+              type="button"
+              disabled={compartiendo || (tab === "imagen" ? cargandoInicial || !blob : generandoVideo || !videoBlob)}
+              onClick={() => ejecutarYcerrar(compartirEnRedes)}
+              className="flex w-full items-center gap-2 rounded-app px-3 py-2 text-left text-xs text-text-accent disabled:opacity-40"
+            >
+              <IconShare size={15} />
+              {compartiendo ? "Preparando..." : "Compartir en redes sociales"}
+            </button>
+          </div>
         </div>
       )}
     </div>
