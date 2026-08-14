@@ -103,7 +103,12 @@ export default function AppGroupLayout({
         </BorradorPostProvider>
       </ChatHeaderProvider>
 
-      <BottomNav />
+      {/* Misma lógica que el header: dentro de una conversación abierta, la
+          barra fija de abajo (Comunidad/Post/Mapa/Impulsa/Perfil) le resta
+          altura útil a algo que ya es de por sí una pantalla larga para
+          navegar (los mensajes) -- se oculta ahí, igual que hacen
+          WhatsApp/Telegram/Messenger. "/chat" (la lista) la sigue mostrando. */}
+      {!enConversacionChat && <BottomNav />}
     </div>
   );
 }
