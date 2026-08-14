@@ -576,6 +576,13 @@ export interface OpcionesVideoRecorrido {
   // Cuánto se sostiene el cuadro de cierre (logo grande + ciudad) al final
   // de todo, después de la panorámica (o de la foto de portada).
   duracionCierreSeg?: number;
+  // Música de fondo opcional, del mismo catálogo propio que usan las
+  // Historias (ver lib/musicaHistorias.ts) -- musicaUrl es la ruta estática
+  // dentro de /public (no pasa por /uploads), musicaInicioSeg el segundo
+  // desde donde arrancar si la pista es más larga que el video. Sin
+  // musicaUrl el video queda mudo, como antes.
+  musicaUrl?: string;
+  musicaInicioSeg?: number;
 }
 
 const DURACION_ANIM_SEG_DEFECTO = 11;
@@ -586,6 +593,20 @@ const DURACION_INTRO_SEG_DEFECTO = 1.8;
 const FUNDIDO_INTRO_SEG = 0.6;
 const DURACION_CIERRE_SEG_DEFECTO = 2.2;
 const FPS_DEFECTO = 24;
+
+// Techo generoso de cuánto puede llegar a durar el video con los valores por
+// defecto (intro + fundido + trazo + pausa de vel. máxima + final + cierre).
+// Solo se usa para decidir si hay que ofrecer recorte de música (ver
+// SelectorMusicaHistoria) -- no necesita ser exacto, mejor quedarse corto en
+// la duración real (que varía según si hay intro) que sobrar.
+export const DURACION_VIDEO_ESTIMADA_SEG = 20;
+
+// Volumen base de la música de fondo (dejamos algo de aire para que no tape
+// el resto del audio si el usuario reproduce esto sobre otro sonido) y
+// cuánto se desvanece hacia el final -- coincide con el cuadro de cierre
+// (logo + ciudad) para que el corte del video y el del audio se sientan
+// juntos, no uno después del otro.
+const VOLUMEN_MUSICA = 0.65;
 
 // Tamaño del video rediseñado: vertical 9:16 real (a diferencia de la
 // tarjeta 800x1150), porque ya no hay marco de tarjeta -- el mapa ocupa la
@@ -616,12 +637,32 @@ function suavizar(t: number): number {
 // alcanza a leerla antes de que la cámara siga de largo.
 const PAUSA_VELMAX_MS = 700;
 
-function elegirMimeTypeVideo(): string {
-  const candidatos = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
+function elegirMimeTypeVideo(conAudio: boolean): string {
+  const candidatos = conAudio
+    ? ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"]
+    : ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
   for (const candidato of candidatos) {
     if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(candidato)) return candidato;
   }
   return "video/webm";
+}
+
+// Descarga y decodifica la pista de música elegida a un buffer de audio
+// listo para reproducir con Web Audio API. Nunca lanza -- si falla (red,
+// formato, navegador sin soporte), el video sigue igual pero mudo en vez de
+// arruinar toda la generación por un problema de audio.
+async function cargarBufferMusica(
+  url: string,
+  audioCtx: AudioContext,
+): Promise<AudioBuffer | null> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const arrayBuffer = await res.arrayBuffer();
+    return await audioCtx.decodeAudioData(arrayBuffer);
+  } catch {
+    return null;
+  }
 }
 
 // Dado un instante (0 a 1) de la animación, calcula qué parte real del
@@ -1370,6 +1411,8 @@ export async function generarVideoRecorrido(
     estiloFoto = null,
     avatarUrl = null,
     nombreUsuario,
+    musicaUrl,
+    musicaInicioSeg = 0,
   } = opciones;
 
   if (typeof MediaRecorder === "undefined") {
@@ -1530,9 +1573,49 @@ export async function generarVideoRecorrido(
   // instante en blanco.
   dibujarFrame(0, false);
 
-  const stream = canvas.captureStream(fps);
+  // Música de fondo (opcional): se decodifica y arranca a reproducir ANTES
+  // de crear el MediaRecorder, mezclada como un track de audio más sobre el
+  // mismo stream que graba el canvas -- así queda "quemada" dentro del
+  // .webm resultante, sin depender de que quien lo reproduzca sepa nada de
+  // música por separado. Si algo falla acá (red, decode, navegador sin Web
+  // Audio), sigue igual pero mudo -- nunca revienta la generación del video.
+  let audioCtx: AudioContext | null = null;
+  let fuenteMusica: AudioBufferSourceNode | null = null;
+  let gananciaMusica: GainNode | null = null;
+  let destinoMusica: MediaStreamAudioDestinationNode | null = null;
+  if (musicaUrl) {
+    try {
+      const AudioContextCtor =
+        window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      audioCtx = new AudioContextCtor();
+      const buffer = await cargarBufferMusica(musicaUrl, audioCtx);
+      if (buffer) {
+        destinoMusica = audioCtx.createMediaStreamDestination();
+        gananciaMusica = audioCtx.createGain();
+        gananciaMusica.gain.value = VOLUMEN_MUSICA;
+        fuenteMusica = audioCtx.createBufferSource();
+        fuenteMusica.buffer = buffer;
+        fuenteMusica.connect(gananciaMusica).connect(destinoMusica);
+        fuenteMusica.start(0, Math.min(musicaInicioSeg, Math.max(0, buffer.duration - 0.1)));
+      } else {
+        audioCtx.close().catch(() => {});
+        audioCtx = null;
+      }
+    } catch {
+      audioCtx = null;
+      fuenteMusica = null;
+      gananciaMusica = null;
+      destinoMusica = null;
+    }
+  }
+
+  const streamVideo = canvas.captureStream(fps);
+  const stream = new MediaStream([
+    ...streamVideo.getVideoTracks(),
+    ...(destinoMusica ? destinoMusica.stream.getAudioTracks() : []),
+  ]);
   const mediaRecorder = new MediaRecorder(stream, {
-    mimeType: elegirMimeTypeVideo(),
+    mimeType: elegirMimeTypeVideo(!!destinoMusica),
     // Sin esto el navegador elige un bitrate bajo por defecto -- se nota
     // sobre todo en el logo (detalle fino) y cuando la app que recibe el
     // video (WhatsApp, etc.) lo vuelve a comprimir: partir de un video
@@ -1602,11 +1685,25 @@ export async function generarVideoRecorrido(
   await new Promise((r) => setTimeout(r, duracionFinalSeg * 1000));
 
   // Cuadro de cierre final: logo grande + ciudad, después de todo lo
-  // demás (panorámica o foto de portada).
+  // demás (panorámica o foto de portada). La música (si hay) se desvanece
+  // en simultáneo, para que el corte de imagen y de audio se sientan
+  // juntos en vez de uno después del otro.
+  if (gananciaMusica && audioCtx) {
+    const ahora = audioCtx.currentTime;
+    gananciaMusica.gain.cancelScheduledValues(ahora);
+    gananciaMusica.gain.setValueAtTime(gananciaMusica.gain.value, ahora);
+    gananciaMusica.gain.linearRampToValueAtTime(0, ahora + duracionCierreSeg);
+  }
   dibujarCierreVideo(ctx, logoGrandeImg, datos.ciudad ?? "");
   await new Promise((r) => setTimeout(r, duracionCierreSeg * 1000));
 
   mediaRecorder.stop();
+  try {
+    fuenteMusica?.stop();
+  } catch {
+    // ya se había detenido sola (el buffer terminó antes que el video) -- no pasa nada
+  }
+  audioCtx?.close().catch(() => {});
   onProgreso?.(1);
   return grabacionLista;
 }

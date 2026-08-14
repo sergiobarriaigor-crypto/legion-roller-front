@@ -2,11 +2,23 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Capacitor } from "@capacitor/core";
-import { IconShare, IconUpload, IconCube3dSphere, IconX, IconPhoto, IconTrash } from "@tabler/icons-react";
+import {
+  IconShare,
+  IconUpload,
+  IconCube3dSphere,
+  IconX,
+  IconPhoto,
+  IconTrash,
+  IconMusic,
+  IconVolume,
+  IconVolumeOff,
+  IconCirclePlus,
+} from "@tabler/icons-react";
 import { apiGet, apiUpload, apiPost, ApiError } from "@/lib/api";
 import {
   generarTarjetaRecorrido,
   generarVideoRecorrido,
+  DURACION_VIDEO_ESTIMADA_SEG,
   type DatosTarjetaRecorrido,
   type EstiloFotoVideo,
 } from "@/lib/tarjetaRecorrido";
@@ -21,6 +33,9 @@ import {
 import { useNoAutofill } from "@/lib/useNoAutofill";
 import { compartirArchivoNativo } from "@/lib/compartirNativo";
 import { useSession } from "@/context/SessionContext";
+import { crearHistoria } from "@/lib/historias";
+import { SelectorMusicaHistoria } from "@/components/Historias/SelectorMusicaHistoria";
+import type { CancionHistoria } from "@/lib/musicaHistorias";
 
 type Estado = "editando" | "publicando";
 type Tab = "imagen" | "video" | "video3d";
@@ -89,6 +104,22 @@ export function CompartirRecorridoModal({
   const [estiloFotoVideo, setEstiloFotoVideo] = useState<EstiloFotoVideo>("final");
   const [archivoEditandoFoto, setArchivoEditandoFoto] = useState<File | null>(null);
   const inputFotoVideoRef = useRef<HTMLInputElement>(null);
+
+  // Música de fondo opcional para el video (mismo catálogo/selector que ya
+  // usan las Historias, ver SelectorMusicaHistoria) -- se elige ANTES de
+  // generar, igual que las fotos. Sin canción, el video sale mudo como
+  // siempre.
+  const [musicaElegida, setMusicaElegida] = useState<{ cancion: CancionHistoria; inicioSeg: number } | null>(null);
+  const [mostrarSelectorMusica, setMostrarSelectorMusica] = useState(false);
+  // La vista previa arranca silenciada (autoplay con audio suele bloquearlo
+  // el navegador) -- este botón deja escuchar la mezcla real antes de
+  // publicarla en cualquier lado.
+  const [previewSilenciado, setPreviewSilenciado] = useState(true);
+
+  // Publicar el video (a diferencia de la imagen, que solo tiene "Publicar
+  // en Post") también puede ir a Historia -- estado aparte porque ambas
+  // acciones son independientes entre sí (no se bloquean mutuamente).
+  const [publicandoHistoria, setPublicandoHistoria] = useState(false);
 
   // Video 3D (flyover): a diferencia del video de arriba, se renderiza en el
   // servidor (navegador headless + MapLibre) porque muchos celulares no
@@ -215,6 +246,8 @@ export function CompartirRecorridoModal({
         estiloFoto: fotosVideoDataUrl.length ? estiloFotoVideo : undefined,
         avatarUrl: miFotoUrl,
         nombreUsuario: sesion?.nombre,
+        musicaUrl: musicaElegida?.cancion.archivo,
+        musicaInicioSeg: musicaElegida?.inicioSeg,
       });
       if (videoBlobUrlRef.current) URL.revokeObjectURL(videoBlobUrlRef.current);
       const url = URL.createObjectURL(nuevoBlob);
@@ -271,18 +304,21 @@ export function CompartirRecorridoModal({
   }
 
   async function publicarEnPost() {
-    if (!token || !blob) return;
+    const esVideo = tab === "video";
+    const archivo = esVideo ? videoBlob : blob;
+    if (!token || !archivo) return;
     setEstado("publicando");
     setError("");
     try {
-      const subida = await apiUpload<{ url: string }>("/uploads", blob, token, "recorrido.png");
+      const nombreArchivo = esVideo ? "recorrido.webm" : "recorrido.png";
+      const subida = await apiUpload<{ url: string }>("/uploads", archivo, token, nombreArchivo);
       await apiPost(
         "/posts",
         {
           titulo: titulo.trim() || "Mi recorrido en Legión Roller",
           resena: comentario.trim() || "¡Otro recorrido completado! 🛼",
           ubicacion: datos.sector,
-          fotos: [subida.url],
+          ...(esVideo ? { tipo: "video", videoUrl: subida.url } : { fotos: [subida.url] }),
         },
         token,
       );
@@ -291,6 +327,25 @@ export function CompartirRecorridoModal({
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "No se pudo publicar el recorrido.");
       setEstado("editando");
+    }
+  }
+
+  // Solo tiene sentido en la pestaña "Video" -- no existe un equivalente
+  // "compartir la imagen en Historia" porque las Historias de esta app son
+  // siempre foto/video capturado por el usuario, no una tarjeta generada.
+  async function compartirEnHistoria() {
+    if (!token || !videoBlob) return;
+    setPublicandoHistoria(true);
+    setError("");
+    try {
+      const subida = await apiUpload<{ url: string }>("/uploads", videoBlob, token, "recorrido.webm");
+      await crearHistoria({ tipo: "video", mediaUrl: subida.url, ubicacion: datos.sector }, token);
+      onPublicado?.();
+      onClose();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "No se pudo compartir en tu historia.");
+    } finally {
+      setPublicandoHistoria(false);
     }
   }
 
@@ -419,7 +474,7 @@ export function CompartirRecorridoModal({
           </button>
         </div>
 
-        <div className="flex items-center justify-center overflow-hidden rounded-app bg-surface-2" style={{ height: 320 }}>
+        <div className="relative flex items-center justify-center overflow-hidden rounded-app bg-surface-2" style={{ height: 320 }}>
           {tab === "imagen" && (
             <>
               {!previewUrl && <p className="text-xs text-text-secondary">Generando tarjeta...</p>}
@@ -437,14 +492,26 @@ export function CompartirRecorridoModal({
                 </p>
               )}
               {!generandoVideo && videoUrl && (
-                <video
-                  src={videoUrl}
-                  className="h-full w-full object-contain"
-                  autoPlay
-                  loop
-                  muted
-                  playsInline
-                />
+                <>
+                  <video
+                    src={videoUrl}
+                    className="h-full w-full object-contain"
+                    autoPlay
+                    loop
+                    muted={previewSilenciado}
+                    playsInline
+                  />
+                  {musicaElegida && (
+                    <button
+                      type="button"
+                      onClick={() => setPreviewSilenciado((s) => !s)}
+                      aria-label={previewSilenciado ? "Activar sonido" : "Silenciar"}
+                      className="absolute right-2 top-2 rounded-full bg-black/60 p-1.5 text-white"
+                    >
+                      {previewSilenciado ? <IconVolumeOff size={16} /> : <IconVolume size={16} />}
+                    </button>
+                  )}
+                </>
               )}
               {!generandoVideo && !videoUrl && (
                 <div className="flex flex-col items-center gap-3 px-6 text-center">
@@ -527,6 +594,29 @@ export function CompartirRecorridoModal({
                         >
                           <IconPhoto size={14} />
                           Agregar foto
+                        </button>
+                      )}
+                      {musicaElegida ? (
+                        <div className="flex items-center gap-1.5 rounded-app border border-border-accent px-3 py-1.5 text-xs text-text-accent">
+                          <IconMusic size={14} />
+                          <span className="max-w-[140px] truncate">{musicaElegida.cancion.nombre}</span>
+                          <button
+                            type="button"
+                            onClick={() => setMusicaElegida(null)}
+                            aria-label="Quitar música"
+                            className="text-text-secondary"
+                          >
+                            <IconTrash size={12} />
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setMostrarSelectorMusica(true)}
+                          className="flex items-center gap-1.5 rounded-app border border-border-accent px-3 py-1.5 text-xs text-text-accent"
+                        >
+                          <IconMusic size={14} />
+                          Agregar música
                         </button>
                       )}
                       <button
@@ -720,15 +810,29 @@ export function CompartirRecorridoModal({
 
         {error && <p className="text-xs text-fill-warning">{error}</p>}
 
-        {tab === "imagen" && (
+        {(tab === "imagen" || tab === "video") && (
           <button
             type="button"
-            disabled={cargandoInicial || estado === "publicando" || !blob}
+            disabled={
+              estado === "publicando" ||
+              (tab === "imagen" ? cargandoInicial || !blob : generandoVideo || !videoBlob)
+            }
             onClick={publicarEnPost}
             className="btn-hero flex items-center justify-center gap-1.5 rounded-app px-4 py-2 text-sm disabled:opacity-50"
           >
             <IconUpload size={16} />
             {estado === "publicando" ? "Publicando..." : "Publicar en Post"}
+          </button>
+        )}
+        {tab === "video" && (
+          <button
+            type="button"
+            disabled={publicandoHistoria || generandoVideo || !videoBlob}
+            onClick={compartirEnHistoria}
+            className="flex items-center justify-center gap-1.5 rounded-app border border-border-accent px-4 py-2 text-sm text-text-accent disabled:opacity-50"
+          >
+            <IconCirclePlus size={16} />
+            {publicandoHistoria ? "Compartiendo..." : "Compartir en Historia"}
           </button>
         )}
         <button
@@ -754,6 +858,23 @@ export function CompartirRecorridoModal({
             : "Cancelar"}
         </button>
       </div>
+      {/* Pantalla completa propia (mismo motivo que EditorEncuadreFoto): si
+          esto se anidara dentro de la caja de 320px de la vista previa,
+          quedaría cortado y sin forma de llegar al botón de confirmar --
+          ver el bug que ya resolvimos ahí. El z-[60] lo pone por encima del
+          backdrop del modal (z-50) sin depender del orden en el DOM. */}
+      {mostrarSelectorMusica && (
+        <div className="fixed inset-0 z-[60]" onClick={(e) => e.stopPropagation()}>
+          <SelectorMusicaHistoria
+            duracionHistoriaSeg={DURACION_VIDEO_ESTIMADA_SEG}
+            onSeleccionar={(cancion, inicioSeg) => {
+              setMusicaElegida({ cancion, inicioSeg });
+              setMostrarSelectorMusica(false);
+            }}
+            onCerrar={() => setMostrarSelectorMusica(false)}
+          />
+        </div>
+      )}
     </div>
   );
 }
