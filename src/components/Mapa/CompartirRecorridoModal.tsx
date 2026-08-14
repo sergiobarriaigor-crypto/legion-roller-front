@@ -419,7 +419,19 @@ export function CompartirRecorridoModal({
           </button>
         </div>
 
-        <div className="flex items-center justify-center overflow-hidden rounded-app bg-surface-2" style={{ height: 320 }}>
+        <div
+          className="flex items-center justify-center overflow-hidden rounded-app bg-surface-2"
+          // La configuración de fotos del video (editor de encuadre + hasta 3
+          // miniaturas + botón Generar) puede necesitar más alto que el resto
+          // de los estados de este panel (imagen fija, "Generando...", el
+          // <video> ya listo) -- con los 320px fijos de siempre, ese
+          // contenido se cortaba y "Generar video" quedaba inalcanzable, sin
+          // scroll (overflow-hidden). minHeight en vez de height deja que el
+          // panel crezca con el contenido en ese único estado; el resto sigue
+          // exactamente igual (320 fijo, para que <img>/<video> con h-full
+          // tengan una altura real de la que depender).
+          style={tab === "video" && !generandoVideo && !videoUrl ? { minHeight: 320 } : { height: 320 }}
+        >
           {tab === "imagen" && (
             <>
               {!previewUrl && <p className="text-xs text-text-secondary">Generando tarjeta...</p>}
