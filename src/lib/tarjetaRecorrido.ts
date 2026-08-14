@@ -1238,11 +1238,22 @@ function dibujarCuadroVideo(
   // el pin de foto, que va arriba del suyo) -- cada una con su propio alpha
   // de aparición/desvanecido (ver alphaEtiqueta) y su propia posición
   // suavizada cuadro a cuadro (ver suavizadoEtiquetas, mutado acá).
+  // El suavizado (lerp cuadro a cuadro) existe solo para disimular el
+  // salto del ajuste anti-corte cerca del borde -- durante el trazo la
+  // cámara persigue el punto actual sin moverse por su cuenta, así que ese
+  // salto sería lo único que se sentiría brusco. En la panorámica final
+  // (fraccionTotal > FRACCION_TRAZO_COMPLETO) la cámara YA se aleja sola con
+  // su propia curva suave (ver estadoCamara) -- sumarle el lerp encima
+  // hacía que la etiqueta se sintiera "atrasada" persiguiendo al mapa en vez
+  // de ir clavada con él (el reporte de "la etiqueta avanza con el
+  // recorrido" al reaparecer). Ahí se dibuja directo en la posición real,
+  // sin suavizado extra: sigue al mapa cuadro a cuadro, sin retraso.
+  const enPanoramicaFinal = fraccionTotal > FRACCION_TRAZO_COMPLETO;
   for (let i = 0; i < config.sectoresRuta.length; i++) {
     const etiqueta = config.sectoresRuta[i];
     const alpha = alphaEtiqueta(etiqueta, fraccionTotal);
     if (alpha > 0) {
-      const anterior = suavizadoEtiquetas.get(i) ?? null;
+      const anterior = enPanoramicaFinal ? null : suavizadoEtiquetas.get(i) ?? null;
       const nuevo = dibujarEtiquetaSector(ctx, x(etiqueta.lon), y(etiqueta.lat) + 32, etiqueta.nombre, alpha, anterior);
       suavizadoEtiquetas.set(i, nuevo);
     } else {
