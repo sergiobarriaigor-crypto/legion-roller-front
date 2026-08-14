@@ -322,6 +322,19 @@ export default function ConversacionPage() {
     if (el) el.scrollTop = el.scrollHeight;
   }
 
+  // Las fotos adjuntas no reservan alto propio, así que crecen recién cuando
+  // terminan de cargar -- si eso pasa justo después de haber bajado al
+  // fondo (por ejemplo, al entrar al chat), el último mensaje queda tapado
+  // de nuevo sin que el usuario haya hecho nada. Solo reajusta si ya se
+  // estaba cerca del fondo (no molesta a quien scrolleó arriba a leer algo
+  // viejo cuando una foto de más arriba recién termina de cargar).
+  function alCargarAdjunto() {
+    const el = contenedorRef.current;
+    if (!el) return;
+    const cercaDelFondo = el.scrollHeight - el.scrollTop - el.clientHeight < 150;
+    if (cercaDelFondo) scrollAlFondo();
+  }
+
   // Solo baja cuando llegaron mensajes nuevos de verdad — y nunca mientras el
   // compositor tiene el foco (con el teclado del celular abierto), porque
   // forzar un scroll ahí hace que Android cierre el teclado solo a mitad de
@@ -694,6 +707,7 @@ export default function ConversacionPage() {
             onAbrirMenu={abrirMenuMensaje}
             onReaccionar={(mensaje, emoji) => reaccionar(mensaje.id, emoji)}
             onVotarEncuesta={votarEncuesta}
+            onCargarAdjunto={alCargarAdjunto}
           />
         ))}
       </div>

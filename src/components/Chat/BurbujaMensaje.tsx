@@ -81,6 +81,7 @@ export function BurbujaMensaje({
   onAbrirMenu,
   onReaccionar,
   onVotarEncuesta,
+  onCargarAdjunto,
 }: {
   mensaje: MensajeChat;
   esMio: boolean;
@@ -92,6 +93,12 @@ export function BurbujaMensaje({
   onAbrirMenu?: (mensaje: MensajeChat, rect: DOMRect) => void;
   onReaccionar?: (mensaje: MensajeChat, emoji: string) => void;
   onVotarEncuesta?: (mensajeId: number, opcionId: number) => void;
+  // La foto adjunta no reserva alto propio -- crece recién cuando termina de
+  // cargar (sin esto, el scroll al fondo calculado ANTES de que la imagen
+  // cargue queda corto en cuanto la foto aparece y empuja el resto para
+  // abajo). Avisa al padre para que, si ya estaba pegado al fondo, se
+  // reajuste.
+  onCargarAdjunto?: () => void;
 }) {
   const router = useRouter();
   const [arrastreX, setArrastreX] = useState(0);
@@ -300,6 +307,7 @@ export function BurbujaMensaje({
               <img
                 src={mensaje.adjuntoUrl}
                 alt="Foto"
+                onLoad={onCargarAdjunto}
                 className="max-h-80 w-full rounded-app object-cover"
               />
             </button>
@@ -383,6 +391,7 @@ export function BurbujaMensaje({
             <video
               src={mensaje.adjuntoUrl}
               controls
+              onLoadedMetadata={onCargarAdjunto}
               className="mb-1 max-h-80 w-full rounded-app"
             />
           )}
