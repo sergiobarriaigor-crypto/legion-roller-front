@@ -1731,11 +1731,17 @@ export function MapaView() {
             // rojo (arriba), no hace falta el pin aparte -- solo se dibuja
             // para quien tiene una emergencia pero no está "patinando ahora"
             // (última ubicación conocida, sin avatar visible en el mapa).
+            // El propio marcador de "arriba" solo existe con `posicion`
+            // truthy (requiere un modo activo, ver el efecto que lo pone en
+            // null al desactivar el modo) -- si activaste el SOS sin estar
+            // en Patinando/Estoy en Ruta, tu propio avatar tampoco se
+            // dibuja ahí, así que este pin de respaldo tiene que cubrirte
+            // igual (antes se excluía sin fijarse en esto).
             .filter(
               (e) =>
                 e.lat !== null &&
                 e.lon !== null &&
-                e.miembroId !== sesion?.id &&
+                !(e.miembroId === sesion?.id && posicion) &&
                 !otros.some((o) => o.miembroId === e.miembroId),
             )
             .map((e) => (
