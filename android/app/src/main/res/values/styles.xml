@@ -7,16 +7,44 @@
         <item name="colorPrimary">@color/colorPrimary</item>
         <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
         <item name="colorAccent">@color/colorAccent</item>
+        <item name="android:statusBarColor">#0b121c</item>
+        <item name="android:navigationBarColor">#101a26</item>
+        <!-- Android 15+ activa "edge-to-edge" por defecto e ignora los dos
+             items de arriba: esto lo desactiva para volver al
+             comportamiento clásico (funciona en Android 15; en Android 16
+             este item ya no existe y se ignora solo, para eso está el
+             respaldo en MainActivity.java). -->
+        <item name="android:windowOptOutEdgeToEdgeEnforcement">true</item>
     </style>
 
     <style name="AppTheme.NoActionBar" parent="Theme.AppCompat.DayNight.NoActionBar">
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:background">@null</item>
+        <item name="android:statusBarColor">#0b121c</item>
+        <item name="android:navigationBarColor">#101a26</item>
+        <!-- Android 15+ activa "edge-to-edge" por defecto e ignora los dos
+             items de arriba: esto lo desactiva para volver al
+             comportamiento clásico (funciona en Android 15; en Android 16
+             este item ya no existe y se ignora solo, para eso está el
+             respaldo en MainActivity.java). -->
+        <item name="android:windowOptOutEdgeToEdgeEnforcement">true</item>
     </style>
 
 
+    <!-- Tema real de MainActivity (ver AndroidManifest.xml): el status bar
+         y nav bar quedan del mismo azul oscuro que usa la app (page-bg en
+         globals.css), para que combinen con el fondo en vez del
+         blanco/negro por defecto de Android. -->
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
         <item name="android:background">@drawable/splash</item>
+        <item name="android:statusBarColor">#0b121c</item>
+        <item name="android:navigationBarColor">#101a26</item>
+        <!-- Android 15+ activa "edge-to-edge" por defecto e ignora los dos
+             items de arriba: esto lo desactiva para volver al
+             comportamiento clásico (funciona en Android 15; en Android 16
+             este item ya no existe y se ignora solo, para eso está el
+             respaldo en MainActivity.java). -->
+        <item name="android:windowOptOutEdgeToEdgeEnforcement">true</item>
     </style>
 </resources>

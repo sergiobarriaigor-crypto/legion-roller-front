@@ -2,7 +2,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'com.legionroller.app',
-  appName: 'Legión Roller',
+  appName: 'Legión',
   webDir: 'www',
   // La app nativa no incluye una copia estática del sitio -- carga
   // directamente el sitio real ya desplegado en Vercel. Así el equipo
