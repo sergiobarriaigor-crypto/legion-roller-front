@@ -18,15 +18,26 @@ export async function suscribirPushNativo(token: string | null): Promise<boolean
   if (!Capacitor.isNativePlatform()) return false;
 
   const permiso = await PushNotifications.requestPermissions();
+  console.log("[push-nativo] permiso:", permiso.receive);
   if (permiso.receive !== "granted") return false;
 
   return new Promise((resolve) => {
     PushNotifications.addListener("registration", async (resultado) => {
+      console.log("[push-nativo] token FCM recibido:", resultado.value.slice(0, 12) + "...");
       localStorage.setItem(CLAVE_ULTIMO_TOKEN, resultado.value);
-      await apiPost("/notificaciones-push/token-nativo", { token: resultado.value }, token);
+      try {
+        await apiPost("/notificaciones-push/token-nativo", { token: resultado.value }, token);
+        console.log("[push-nativo] token enviado al backend OK");
+      } catch (e) {
+        console.error("[push-nativo] fallo enviando token al backend:", e);
+      }
       resolve(true);
     });
-    PushNotifications.addListener("registrationError", () => resolve(false));
+    PushNotifications.addListener("registrationError", (error) => {
+      console.error("[push-nativo] registrationError:", JSON.stringify(error));
+      resolve(false);
+    });
+    console.log("[push-nativo] llamando PushNotifications.register()");
     PushNotifications.register();
   });
 }

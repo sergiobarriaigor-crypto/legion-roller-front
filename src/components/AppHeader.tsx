@@ -84,8 +84,9 @@ export function AppHeader() {
     try {
       const ok = Capacitor.isNativePlatform() ? await suscribirPushNativo(token) : await suscribirPush(token);
       if (ok) setPushActivo(true);
-    } catch {
+    } catch (e) {
       // el usuario puede reintentar tocando el botón de nuevo
+      console.error("[push] activarNotificaciones fallo:", e);
     } finally {
       setActivandoPush(false);
     }
