@@ -162,7 +162,14 @@ export default function ChatListaPage() {
         </Link>
       ))}
 
-      <button type="button" onClick={abrirNuevo} className="btn-hero rounded-app px-4 py-2 text-sm">
+      {/* mb-16 (64px): mismo fix aplicado en Perfil para "Cerrar sesión" --
+          el botón redondo del Mapa se superpone sobre el último elemento de
+          la pantalla si solo tiene el padding normal del contenedor. */}
+      <button
+        type="button"
+        onClick={abrirNuevo}
+        className="btn-hero rounded-app mb-16 px-4 py-2 text-sm"
+      >
         Nuevo chat
       </button>
 
