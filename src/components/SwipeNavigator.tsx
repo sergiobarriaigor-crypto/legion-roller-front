@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useSession } from "@/context/SessionContext";
+import { useEmergencias } from "@/context/EmergenciaContext";
 import { ORDEN_TABS } from "@/lib/tabs";
 import { RUTAS_RESTRINGIDAS_VISITANTE } from "@/lib/session";
 
@@ -12,18 +13,21 @@ export function SwipeNavigator({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { sesion } = useSession();
+  const { miEmergenciaActiva } = useEmergencias();
 
   const inicioRef = useRef<{ x: number; y: number } | null>(null);
   const indiceAnteriorRef = useRef(-1);
   const [direccion, setDireccion] = useState<"izquierda" | "derecha" | null>(null);
 
-  const tabsVisibles = useMemo(
-    () =>
-      sesion?.rol === "visitante"
-        ? ORDEN_TABS.filter((t) => !RUTAS_RESTRINGIDAS_VISITANTE.includes(t))
-        : ORDEN_TABS,
-    [sesion?.rol],
-  );
+  const tabsVisibles = useMemo(() => {
+    // Con la propia emergencia SOS activa, la app queda candada a Mapa (ver
+    // GuardiaEmergencia en (app)/layout.tsx) -- el swipe tampoco debe poder
+    // sacar de ahí.
+    if (miEmergenciaActiva) return ["/mapa"];
+    return sesion?.rol === "visitante"
+      ? ORDEN_TABS.filter((t) => !RUTAS_RESTRINGIDAS_VISITANTE.includes(t))
+      : ORDEN_TABS;
+  }, [sesion?.rol, miEmergenciaActiva]);
 
   const indiceActual = tabsVisibles.indexOf(pathname);
 

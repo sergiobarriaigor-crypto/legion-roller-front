@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { IconBell, IconBellPlus, IconMessageCircle2, IconMapPin, IconCalendar } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
+import { useEmergencias } from "@/context/EmergenciaContext";
 import { apiGet } from "@/lib/api";
 import { listarCompartidosSinLeer, type Conversaciones, type CompartidoSinLeer } from "@/lib/chat";
 import {
@@ -43,6 +44,7 @@ export function AppHeader() {
   const { sesion } = useSession();
   const router = useRouter();
   const token = sesion?.token ?? null;
+  const { refrescar: refrescarEmergencias } = useEmergencias();
   const [noLeidos, setNoLeidos] = useState(0);
   const [mencionesPendientes, setMencionesPendientes] = useState<Historia[]>([]);
   const [respuestasSinLeer, setRespuestasSinLeer] = useState<RespuestaSinLeer[]>([]);
@@ -447,7 +449,7 @@ export function AppHeader() {
 
   return (
     <header className="flex items-center justify-between px-4 py-3 border-b border-border bg-page-bg">
-      <SosButton />
+      <SosButton onActivada={refrescarEmergencias} />
 
       <div className="flex items-center gap-2">
         <span className="text-lg font-bold tracking-wide text-text-accent">

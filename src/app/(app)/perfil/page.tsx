@@ -13,6 +13,7 @@ import {
   IconEye,
 } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
+import { useEmergencias } from "@/context/EmergenciaContext";
 import { apiGet, apiPatch, apiPut, apiDelete, ApiError } from "@/lib/api";
 import {
   CATALOGO_TECNICAS,
@@ -47,6 +48,7 @@ interface RecorridoResumen {
 
 export default function PerfilPage() {
   const { sesion, logout } = useSession();
+  const { refrescar: refrescarEmergencias } = useEmergencias();
   const token = sesion?.token ?? null;
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -218,6 +220,7 @@ export default function PerfilPage() {
     try {
       await apiDelete("/emergencias/mia", token);
       cargar();
+      refrescarEmergencias();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "No se pudo cancelar la emergencia.");
     }

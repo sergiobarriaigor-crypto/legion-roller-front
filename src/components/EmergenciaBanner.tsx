@@ -1,39 +1,21 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { useSession } from "@/context/SessionContext";
-import { apiGet, apiDelete } from "@/lib/api";
-import { ETIQUETA_MOTIVO, type EmergenciaActiva } from "@/lib/emergencias";
+import { useEmergencias } from "@/context/EmergenciaContext";
+import { apiDelete } from "@/lib/api";
+import { ETIQUETA_MOTIVO } from "@/lib/emergencias";
 
 export function EmergenciaBanner() {
   const { sesion } = useSession();
   const token = sesion?.token ?? null;
-  const [activas, setActivas] = useState<EmergenciaActiva[]>([]);
-
-  async function cargar() {
-    if (!token) return;
-    try {
-      const lista = await apiGet<EmergenciaActiva[]>("/emergencias/activas", token);
-      setActivas(lista);
-    } catch {
-      // silencioso: no interrumpir la app por un fallo de polling
-    }
-  }
-
-  useEffect(() => {
-    if (!token) return;
-    cargar();
-    const intervalo = setInterval(cargar, 15000);
-    return () => clearInterval(intervalo);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+  const { activas, refrescar } = useEmergencias();
 
   async function cancelar() {
     if (!token) return;
     try {
       await apiDelete("/emergencias/mia", token);
     } finally {
-      cargar();
+      refrescar();
     }
   }
 

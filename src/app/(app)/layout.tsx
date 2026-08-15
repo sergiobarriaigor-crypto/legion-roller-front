@@ -9,7 +9,29 @@ import { SwipeNavigator } from "@/components/SwipeNavigator";
 import { useSession } from "@/context/SessionContext";
 import { BorradorPostProvider } from "@/context/BorradorPostContext";
 import { ChatHeaderProvider } from "@/context/ChatHeaderContext";
+import { EmergenciaProvider, useEmergencias } from "@/context/EmergenciaContext";
 import { RUTAS_RESTRINGIDAS_VISITANTE } from "@/lib/session";
+
+// Mientras el propio usuario tiene una emergencia SOS activa, la app queda
+// candada a /mapa (pedido explícito: mantener la atención ahí, ver todo el
+// contexto en el mensaje de la conversación). No bloquea sincrónicamente
+// (miEmergenciaActiva depende del primer polling de EmergenciaProvider, no
+// se conoce en el primer render) -- mismo criterio de "más simple y ya
+// alcanza" que el resto de la app con condiciones que dependen de una
+// llamada async; un frame de más mostrando la pantalla anterior no es grave.
+function GuardiaEmergencia() {
+  const { miEmergenciaActiva } = useEmergencias();
+  const pathname = usePathname();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (miEmergenciaActiva && pathname !== "/mapa") {
+      router.replace("/mapa");
+    }
+  }, [miEmergenciaActiva, pathname, router]);
+
+  return null;
+}
 
 // Next.js exige que useSearchParams() esté dentro de un <Suspense> (si no, el
 // build de producción falla con "missing-suspense-with-csr-bailout") — se
@@ -84,31 +106,34 @@ export default function AppGroupLayout({
     // a toda la ventana del navegador en vez de este contenedor de ancho de
     // teléfono — por eso en desktop se veían expandidos a pantalla completa
     // en vez de quedar centrados y angostos como en un celular.
-    <div className="relative mx-auto flex min-h-dvh w-full max-w-md flex-1 flex-col bg-page-bg [transform:translateZ(0)]">
-      {enConversacionChat ? chatHeader : <AppHeader />}
-      {sesion.rol !== "visitante" && <EmergenciaBanner />}
+    <EmergenciaProvider token={sesion.token} miembroId={sesion.id}>
+      <div className="relative mx-auto flex min-h-dvh w-full max-w-md flex-1 flex-col bg-page-bg [transform:translateZ(0)]">
+        {sesion.rol !== "visitante" && <GuardiaEmergencia />}
+        {enConversacionChat ? chatHeader : <AppHeader />}
+        {sesion.rol !== "visitante" && <EmergenciaBanner />}
 
-      {sesion.rol === "visitante" && (
-        <div className="flex items-center justify-between bg-bg-accent px-4 py-2 text-xs text-amber-text">
-          <span>Estás como visitante — navegación limitada</span>
-          <button type="button" onClick={logout} className="underline">
-            Salir
-          </button>
-        </div>
-      )}
+        {sesion.rol === "visitante" && (
+          <div className="flex items-center justify-between bg-bg-accent px-4 py-2 text-xs text-amber-text">
+            <span>Estás como visitante — navegación limitada</span>
+            <button type="button" onClick={logout} className="underline">
+              Salir
+            </button>
+          </div>
+        )}
 
-      <ChatHeaderProvider value={setChatHeader}>
-        <BorradorPostProvider>
-          <SwipeNavigator>{children}</SwipeNavigator>
-        </BorradorPostProvider>
-      </ChatHeaderProvider>
+        <ChatHeaderProvider value={setChatHeader}>
+          <BorradorPostProvider>
+            <SwipeNavigator>{children}</SwipeNavigator>
+          </BorradorPostProvider>
+        </ChatHeaderProvider>
 
-      {/* Misma lógica que el header: dentro de una conversación abierta, la
-          barra fija de abajo (Comunidad/Post/Mapa/Impulsa/Perfil) le resta
-          altura útil a algo que ya es de por sí una pantalla larga para
-          navegar (los mensajes) -- se oculta ahí, igual que hacen
-          WhatsApp/Telegram/Messenger. "/chat" (la lista) la sigue mostrando. */}
-      {!enConversacionChat && <BottomNav />}
-    </div>
+        {/* Misma lógica que el header: dentro de una conversación abierta, la
+            barra fija de abajo (Comunidad/Post/Mapa/Impulsa/Perfil) le resta
+            altura útil a algo que ya es de por sí una pantalla larga para
+            navegar (los mensajes) -- se oculta ahí, igual que hacen
+            WhatsApp/Telegram/Messenger. "/chat" (la lista) la sigue mostrando. */}
+        {!enConversacionChat && <BottomNav />}
+      </div>
+    </EmergenciaProvider>
   );
 }

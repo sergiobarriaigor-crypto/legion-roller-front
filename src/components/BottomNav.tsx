@@ -14,6 +14,7 @@ import {
   IconShieldLock,
 } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
+import { useEmergencias } from "@/context/EmergenciaContext";
 
 // MisRutasPanel usa Leaflet (necesita el navegador) para la ficha de detalle;
 // BottomNav se renderiza en el servidor en cada pantalla, así que este import
@@ -66,6 +67,10 @@ export function BottomNav() {
   const { sesion } = useSession();
   const esVisitante = sesion?.rol === "visitante";
   const esAdmin = sesion?.rol === "admin";
+  // Con la propia emergencia SOS activa, la app queda candada a Mapa (ver
+  // GuardiaEmergencia en (app)/layout.tsx) -- acá solo se ocultan los demás
+  // botones para no invitar a tocar algo que igual va a rebotar de vuelta.
+  const { miEmergenciaActiva } = useEmergencias();
 
   const [mostrarRutas, setMostrarRutas] = useState(false);
   const [logoError, setLogoError] = useState(false);
@@ -88,8 +93,12 @@ export function BottomNav() {
     }, DOBLE_TOQUE_MS);
   }
 
-  const activoIzquierda = itemsIzquierda.filter((item) => !(esVisitante && item.ocultoParaVisitante));
-  const activoDerecha = itemsDerecha.filter((item) => !(esVisitante && item.ocultoParaVisitante));
+  const activoIzquierda = miEmergenciaActiva
+    ? []
+    : itemsIzquierda.filter((item) => !(esVisitante && item.ocultoParaVisitante));
+  const activoDerecha = miEmergenciaActiva
+    ? []
+    : itemsDerecha.filter((item) => !(esVisitante && item.ocultoParaVisitante));
 
   return (
     <>
@@ -127,7 +136,7 @@ export function BottomNav() {
           <NavLink key={item.href} item={item} activo={pathname.startsWith(item.href)} />
         ))}
 
-        {esAdmin && (
+        {esAdmin && !miEmergenciaActiva && (
           <Link
             href="/admin"
             className={`flex flex-1 flex-col items-center justify-center gap-1 py-2 text-xs ${

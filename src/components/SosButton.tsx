@@ -10,7 +10,7 @@ const DURACION_HOLD_MS = 1500;
 const RADIO = 16;
 const CIRCUNFERENCIA = 2 * Math.PI * RADIO;
 
-export function SosButton() {
+export function SosButton({ onActivada }: { onActivada?: () => void }) {
   const { sesion } = useSession();
   const token = sesion?.token ?? null;
 
@@ -49,6 +49,7 @@ export function SosButton() {
     try {
       await apiPost("/emergencias", { motivo }, token);
       setMostrarModal(false);
+      onActivada?.();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "No se pudo activar la emergencia.");
     } finally {

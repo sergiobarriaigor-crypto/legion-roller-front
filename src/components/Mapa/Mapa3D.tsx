@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 // Import estático como el resto del proyecto hace con leaflet en
 // MapaView.tsx: seguro porque este archivo entero solo se carga en el
@@ -41,6 +41,7 @@ interface Mapa3DProps {
   puntosGrabados: PuntoGps[];
   mapeado: boolean;
   emergenciasActivas: EmergenciaActiva[];
+  miMiembroId: number | null;
   pantallaCompleta: boolean;
   onError: () => void;
 }
@@ -74,11 +75,19 @@ export const Mapa3D = forwardRef<Mapa3DHandle, Mapa3DProps>(function Mapa3D(
     puntosGrabados,
     mapeado,
     emergenciasActivas,
+    miMiembroId,
     pantallaCompleta,
     onError,
   },
   ref,
 ) {
+  // Mismo criterio que MapaView.tsx: qué miembros tienen una emergencia SOS
+  // activa ahora mismo, para hacer parpadear su avatar en vez de -- o además
+  // de -- el pin rojo aparte (ver el efecto de emergencias más abajo).
+  const emergenciaIds = useMemo(
+    () => new Set(emergenciasActivas.map((e) => e.miembroId)),
+    [emergenciasActivas],
+  );
   const containerRef = useRef<HTMLDivElement>(null);
   const mapaRef = useRef<MaplibreMap | null>(null);
   // Estado (no solo un ref) a propósito: MapLibre dispara "load" de forma
@@ -239,6 +248,7 @@ export const Mapa3D = forwardRef<Mapa3DHandle, Mapa3DProps>(function Mapa3D(
       nombre: miNombre,
       estado: miEstadoTexto,
       modo: miModo ?? "patinando",
+      emergencia: miMiembroId != null && emergenciaIds.has(miMiembroId),
     });
     if (!marcadorPropioRef.current) {
       const el = document.createElement("div");
@@ -252,7 +262,7 @@ export const Mapa3D = forwardRef<Mapa3DHandle, Mapa3DProps>(function Mapa3D(
       marcadorPropioRef.current.getElement().innerHTML = html;
       marcadorPropioRef.current.setLngLat([posicion.lon, posicion.lat]);
     }
-  }, [posicion, miFotoUrl, miNombre, miEstadoTexto, miModo, cargado]);
+  }, [posicion, miFotoUrl, miNombre, miEstadoTexto, miModo, miMiembroId, emergenciaIds, cargado]);
 
   function abrirPopupMiembro(miembro: OtroMiembro, lngLat: [number, number]) {
     const mapa = mapaRef.current;
@@ -306,6 +316,7 @@ export const Mapa3D = forwardRef<Mapa3DHandle, Mapa3DProps>(function Mapa3D(
         estado: representante.estado,
         modo: representante.modo,
         masPersonas: extra > 0 ? extra : undefined,
+        emergencia: grupo.some((m) => emergenciaIds.has(m.miembroId)),
       });
       const existente = marcadoresOtrosRef.current.get(representante.miembroId);
       if (!existente) {
@@ -354,7 +365,7 @@ export const Mapa3D = forwardRef<Mapa3DHandle, Mapa3DProps>(function Mapa3D(
         marcadoresOtrosRef.current.delete(id);
       }
     }
-  }, [gruposOtros, cargado]);
+  }, [gruposOtros, emergenciaIds, cargado]);
 
   // Puntos de partida de rodada/evento: sin animación, igual que en Leaflet.
   useEffect(() => {
@@ -381,7 +392,17 @@ export const Mapa3D = forwardRef<Mapa3DHandle, Mapa3DProps>(function Mapa3D(
   useEffect(() => {
     const mapa = mapaRef.current;
     if (!mapa || !cargado) return;
-    const activas = emergenciasActivas.filter((e) => e.lat !== null && e.lon !== null);
+    // Si ese miembro ya se ve con su propio avatar parpadeando en rojo
+    // (efectos de arriba), no hace falta el pin aparte -- mismo criterio que
+    // MapaView.tsx (rama Leaflet).
+    const idsConAvatar = new Set<number>();
+    if (miMiembroId != null && posicion) idsConAvatar.add(miMiembroId);
+    for (const grupo of gruposOtros) {
+      for (const m of grupo) idsConAvatar.add(m.miembroId);
+    }
+    const activas = emergenciasActivas.filter(
+      (e) => e.lat !== null && e.lon !== null && !idsConAvatar.has(e.miembroId),
+    );
     const vigentes = new Set<number>();
     for (const e of activas) {
       vigentes.add(e.id);
@@ -400,7 +421,7 @@ export const Mapa3D = forwardRef<Mapa3DHandle, Mapa3DProps>(function Mapa3D(
         marcadoresEmergenciaRef.current.delete(id);
       }
     }
-  }, [emergenciasActivas, cargado]);
+  }, [emergenciasActivas, gruposOtros, miMiembroId, posicion, cargado]);
 
   // Ruta grabada: una fuente GeoJSON creada una sola vez al cargar el estilo
   // (ver "load" más arriba), actualizada acá con setData en cada cambio.

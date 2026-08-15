@@ -270,6 +270,7 @@ function crearIconoAvatar(args: {
   estado?: string | null;
   modo: string;
   masPersonas?: number;
+  emergencia?: boolean;
 }) {
   return L.divIcon({
     className: "",
@@ -451,6 +452,13 @@ export function MapaView() {
   const mapRef = useRef<L.Map | null>(null);
 
   const gruposOtros = useMemo(() => agruparPorCercania(otros), [otros]);
+  // Ids con una emergencia SOS activa ahora mismo -- se usa para hacer
+  // parpadear en rojo el avatar de ese miembro (si se lo ve en el mapa) en
+  // vez de -- o además de -- el pin rojo aparte de más abajo.
+  const emergenciaIds = useMemo(
+    () => new Set(emergenciasActivas.map((e) => e.miembroId)),
+    [emergenciasActivas],
+  );
 
   // Espejos en refs de estado/token, para poder leerlos desde callbacks de
   // geolocalización y temporizadores de larga duración sin closures obsoletas.
@@ -1645,6 +1653,7 @@ export function MapaView() {
             puntosGrabados={puntosGrabados}
             mapeado={mapeado}
             emergenciasActivas={emergenciasActivas}
+            miMiembroId={sesion?.id ?? null}
             pantallaCompleta={pantallaCompleta}
             onError={alFallarMapa3D}
           />
@@ -1675,6 +1684,7 @@ export function MapaView() {
                 nombre: sesion?.nombre ?? "Yo",
                 estado: miEstadoTexto,
                 modo: modo ?? "patinando",
+                emergencia: sesion?.id != null && emergenciaIds.has(sesion.id),
               })}
               eventHandlers={{ click: abrirEditorEstado }}
             />
@@ -1692,6 +1702,7 @@ export function MapaView() {
                   estado: representante.estado,
                   modo: representante.modo,
                   masPersonas: extra > 0 ? extra : undefined,
+                  emergencia: grupo.some((m) => emergenciaIds.has(m.miembroId)),
                 })}
                 eventHandlers={extra > 0 ? { click: () => setClusterAbierto(grupo) } : undefined}
               >
@@ -1726,7 +1737,17 @@ export function MapaView() {
             />
           )}
           {emergenciasActivas
-            .filter((e) => e.lat !== null && e.lon !== null)
+            // Si ese miembro ya se ve con su propio avatar parpadeando en
+            // rojo (arriba), no hace falta el pin aparte -- solo se dibuja
+            // para quien tiene una emergencia pero no está "patinando ahora"
+            // (última ubicación conocida, sin avatar visible en el mapa).
+            .filter(
+              (e) =>
+                e.lat !== null &&
+                e.lon !== null &&
+                e.miembroId !== sesion?.id &&
+                !otros.some((o) => o.miembroId === e.miembroId),
+            )
             .map((e) => (
               <Marker key={e.id} position={[e.lat!, e.lon!]} icon={iconoEmergencia}>
                 <Popup>

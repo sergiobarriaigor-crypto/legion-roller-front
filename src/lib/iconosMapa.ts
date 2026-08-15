@@ -31,23 +31,33 @@ export const HTML_PUNTO_PARTIDA =
 
 export const TAM_AVATAR = 40;
 
+// Color de emergencia (mismo rojo del pin de SOS en el mapa), reutilizado acá
+// para el borde/glow y el parpadeo del propio avatar del miembro afectado.
+const COLOR_EMERGENCIA = "#D8342F";
+
 // Avatar circular (foto o inicial) con burbuja de estado opcional y un borde
-// con brillo (glow) según el modo del miembro.
+// con brillo (glow) según el modo del miembro (o rojo parpadeante si tiene
+// una emergencia SOS activa, ver `emergencia` más abajo).
 export function htmlIconoAvatar({
   fotoUrl,
   nombre,
   estado,
   modo,
   masPersonas,
+  emergencia,
 }: {
   fotoUrl: string | null;
   nombre: string;
   estado?: string | null;
   modo: string;
   masPersonas?: number;
+  emergencia?: boolean;
 }) {
   const TAM = TAM_AVATAR;
-  const { anillo, sombra } = GLOW_POR_MODO[modo] ?? GLOW_POR_MODO.patinando;
+  const { anillo, sombra } = emergencia
+    ? { anillo: COLOR_EMERGENCIA, sombra: "rgba(216, 52, 47, 0.9)" }
+    : (GLOW_POR_MODO[modo] ?? GLOW_POR_MODO.patinando);
+  const claseParpadeo = emergencia ? " avatar-emergencia" : "";
   const inicial = escapeHtml((nombre.charAt(0) || "?").toUpperCase());
   const contenido = fotoUrl
     ? `<img src="${escapeHtml(fotoUrl)}" style="width:100%;height:100%;object-fit:cover;" />`
@@ -67,7 +77,7 @@ export function htmlIconoAvatar({
   return `
     <div style="position:relative;width:${TAM}px;height:${TAM}px;">
       ${burbuja}
-      <div style="width:${TAM}px;height:${TAM}px;border-radius:9999px;background:#e7c168;border:2px solid ${anillo};box-shadow:0 0 8px 2px ${sombra},0 0 3px 1px ${sombra};overflow:hidden;">
+      <div class="${claseParpadeo}" style="width:${TAM}px;height:${TAM}px;border-radius:9999px;background:#e7c168;border:2px solid ${anillo};box-shadow:0 0 8px 2px ${sombra},0 0 3px 1px ${sombra};overflow:hidden;">
         ${contenido}
       </div>
       ${insignia}

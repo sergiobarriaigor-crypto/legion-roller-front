@@ -159,6 +159,30 @@ body {
   }
 }
 
+/* Avatar con emergencia SOS activa: parpadeo rojo de alarma en vez del pulso
+   sutil de arriba -- acá sí buscamos que llame la atención. */
+@keyframes parpadeoEmergencia {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 10px 3px rgba(216, 52, 47, 0.9);
+  }
+  50% {
+    opacity: 0.4;
+    box-shadow: 0 0 2px 0 rgba(216, 52, 47, 0.3);
+  }
+}
+
+.avatar-emergencia {
+  animation: parpadeoEmergencia 0.9s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .avatar-emergencia {
+    animation: none;
+  }
+}
+
 /* Toast: aparece, se mantiene un instante y se desvanece solo — timing
    calzado con el setTimeout de 1000ms que lo desmonta en Toast.tsx. */
 @keyframes toastPop {
