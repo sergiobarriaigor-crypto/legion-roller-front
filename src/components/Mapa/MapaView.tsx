@@ -11,6 +11,7 @@ import type { Mapa3DHandle } from "@/components/Mapa/Mapa3D";
 import { type OtroMiembro, ContenidoPopupMiembro } from "@/components/Mapa/TarjetaMiembroMapa";
 import { HTML_PUNTO_PARTIDA, htmlIconoAvatar, TAM_AVATAR } from "@/lib/iconosMapa";
 import { useSession } from "@/context/SessionContext";
+import { useEmergencias } from "@/context/EmergenciaContext";
 import { apiPost, apiPut, apiGet, apiDelete, ApiError } from "@/lib/api";
 import { distanciaTotalKm, distanciaHaversineKm, simplificarRutaParaDibujo, type PuntoGps } from "@/lib/geo";
 import type { Publicacion } from "@/lib/publicaciones";
@@ -401,7 +402,12 @@ export function MapaView() {
   // vivo mientras el modo sigue activo.
   const distanciaActualKm = useMemo(() => distanciaTotalKm(puntosGrabados), [puntosGrabados]);
   const [resumen, setResumen] = useState<{ distanciaKm: number; duracionSeg: number } | null>(null);
-  const [emergenciasActivas, setEmergenciasActivas] = useState<EmergenciaActiva[]>([]);
+  // Comparte el mismo polling/estado que el candado de navegación y el
+  // banner global (ver EmergenciaContext) -- antes el mapa pedía
+  // /emergencias/activas por su cuenta cada 15s, así que activar/cancelar
+  // una emergencia tardaba hasta 15s en reflejarse acá en vez de al
+  // instante (el refrescar() que dispara SosButton no lo tocaba).
+  const { activas: emergenciasActivas } = useEmergencias();
   const [mensaje, setMensaje] = useState("");
   const [limiteRutasAlcanzado, setLimiteRutasAlcanzado] = useState(false);
   const [rodadaActiva, setRodadaActiva] = useState<Publicacion | null>(null);
@@ -1026,24 +1032,6 @@ export function MapaView() {
       socket.off("mapa:detener", alRecibirDetencion);
     };
   }, [token, sesion?.id]);
-
-  // Etiqueta SOS roja: emergencias activas de otros miembros con ubicación conocida.
-  useEffect(() => {
-    if (!token) return;
-
-    async function cargarEmergencias() {
-      try {
-        const lista = await apiGet<EmergenciaActiva[]>("/emergencias/activas", token);
-        setEmergenciasActivas(lista);
-      } catch {
-        // silencioso
-      }
-    }
-
-    cargarEmergencias();
-    const intervalo = setInterval(cargarEmergencias, 15000);
-    return () => clearInterval(intervalo);
-  }, [token]);
 
   // Mientras haya un modo activo, reenvía la ubicación cada 20s para no expirar (HORAS_VIGENCIA_PATINANDO).
   useEffect(() => {
