@@ -21,6 +21,12 @@ export async function suscribirPushNativo(token: string | null): Promise<boolean
   console.log("[push-nativo] permiso:", permiso.receive);
   if (permiso.receive !== "granted") return false;
 
+  // Si esta función ya se llamó antes en esta misma sesión de la app (p.
+  // ej. el usuario tocó la campanita más de una vez), hay que sacar los
+  // oyentes viejos antes de agregar los nuevos -- si no, cada "registration"
+  // futuro dispara todos los oyentes acumulados a la vez.
+  await PushNotifications.removeAllListeners();
+
   return new Promise((resolve) => {
     PushNotifications.addListener("registration", async (resultado) => {
       console.log("[push-nativo] token FCM recibido:", resultado.value.slice(0, 12) + "...");

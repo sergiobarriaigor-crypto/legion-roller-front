@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { IconBell, IconBellPlus, IconMessageCircle2, IconMapPin, IconCalendar } from "@tabler/icons-react";
@@ -92,6 +92,14 @@ export function AppHeader() {
     }
   }, [token, activandoPush]);
 
+  // Recuerda para qué token nativo ya se intentó el registro automático en
+  // esta apertura de la app (vive solo en memoria: se resetea solo con
+  // cada arranque del proceso, a diferencia de un flag en localStorage que
+  // sobrevive reinstalaciones y puede quedar mintiendo "ya lo intenté").
+  // Sin esto, activarNotificaciones() cambia su propia referencia (useCallback
+  // depende de activandoPush) y vuelve a disparar este efecto en bucle.
+  const tokenNativoIntentadoRef = useRef<string | null>(null);
+
   useEffect(() => {
     if (!token || sesion?.rol === "visitante") return;
 
@@ -118,6 +126,8 @@ export function AppHeader() {
       // guardado quedó desactualizado. register() es idempotente y el
       // backend hace upsert, así que repetirlo en cada apertura no tiene
       // costo real y evita quedar con push nativo roto en silencio.
+      if (tokenNativoIntentadoRef.current === token) return;
+      tokenNativoIntentadoRef.current = token;
       Promise.resolve(estaSuscritoNativo()).then((activo) => {
         setPushActivo(activo);
         activarNotificaciones();
