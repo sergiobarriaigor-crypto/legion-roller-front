@@ -111,7 +111,17 @@ export function AppHeader() {
     }
 
     if (Capacitor.isNativePlatform()) {
-      Promise.resolve(estaSuscritoNativo()).then(intentarActivarUnaVez);
+      // A diferencia de la web, acá se reintenta SIEMPRE al abrir la app
+      // (no solo la primera vez): el token FCM puede cambiar entre
+      // reinstalaciones (p. ej. tras un rebuild en Android Studio) y el
+      // dispositivo no tiene forma de saber que el token que ya tiene
+      // guardado quedó desactualizado. register() es idempotente y el
+      // backend hace upsert, así que repetirlo en cada apertura no tiene
+      // costo real y evita quedar con push nativo roto en silencio.
+      Promise.resolve(estaSuscritoNativo()).then((activo) => {
+        setPushActivo(activo);
+        activarNotificaciones();
+      });
       return;
     }
     if (!pushDisponible()) return;
