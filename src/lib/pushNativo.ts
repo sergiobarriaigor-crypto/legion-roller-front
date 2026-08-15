@@ -10,6 +10,28 @@ import { apiPost, apiDelete } from "./api";
 // usando lib/push.ts como siempre.
 const CLAVE_ULTIMO_TOKEN = "legion-roller-token-push-nativo";
 
+// Canal de Android usado por el backend (ver CANAL_ALERTAS en
+// notificaciones-push.service.ts -- debe coincidir con este id). Un canal
+// nuevo (no el que crea Capacitor/FCM por defecto) porque una vez que
+// Android crea un canal, su importancia ya no se puede subir por código
+// en dispositivos donde ya existía -- solo el usuario puede cambiarla a
+// mano. Con importance 5 (máxima) y visibility 1 (pública) la notificación
+// aparece emergente (heads-up) y con el contenido visible en la pantalla
+// de bloqueo, no solo en la barra de notificaciones.
+const CANAL_ALERTAS = "legion_alertas";
+
+async function crearCanalAlertas(): Promise<void> {
+  await PushNotifications.createChannel({
+    id: CANAL_ALERTAS,
+    name: "Alertas de Legión",
+    description: "Mensajes, rodadas y novedades importantes",
+    importance: 5,
+    visibility: 1,
+    vibration: true,
+    lights: true,
+  });
+}
+
 export function estaSuscritoNativo(): boolean {
   return Capacitor.isNativePlatform() && localStorage.getItem(CLAVE_ULTIMO_TOKEN) !== null;
 }
@@ -20,6 +42,8 @@ export async function suscribirPushNativo(token: string | null): Promise<boolean
   const permiso = await PushNotifications.requestPermissions();
   console.log("[push-nativo] permiso:", permiso.receive);
   if (permiso.receive !== "granted") return false;
+
+  await crearCanalAlertas();
 
   // Si esta función ya se llamó antes en esta misma sesión de la app (p.
   // ej. el usuario tocó la campanita más de una vez), hay que sacar los
