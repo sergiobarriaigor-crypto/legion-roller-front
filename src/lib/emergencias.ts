@@ -12,6 +12,7 @@ export interface EmergenciaActiva {
   id: number;
   miembroId: number;
   nombre: string;
+  fotoUrl: string | null;
   motivo: string;
   requiereAmbulancia: boolean;
   createdAt: string;

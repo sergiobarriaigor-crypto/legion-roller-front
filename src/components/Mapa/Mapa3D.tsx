@@ -13,7 +13,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import type { PuntoGps } from "@/lib/geo";
 import type { EmergenciaActiva } from "@/lib/emergencias";
 import { ETIQUETA_MOTIVO } from "@/lib/emergencias";
-import { htmlPuntoSimple, HTML_PUNTO_PARTIDA, htmlIconoAvatar } from "@/lib/iconosMapa";
+import { HTML_PUNTO_PARTIDA, htmlIconoAvatar } from "@/lib/iconosMapa";
 import { ContenidoPopupMiembro, type OtroMiembro } from "@/components/Mapa/TarjetaMiembroMapa";
 
 const ESTILO_3D = "https://tiles.openfreemap.org/styles/liberty";
@@ -44,6 +44,12 @@ interface Mapa3DProps {
   miMiembroId: number | null;
   pantallaCompleta: boolean;
   onError: () => void;
+}
+
+// Texto de la burbuja de estado cuando el miembro tiene una emergencia SOS
+// activa -- mismo criterio que MapaView.tsx.
+function textoEstadoEmergencia(e: EmergenciaActiva) {
+  return `🚨 ${ETIQUETA_MOTIVO[e.motivo as keyof typeof ETIQUETA_MOTIVO] ?? e.motivo}`;
 }
 
 interface MarcadorAnimadoInterno {
@@ -82,10 +88,10 @@ export const Mapa3D = forwardRef<Mapa3DHandle, Mapa3DProps>(function Mapa3D(
   ref,
 ) {
   // Mismo criterio que MapaView.tsx: qué miembros tienen una emergencia SOS
-  // activa ahora mismo, para hacer parpadear su avatar en vez de -- o además
-  // de -- el pin rojo aparte (ver el efecto de emergencias más abajo).
-  const emergenciaIds = useMemo(
-    () => new Set(emergenciasActivas.map((e) => e.miembroId)),
+  // activa ahora mismo (y con qué motivo), para hacer parpadear su avatar y
+  // mostrar el motivo en vez del estado normal.
+  const emergenciaPorMiembro = useMemo(
+    () => new Map(emergenciasActivas.map((e) => [e.miembroId, e])),
     [emergenciasActivas],
   );
   const containerRef = useRef<HTMLDivElement>(null);
@@ -243,12 +249,13 @@ export const Mapa3D = forwardRef<Mapa3DHandle, Mapa3DProps>(function Mapa3D(
       marcadorPropioRef.current = null;
       return;
     }
+    const miEmergencia = miMiembroId != null ? emergenciaPorMiembro.get(miMiembroId) : undefined;
     const html = htmlIconoAvatar({
       fotoUrl: miFotoUrl,
       nombre: miNombre,
-      estado: miEstadoTexto,
+      estado: miEmergencia ? textoEstadoEmergencia(miEmergencia) : miEstadoTexto,
       modo: miModo ?? "patinando",
-      emergencia: miMiembroId != null && emergenciaIds.has(miMiembroId),
+      emergencia: !!miEmergencia,
     });
     if (!marcadorPropioRef.current) {
       const el = document.createElement("div");
@@ -262,7 +269,7 @@ export const Mapa3D = forwardRef<Mapa3DHandle, Mapa3DProps>(function Mapa3D(
       marcadorPropioRef.current.getElement().innerHTML = html;
       marcadorPropioRef.current.setLngLat([posicion.lon, posicion.lat]);
     }
-  }, [posicion, miFotoUrl, miNombre, miEstadoTexto, miModo, miMiembroId, emergenciaIds, cargado]);
+  }, [posicion, miFotoUrl, miNombre, miEstadoTexto, miModo, miMiembroId, emergenciaPorMiembro, cargado]);
 
   function abrirPopupMiembro(miembro: OtroMiembro, lngLat: [number, number]) {
     const mapa = mapaRef.current;
@@ -310,13 +317,16 @@ export const Mapa3D = forwardRef<Mapa3DHandle, Mapa3DProps>(function Mapa3D(
       const extra = grupo.length - 1;
       vigentes.add(representante.miembroId);
       const destino: [number, number] = [representante.lon, representante.lat];
+      const emergenciaGrupo = grupo
+        .map((m) => emergenciaPorMiembro.get(m.miembroId))
+        .find((e) => e !== undefined);
       const html = htmlIconoAvatar({
         fotoUrl: representante.fotoUrl,
         nombre: representante.nombre,
-        estado: representante.estado,
+        estado: emergenciaGrupo ? textoEstadoEmergencia(emergenciaGrupo) : representante.estado,
         modo: representante.modo,
         masPersonas: extra > 0 ? extra : undefined,
-        emergencia: grupo.some((m) => emergenciaIds.has(m.miembroId)),
+        emergencia: !!emergenciaGrupo,
       });
       const existente = marcadoresOtrosRef.current.get(representante.miembroId);
       if (!existente) {
@@ -365,7 +375,7 @@ export const Mapa3D = forwardRef<Mapa3DHandle, Mapa3DProps>(function Mapa3D(
         marcadoresOtrosRef.current.delete(id);
       }
     }
-  }, [gruposOtros, emergenciaIds, cargado]);
+  }, [gruposOtros, emergenciaPorMiembro, cargado]);
 
   // Puntos de partida de rodada/evento: sin animación, igual que en Leaflet.
   useEffect(() => {
@@ -408,7 +418,13 @@ export const Mapa3D = forwardRef<Mapa3DHandle, Mapa3DProps>(function Mapa3D(
       vigentes.add(e.id);
       if (marcadoresEmergenciaRef.current.has(e.id)) continue;
       const el = document.createElement("div");
-      el.innerHTML = htmlPuntoSimple("#D8342F");
+      el.innerHTML = htmlIconoAvatar({
+        fotoUrl: e.fotoUrl,
+        nombre: e.nombre,
+        estado: textoEstadoEmergencia(e),
+        modo: "patinando",
+        emergencia: true,
+      });
       el.title = ETIQUETA_MOTIVO[e.motivo as keyof typeof ETIQUETA_MOTIVO] ?? e.motivo;
       const marker = new MaplibreMarker({ element: el })
         .setLngLat([e.lon as number, e.lat as number])

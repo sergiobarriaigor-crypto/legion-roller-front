@@ -9,7 +9,7 @@ import "leaflet/dist/leaflet.css";
 import { IconMaximize, IconX, IconCurrentLocation, IconMap2, IconSatellite, IconCube3dSphere, IconPlus, IconMinus } from "@tabler/icons-react";
 import type { Mapa3DHandle } from "@/components/Mapa/Mapa3D";
 import { type OtroMiembro, ContenidoPopupMiembro } from "@/components/Mapa/TarjetaMiembroMapa";
-import { htmlPuntoSimple, HTML_PUNTO_PARTIDA, htmlIconoAvatar, TAM_AVATAR } from "@/lib/iconosMapa";
+import { HTML_PUNTO_PARTIDA, htmlIconoAvatar, TAM_AVATAR } from "@/lib/iconosMapa";
 import { useSession } from "@/context/SessionContext";
 import { apiPost, apiPut, apiGet, apiDelete, ApiError } from "@/lib/api";
 import { distanciaTotalKm, distanciaHaversineKm, simplificarRutaParaDibujo, type PuntoGps } from "@/lib/geo";
@@ -234,16 +234,12 @@ interface RodadaCercana {
   distanciaKm: number;
 }
 
-function crearIcono(color: string) {
-  return L.divIcon({
-    className: "",
-    html: htmlPuntoSimple(color),
-    iconSize: [16, 16],
-    iconAnchor: [8, 8],
-  });
+// Texto de la burbuja de estado cuando el miembro tiene una emergencia SOS
+// activa -- reemplaza al estado personal normal (mismo criterio en las 3
+// ramas: propio avatar, avatar de otros, y el pin de respaldo más abajo).
+function textoEstadoEmergencia(e: EmergenciaActiva) {
+  return `🚨 ${ETIQUETA_MOTIVO[e.motivo as keyof typeof ETIQUETA_MOTIVO] ?? e.motivo}`;
 }
-
-const iconoEmergencia = crearIcono("#D8342F");
 
 // Punto de partida de una rodada/evento (mismo dorado que el selector de mapa
 // del Admin), visible en el Mapa solo para quien respondió "Voy"/"Tal vez",
@@ -452,11 +448,11 @@ export function MapaView() {
   const mapRef = useRef<L.Map | null>(null);
 
   const gruposOtros = useMemo(() => agruparPorCercania(otros), [otros]);
-  // Ids con una emergencia SOS activa ahora mismo -- se usa para hacer
-  // parpadear en rojo el avatar de ese miembro (si se lo ve en el mapa) en
-  // vez de -- o además de -- el pin rojo aparte de más abajo.
-  const emergenciaIds = useMemo(
-    () => new Set(emergenciasActivas.map((e) => e.miembroId)),
+  // Emergencias SOS activas ahora mismo, por miembroId -- se usa para hacer
+  // parpadear en rojo el avatar de ese miembro (si se lo ve en el mapa) y
+  // mostrar el motivo en vez del estado normal.
+  const emergenciaPorMiembro = useMemo(
+    () => new Map(emergenciasActivas.map((e) => [e.miembroId, e])),
     [emergenciasActivas],
   );
 
@@ -1676,22 +1672,28 @@ export function MapaView() {
             // orientación sobre la imagen satelital (pedido del usuario).
             <TileLayer key="etiquetas-satelite" url={CAPA_ETIQUETAS_SATELITE_URL} />
           )}
-          {posicion && (
-            <Marker
-              position={[posicion.lat, posicion.lon]}
-              icon={crearIconoAvatar({
-                fotoUrl: miFotoUrl,
-                nombre: sesion?.nombre ?? "Yo",
-                estado: miEstadoTexto,
-                modo: modo ?? "patinando",
-                emergencia: sesion?.id != null && emergenciaIds.has(sesion.id),
-              })}
-              eventHandlers={{ click: abrirEditorEstado }}
-            />
-          )}
+          {posicion && (() => {
+            const miEmergencia = sesion?.id != null ? emergenciaPorMiembro.get(sesion.id) : undefined;
+            return (
+              <Marker
+                position={[posicion.lat, posicion.lon]}
+                icon={crearIconoAvatar({
+                  fotoUrl: miFotoUrl,
+                  nombre: sesion?.nombre ?? "Yo",
+                  estado: miEmergencia ? textoEstadoEmergencia(miEmergencia) : miEstadoTexto,
+                  modo: modo ?? "patinando",
+                  emergencia: !!miEmergencia,
+                })}
+                eventHandlers={{ click: abrirEditorEstado }}
+              />
+            );
+          })()}
           {gruposOtros.map((grupo) => {
             const representante = grupo[0];
             const extra = grupo.length - 1;
+            const emergenciaGrupo = grupo
+              .map((m) => emergenciaPorMiembro.get(m.miembroId))
+              .find((e) => e !== undefined);
             return (
               <MarcadorAnimado
                 key={representante.miembroId}
@@ -1699,10 +1701,10 @@ export function MapaView() {
                 icon={crearIconoAvatar({
                   fotoUrl: representante.fotoUrl,
                   nombre: representante.nombre,
-                  estado: representante.estado,
+                  estado: emergenciaGrupo ? textoEstadoEmergencia(emergenciaGrupo) : representante.estado,
                   modo: representante.modo,
                   masPersonas: extra > 0 ? extra : undefined,
-                  emergencia: grupo.some((m) => emergenciaIds.has(m.miembroId)),
+                  emergencia: !!emergenciaGrupo,
                 })}
                 eventHandlers={extra > 0 ? { click: () => setClusterAbierto(grupo) } : undefined}
               >
@@ -1749,7 +1751,17 @@ export function MapaView() {
                 !otros.some((o) => o.miembroId === e.miembroId),
             )
             .map((e) => (
-              <Marker key={e.id} position={[e.lat!, e.lon!]} icon={iconoEmergencia}>
+              <Marker
+                key={e.id}
+                position={[e.lat!, e.lon!]}
+                icon={crearIconoAvatar({
+                  fotoUrl: e.fotoUrl,
+                  nombre: e.nombre,
+                  estado: textoEstadoEmergencia(e),
+                  modo: "patinando",
+                  emergencia: true,
+                })}
+              >
                 <Popup>
                   <div className="flex flex-col gap-1">
                     <p className="font-semibold text-red-700">

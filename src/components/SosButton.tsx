@@ -1,9 +1,10 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { IconAlertTriangle } from "@tabler/icons-react";
 import { useSession } from "@/context/SessionContext";
 import { apiPost, ApiError } from "@/lib/api";
+import { obtenerPosicionActual } from "@/lib/geolocacionNativa";
 import { MOTIVOS_EMERGENCIA, ETIQUETA_MOTIVO, type MotivoEmergencia } from "@/lib/emergencias";
 
 const DURACION_HOLD_MS = 1500;
@@ -20,6 +21,20 @@ export function SosButton({ onActivada }: { onActivada?: () => void }) {
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState("");
   const intervaloRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Se pide apenas se completa el hold (no al elegir el motivo) para que el
+  // GPS tenga los 1-2 toques del modal de margen para resolver en paralelo
+  // -- así el avatar aparece en el mapa de los demás aunque el miembro no
+  // esté compartiendo ubicación en vivo (patinando/en ruta) ni tenga modo
+  // oculto desactivado. Best-effort: si falla/deniega, se manda igual sin
+  // lat/lon (el backend cae de vuelta a la última UbicacionActiva conocida).
+  const posicionRef = useRef<Promise<{ lat: number; lon: number } | null> | null>(null);
+
+  useEffect(() => {
+    if (!mostrarModal) return;
+    posicionRef.current = obtenerPosicionActual({ timeout: 6000 })
+      .then((p) => ({ lat: p.lat, lon: p.lon }))
+      .catch(() => null);
+  }, [mostrarModal]);
 
   function iniciarHold() {
     if (!token) return;
@@ -47,7 +62,8 @@ export function SosButton({ onActivada }: { onActivada?: () => void }) {
     setEnviando(true);
     setError("");
     try {
-      await apiPost("/emergencias", { motivo }, token);
+      const posicion = await (posicionRef.current ?? Promise.resolve(null));
+      await apiPost("/emergencias", { motivo, lat: posicion?.lat, lon: posicion?.lon }, token);
       setMostrarModal(false);
       onActivada?.();
     } catch (err) {
