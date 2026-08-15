@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { IconBell, IconBellPlus, IconMessageCircle2, IconMapPin, IconCalendar } from "@tabler/icons-react";
@@ -78,17 +78,7 @@ export function AppHeader() {
     return () => clearInterval(intervalo);
   }, [token, sesion?.rol]);
 
-  useEffect(() => {
-    if (!token || sesion?.rol === "visitante") return;
-    if (Capacitor.isNativePlatform()) {
-      Promise.resolve(estaSuscritoNativo()).then(setPushActivo);
-      return;
-    }
-    if (!pushDisponible()) return;
-    estaSuscrito().then(setPushActivo);
-  }, [token, sesion?.rol]);
-
-  async function activarNotificaciones() {
+  const activarNotificaciones = useCallback(async () => {
     if (!token || activandoPush) return;
     setActivandoPush(true);
     try {
@@ -99,7 +89,33 @@ export function AppHeader() {
     } finally {
       setActivandoPush(false);
     }
-  }
+  }, [token, activandoPush]);
+
+  useEffect(() => {
+    if (!token || sesion?.rol === "visitante") return;
+
+    // Se pide el permiso solo (sin esperar que el usuario toque la
+    // campanita) la primera vez que se detecta sin activar en este
+    // dispositivo -- igual criterio que el GPS, que tampoco requiere un
+    // botón aparte para activarse. La campanita queda como respaldo manual
+    // por si el usuario rechazó el permiso la primera vez (Android no deja
+    // volver a pedirlo solo después de un rechazo).
+    function intentarActivarUnaVez(activo: boolean) {
+      setPushActivo(activo);
+      if (activo) return;
+      const clave = "legion-roller-push-auto-intentado";
+      if (localStorage.getItem(clave)) return;
+      localStorage.setItem(clave, "1");
+      activarNotificaciones();
+    }
+
+    if (Capacitor.isNativePlatform()) {
+      Promise.resolve(estaSuscritoNativo()).then(intentarActivarUnaVez);
+      return;
+    }
+    if (!pushDisponible()) return;
+    estaSuscrito().then(intentarActivarUnaVez);
+  }, [token, sesion?.rol, activarNotificaciones]);
 
   // Menciones pendientes de respuesta (aceptar/rechazar republicar): se
   // muestran en la campana, no dentro de la historia misma.
