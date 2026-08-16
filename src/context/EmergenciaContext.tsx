@@ -2,9 +2,15 @@
 
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { apiGet } from "@/lib/api";
+import { obtenerSocket } from "@/lib/socket";
 import type { EmergenciaActiva } from "@/lib/emergencias";
 
-const INTERVALO_POLLING_MS = 15000;
+// La sincronización en vivo la hace el socket (emergencia:activada/cancelada,
+// ver más abajo) -- este polling queda solo como respaldo de reconciliación
+// (una desconexión breve, o algo que se perdió), por eso el intervalo es
+// bastante más largo que cuando era la única vía (mismo criterio que
+// MapaView.tsx con "patinando ahora").
+const INTERVALO_POLLING_MS = 45000;
 
 interface EmergenciaContextValue {
   activas: EmergenciaActiva[];
@@ -63,6 +69,28 @@ export function EmergenciaProvider({
       // silencioso
     }
   }, [token]);
+
+  // Aviso en vivo por socket -- llega casi al instante a CUALQUIER otro
+  // miembro conectado (no solo a quien activó/canceló), sin esperar el
+  // próximo tick del polling de arriba. El evento no trae el objeto de la
+  // emergencia armado (ver comentario en emergencias.gateway.ts): solo
+  // dispara un refresco real vía REST, que sigue siendo la única fuente de
+  // verdad.
+  useEffect(() => {
+    if (!token) return;
+    const socket = obtenerSocket(token);
+
+    function alCambiar() {
+      refrescar();
+    }
+
+    socket.on("emergencia:activada", alCambiar);
+    socket.on("emergencia:cancelada", alCambiar);
+    return () => {
+      socket.off("emergencia:activada", alCambiar);
+      socket.off("emergencia:cancelada", alCambiar);
+    };
+  }, [token, refrescar]);
 
   const miEmergenciaActiva = miembroId != null && activas.some((e) => e.miembroId === miembroId);
 
