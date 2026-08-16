@@ -63,4 +63,7 @@ export const CANCIONES_HISTORIA: CancionHistoria[] = [
   { id: "legion-04", nombre: "Experiencia", genero: "legion", archivo: "/musica/legion/04-experiencia.mp3" },
   { id: "legion-05", nombre: "Primer Día", genero: "legion", archivo: "/musica/legion/05-primer-dia.mp3" },
   { id: "legion-06", nombre: "Rodar", genero: "legion", archivo: "/musica/legion/06-rodar.mp3" },
+  { id: "legion-07", nombre: "Guidi Guidi Eres Tú", genero: "legion", archivo: "/musica/legion/07-guidi-guidi-eres-tu.mp3" },
+  { id: "legion-08", nombre: "La Melipullii", genero: "legion", archivo: "/musica/legion/08-la-melipullii.mp3" },
+  { id: "legion-09", nombre: "Vuelvo a Volar", genero: "legion", archivo: "/musica/legion/09-vuelvo-a-volar.mp3" },
 ];
