@@ -8,6 +8,8 @@ import { apiGet, apiPost, apiPatch, apiDelete, apiUpload, ApiError } from "@/lib
 import {
   ETIQUETA_TIPO,
   TIPOS_PUBLICACION,
+  ETIQUETA_AUDIENCIA,
+  AUDIENCIAS_PUBLICACION,
   ETIQUETA_FINALIZACION,
   TIPOS_FINALIZACION,
   ETIQUETA_ASISTENCIA_EVENTO,
@@ -108,6 +110,7 @@ const FORM_VACIO = {
   rsvp: false,
   duracionHoras: "",
   activaEnMapa: false,
+  audiencia: "todos" as string,
 };
 
 type SubTab = "publicaciones" | "integrantes";
@@ -392,6 +395,7 @@ export default function AdminPage() {
       rsvp: p.rsvp,
       duracionHoras: p.duracionHoras ? String(p.duracionHoras) : "",
       activaEnMapa: p.activaEnMapa,
+      audiencia: p.audiencia,
     });
     setFotos(p.fotos);
   }
@@ -462,6 +466,7 @@ export default function AdminPage() {
       duracionHoras: form.duracionHoras ? Number(form.duracionHoras) : undefined,
       activaEnMapa: form.activaEnMapa,
       fotos: fotos.length > 0 ? fotos : undefined,
+      audiencia: form.audiencia,
     };
     try {
       if (editandoId) {
@@ -600,6 +605,18 @@ export default function AdminPage() {
               {TIPOS_PUBLICACION.map((t) => (
                 <option key={t} value={t}>
                   {ETIQUETA_TIPO[t]}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={form.audiencia}
+              onChange={(e) => setForm({ ...form, audiencia: e.target.value })}
+              className="rounded-app border border-border bg-surface-2 px-3 py-2 text-text-primary"
+            >
+              {AUDIENCIAS_PUBLICACION.map((a) => (
+                <option key={a} value={a}>
+                  {ETIQUETA_AUDIENCIA[a]}
                 </option>
               ))}
             </select>
@@ -917,6 +934,11 @@ export default function AdminPage() {
                   <div>
                     <p className="text-xs font-semibold text-text-accent">
                       {ETIQUETA_TIPO[p.tipo as keyof typeof ETIQUETA_TIPO] ?? p.tipo}
+                      {p.audiencia !== "todos" && (
+                        <span className="ml-1 text-text-muted">
+                          · {ETIQUETA_AUDIENCIA[p.audiencia as keyof typeof ETIQUETA_AUDIENCIA] ?? p.audiencia}
+                        </span>
+                      )}
                     </p>
                     <p className="text-sm text-text-primary">{p.titulo}</p>
                   </div>

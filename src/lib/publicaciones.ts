@@ -47,6 +47,16 @@ export const TIPOS_ASISTENCIA_EVENTO = [
   "autoconfirmacion",
 ] as const;
 
+export const AUDIENCIAS_PUBLICACION = ["todos", "legion", "comunidad"] as const;
+
+export type AudienciaPublicacion = (typeof AUDIENCIAS_PUBLICACION)[number];
+
+export const ETIQUETA_AUDIENCIA: Record<AudienciaPublicacion, string> = {
+  todos: "Todos",
+  legion: "Solo Legión",
+  comunidad: "Solo Comunidad",
+};
+
 export type TipoAsistenciaEvento = (typeof TIPOS_ASISTENCIA_EVENTO)[number];
 
 export const ETIQUETA_ASISTENCIA_EVENTO: Record<TipoAsistenciaEvento, string> = {
@@ -77,6 +87,7 @@ export interface Publicacion {
   duracionHoras: number | null;
   activaEnMapa: boolean;
   fotos: string[];
+  audiencia: string;
   createdAt: string;
   rsvpCounts: { yes: number; maybe: number; no: number };
   reaccionesCount: number;

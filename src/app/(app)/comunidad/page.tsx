@@ -63,7 +63,7 @@ export default function ComunidadPage() {
 
   async function cargar() {
     try {
-      const lista = await apiGet<Publicacion[]>("/publicaciones", null);
+      const lista = await apiGet<Publicacion[]>("/publicaciones", token);
       setPublicaciones(lista);
 
       if (token) {
