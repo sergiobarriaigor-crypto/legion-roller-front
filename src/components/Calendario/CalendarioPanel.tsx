@@ -23,8 +23,18 @@ import {
 } from "@/lib/calendario";
 import { Avatar } from "@/components/Avatar";
 import { VisorFotoMensaje } from "@/components/Chat/VisorFotoMensaje";
+import { CANCIONES_HISTORIA } from "@/lib/musicaHistorias";
 import { CrearActividadModal } from "./CrearActividadModal";
 import { EditarActividadModal } from "./EditarActividadModal";
+
+// El apoyo visual guarda solo el id del catálogo (ver ApoyoVisualActividad.tsx)
+// -- acá se resuelve al archivo real para poder reproducirlo. Si la pista se
+// retiró del catálogo después de crear la actividad, simplemente no suena
+// (mismo criterio que musicaNombre en Historia, sin romper nada).
+function archivoMusica(musicaId: string | null): string | null {
+  if (!musicaId) return null;
+  return CANCIONES_HISTORIA.find((c) => c.id === musicaId)?.archivo ?? null;
+}
 
 const NOMBRES_MES = [
   "enero", "febrero", "marzo", "abril", "mayo", "junio",
@@ -200,6 +210,9 @@ export function CalendarioPanel({
                     </p>
                   </div>
                 </div>
+                {archivoMusica(inv.musicaId) && (
+                  <audio controls preload="none" className="mt-2 h-8 w-full" src={archivoMusica(inv.musicaId)!} />
+                )}
                 <div className="mt-2 flex gap-2">
                   <button
                     type="button"
@@ -389,6 +402,9 @@ export function CalendarioPanel({
                       className="h-32 w-full rounded-app object-cover"
                     />
                   </button>
+                )}
+                {archivoMusica(it.musicaId) && (
+                  <audio controls preload="none" className="mb-2 h-8 w-full" src={archivoMusica(it.musicaId)!} />
                 )}
                 <p
                   className={`pr-6 text-sm font-medium text-text-primary ${it.cancelada ? "line-through" : ""}`}

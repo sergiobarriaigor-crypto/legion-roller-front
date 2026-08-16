@@ -47,6 +47,7 @@ export interface ItemCalendario {
   hora: string | null;
   puntoEncuentro: string | null;
   fotoUrl: string | null;
+  musicaId: string | null;
   cancelada: boolean;
   motivoCancelacion: string | null;
   esCreador: boolean;
@@ -60,6 +61,7 @@ export interface InvitacionPendiente {
   fecha: string;
   hora: string | null;
   fotoUrl: string | null;
+  musicaId: string | null;
   creadorNombre: string;
 }
 
