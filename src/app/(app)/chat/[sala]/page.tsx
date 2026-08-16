@@ -406,6 +406,14 @@ export default function ConversacionPage() {
     await enviar({ texto });
     setTexto("");
     if (textareaRef.current) textareaRef.current.style.height = "";
+    // Al tocar "Enviar" el textarea pierde el foco (dispara onBlur) y el
+    // teclado se cierra -- mismo caso que abrir el teclado (ver onFocus más
+    // arriba) pero al revés: sin este reajuste, el compositor quedaba fuera
+    // de la vista hasta que el usuario tocaba la pantalla de nuevo. Mismo
+    // patrón ya probado (llamada inmediata + una demorada, porque la
+    // animación del teclado tarda más que el evento).
+    scrollAlFondo();
+    setTimeout(scrollAlFondo, 300);
   }
 
   async function subirYEnviarFoto(archivo: File) {
