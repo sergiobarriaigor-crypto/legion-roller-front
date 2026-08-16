@@ -6,11 +6,13 @@ import { obtenerSocket } from "@/lib/socket";
 import type { EmergenciaActiva } from "@/lib/emergencias";
 
 // La sincronización en vivo la hace el socket (emergencia:activada/cancelada,
-// ver más abajo) -- este polling queda solo como respaldo de reconciliación
-// (una desconexión breve, o algo que se perdió), por eso el intervalo es
-// bastante más largo que cuando era la única vía (mismo criterio que
-// MapaView.tsx con "patinando ahora").
-const INTERVALO_POLLING_MS = 45000;
+// ver más abajo), pero desde el ajuste de "aviso por cercanía" ese push
+// instantáneo ya no le llega a TODOS -- solo a quien está patinando cerca
+// del SOS (ver emergencias.service.ts/obtenerDestinatariosAviso). Para
+// cualquier otro miembro (lejos, no patinando, admin mirando el mapa) este
+// polling vuelve a ser la vía principal, no un respaldo raro -- por eso el
+// intervalo es corto, igual que antes de meter el socket.
+const INTERVALO_POLLING_MS = 15000;
 
 interface EmergenciaContextValue {
   activas: EmergenciaActiva[];
