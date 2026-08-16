@@ -14,7 +14,7 @@ contenido de usuarios, es música que la app misma ofrece).
    - `rock/`
    - `dance/`
    - `romantica/`
-   - `cumbia/`
+   - `legion/`
 4. Agregar una entrada por cada pista en
    `frontend/src/lib/musicaHistorias.ts`, en el array `CANCIONES_HISTORIA`:
 

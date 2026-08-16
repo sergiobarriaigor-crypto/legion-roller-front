@@ -2,14 +2,14 @@
 // como archivos estáticos en /public/musica (no contenido subido por el
 // usuario, por eso no pasan por /uploads). Ver public/musica/README.md para
 // cómo agregar pistas nuevas.
-export type GeneroMusica = "fiesta" | "rock" | "dance" | "romantica" | "cumbia";
+export type GeneroMusica = "fiesta" | "rock" | "dance" | "romantica" | "legion";
 
 export const GENEROS_MUSICA: { id: GeneroMusica; nombre: string }[] = [
   { id: "fiesta", nombre: "Fiesta" },
   { id: "rock", nombre: "Rock" },
   { id: "dance", nombre: "Dance" },
   { id: "romantica", nombre: "Románticas" },
-  { id: "cumbia", nombre: "Cumbia" },
+  { id: "legion", nombre: "Legión" },
 ];
 
 export interface CancionHistoria {
@@ -50,4 +50,17 @@ export const CANCIONES_HISTORIA: CancionHistoria[] = [
   { id: "fiesta-07", nombre: "Salsa Party", genero: "fiesta", archivo: "/musica/fiesta/07-salsa-party.mp3" },
   { id: "fiesta-08", nombre: "Salsa Latina", genero: "fiesta", archivo: "/musica/fiesta/08-salsa-latina.mp3" },
   { id: "fiesta-09", nombre: "Carnival Trumpet", genero: "fiesta", archivo: "/musica/fiesta/09-carnival-trumpet.mp3" },
+
+  { id: "romantica-01", nombre: "Piano Romántico", genero: "romantica", archivo: "/musica/romantica/01-piano-romantico.mp3" },
+  { id: "romantica-02", nombre: "Angels by My Side", genero: "romantica", archivo: "/musica/romantica/02-angels-by-my-side.mp3" },
+  { id: "romantica-03", nombre: "Love of the Sun", genero: "romantica", archivo: "/musica/romantica/03-love-of-the-sun.mp3" },
+  { id: "romantica-04", nombre: "Sweet", genero: "romantica", archivo: "/musica/romantica/04-sweet.mp3" },
+  { id: "romantica-05", nombre: "Piano Music", genero: "romantica", archivo: "/musica/romantica/05-piano-music.mp3" },
+
+  { id: "legion-01", nombre: "Legión Roller", genero: "legion", archivo: "/musica/legion/01-legion-roller.mp3" },
+  { id: "legion-02", nombre: "Legión Roller A", genero: "legion", archivo: "/musica/legion/02-legion-roller-a.mp3" },
+  { id: "legion-03", nombre: "Legión Roller B", genero: "legion", archivo: "/musica/legion/03-legion-roller-b.mp3" },
+  { id: "legion-04", nombre: "Experiencia", genero: "legion", archivo: "/musica/legion/04-experiencia.mp3" },
+  { id: "legion-05", nombre: "Primer Día", genero: "legion", archivo: "/musica/legion/05-primer-dia.mp3" },
+  { id: "legion-06", nombre: "Rodar", genero: "legion", archivo: "/musica/legion/06-rodar.mp3" },
 ];
