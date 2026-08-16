@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { useSession } from "@/context/SessionContext";
+import { useEmergencias } from "@/context/EmergenciaContext";
 import { apiGet, apiPost, apiPatch, apiDelete, apiUpload, ApiError } from "@/lib/api";
 import {
   ETIQUETA_TIPO,
@@ -114,6 +115,7 @@ type SubTab = "publicaciones" | "integrantes";
 export default function AdminPage() {
   const { sesion } = useSession();
   const token = sesion?.token ?? null;
+  const { activas: emergenciasActivas, refrescar: refrescarEmergencias } = useEmergencias();
 
   const [subTab, setSubTab] = useState<SubTab>("publicaciones");
   const [publicaciones, setPublicaciones] = useState<Publicacion[]>([]);
@@ -306,6 +308,19 @@ export default function AdminPage() {
       cargarMiembros();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "No se pudo desbloquear al miembro.");
+    }
+  }
+
+  // Para el caso "se le olvidó cancelar el SOS" -- el vencimiento automático
+  // (40 min) y el recordatorio push (20 min) ya cubren la mayoría, esto es
+  // el botón de escape inmediato cuando alguien avisa que ya está bien.
+  async function cancelarEmergenciaAdmin(id: number) {
+    if (!token) return;
+    try {
+      await apiDelete(`/emergencias/${id}/admin`, token);
+      refrescarEmergencias();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "No se pudo cancelar la emergencia.");
     }
   }
 
@@ -1169,6 +1184,18 @@ export default function AdminPage() {
                     </div>
                     <div className="flex shrink-0 flex-col items-end gap-1">
                       <span className="text-xs text-text-accent">{m.rol}</span>
+                      {emergenciasActivas.some((e) => e.miembroId === m.id) && (
+                        <div className="flex flex-col items-end gap-0.5">
+                          <span className="text-[11px] text-red-500">🚨 SOS activo</span>
+                          <button
+                            type="button"
+                            onClick={() => cancelarEmergenciaAdmin(m.id)}
+                            className="text-[11px] text-text-accent underline"
+                          >
+                            Cancelar SOS
+                          </button>
+                        </div>
+                      )}
                       {m.rol !== "admin" && !m.eliminadoEn && (
                         <select
                           value={m.categoria ?? ""}
