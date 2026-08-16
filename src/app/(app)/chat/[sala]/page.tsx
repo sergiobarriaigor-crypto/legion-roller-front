@@ -835,6 +835,14 @@ export default function ConversacionPage() {
                 type="submit"
                 disabled={enviando}
                 aria-label="Enviar"
+                // Sin esto, tocar el botón le roba el foco al textarea (foco
+                // nativo del navegador al tocar cualquier botón) y cierra el
+                // teclado -- había que volver a tocar el campo para seguir
+                // escribiendo el siguiente mensaje. preventDefault en
+                // mousedown (dispara también con el toque táctil) evita ese
+                // cambio de foco sin afectar el submit en sí (que sigue
+                // disparando por el evento click normal).
+                onMouseDown={(e) => e.preventDefault()}
                 className="btn-hero shrink-0 rounded-app px-4 py-2 text-sm disabled:opacity-60"
               >
                 <IconSend size={18} />
