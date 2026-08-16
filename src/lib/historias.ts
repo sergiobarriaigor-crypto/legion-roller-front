@@ -57,7 +57,7 @@ export const DURACION_MAXIMA_VIDEO_HISTORIA_SEG = 30;
 // entre EditorHistoria (para saber si una canción elegida dura más que la
 // historia y hace falta elegir el fragmento) y VisorHistorias (temporizador
 // de avance automático).
-export const DURACION_FOTO_HISTORIA_SEG = 5;
+export const DURACION_FOTO_HISTORIA_SEG = 30;
 
 // Distinto de un comentario: un Eco queda FIJO sobre la imagen para
 // cualquiera que abra la historia (no solo quien la vea en vivo), sin hilo
