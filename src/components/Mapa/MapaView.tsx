@@ -857,8 +857,24 @@ export function MapaView() {
           !avisoVelocidadRef.current &&
           pos.accuracy <= PRECISION_MAXIMA_PUNTO_GRABADO_M
         ) {
+          // Mismo ruido de GPS que ya se filtra en registrarMovimiento (ver
+          // su comentario): quieto de verdad, el GPS igual puede reportar
+          // lecturas que saltan varias decenas de metros de un lado a otro
+          // (rebotes de red/Wi-Fi, multipath entre edificios). Sin este piso
+          // dinámico, esas lecturas se sumaban una a una a puntosGrabados
+          // (distancia y trazado), dibujando una "estrella" alrededor del
+          // punto real y sumando distancia sin haberse movido. Se compara
+          // contra el último punto YA grabado (no contra la lectura cruda
+          // anterior), así que el umbral no se resetea con cada ping: una
+          // vez que la distancia acumulada desde ahí supera el piso, se
+          // acepta igual (no se pierde movimiento lento real, solo ruido).
           const puntoGrabado = { ...punto, timestamp: Date.now() };
-          registrarPuntoGrabado(puntoGrabado);
+          const ultimoGrabado = puntosGrabadosRef.current[puntosGrabadosRef.current.length - 1];
+          const umbralKm = Math.max(KM_MOVIMIENTO_SIGNIFICATIVO, (pos.accuracy * 1.5) / 1000);
+          const esRuido = ultimoGrabado && distanciaHaversineKm(ultimoGrabado, puntoGrabado) < umbralKm;
+          if (!esRuido) {
+            registrarPuntoGrabado(puntoGrabado);
+          }
         }
 
         if (necesitaEnvioInicialRef.current && tokenRef.current) {
