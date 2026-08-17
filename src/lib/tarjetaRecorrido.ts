@@ -249,40 +249,24 @@ interface MapaGenerado {
   centroPxY: number;
 }
 
-// Compone el mapa real (satélite Esri + etiquetas, igual que MapaView.tsx)
-// del recuadro del recorrido en un canvas aparte, para insertarlo como
-// <image> dentro del SVG principal. Los tiles se piden con fetch() (no con
-// <img>), así se pueden convertir a data URL sin "manchar" el canvas final
-// con contenido cross-origin. Si no hay conexión o los tiles no cargan,
-// devuelve null y el llamador usa un mapa vectorial de respaldo — la
-// tarjeta nunca se rompe por esto.
-async function generarMapaReal(
-  puntos: PuntoGps[],
+// Pide y compone los tiles de un zoom/centro ya decididos por el llamador
+// (generarMapaReal calcula el zoom que hace entrar TODO el recorrido;
+// generarMapaDetallado, más abajo, pide el mismo recuadro geográfico un
+// zoom más arriba, con el doble de lienzo, para tener detalle real donde
+// antes solo había un acercamiento digital). Mismo criterio de "nunca
+// romper la tarjeta/video": ante cualquier falla devuelve null.
+async function generarMapaEnZoom(
+  centroPxX: number,
+  centroPxY: number,
+  zoom: number,
   anchoDestino: number,
   altoDestino: number,
-  // El video rediseñado pasa false acá: las etiquetas de calles/lugares
-  // horneadas en el tile (fuente fija del proveedor, se ve borrosa al
-  // reescalarse y peor todavía tras la recompresión de WhatsApp/redes)
-  // se reemplazan por una casilla propia con el sector, dibujada nítida en
-  // cada cuadro (ver dibujarEtiquetaSector en dibujarCuadroVideo). La
-  // tarjeta estática (generarTarjetaRecorrido) sigue pidiendo las
-  // etiquetas como siempre.
-  incluirEtiquetas: boolean = true,
+  incluirEtiquetas: boolean,
+  maxTiles: number,
 ): Promise<MapaGenerado | null> {
   try {
-    const lats = puntos.map((p) => p.lat);
-    const lons = puntos.map((p) => p.lon);
-    const minLat = Math.min(...lats);
-    const maxLat = Math.max(...lats);
-    const minLon = Math.min(...lons);
-    const maxLon = Math.max(...lons);
-
-    const zoom = elegirZoom(minLat, maxLat, minLon, maxLon, anchoDestino, altoDestino);
-    const centroPxX = lonAPixelX((minLon + maxLon) / 2, zoom);
-    const centroPxY = latAPixelY((minLat + maxLat) / 2, zoom);
-
     const tiles = calcularTilesNecesarios(centroPxX, centroPxY, zoom, anchoDestino, altoDestino);
-    if (tiles.length === 0 || tiles.length > 48) return null;
+    if (tiles.length === 0 || tiles.length > maxTiles) return null;
 
     const [imagenesBase, imagenesEtiquetas] = await Promise.all([
       Promise.all(tiles.map((t) => cargarTileComoImagen(urlTile(TILE_SATELITE_URL, zoom, t.x, t.y)))),
@@ -315,6 +299,76 @@ async function generarMapaReal(
   } catch {
     return null;
   }
+}
+
+// Compone el mapa real (satélite Esri + etiquetas, igual que MapaView.tsx)
+// del recuadro del recorrido en un canvas aparte, para insertarlo como
+// <image> dentro del SVG principal. Los tiles se piden con fetch() (no con
+// <img>), así se pueden convertir a data URL sin "manchar" el canvas final
+// con contenido cross-origin. Si no hay conexión o los tiles no cargan,
+// devuelve null y el llamador usa un mapa vectorial de respaldo — la
+// tarjeta nunca se rompe por esto.
+async function generarMapaReal(
+  puntos: PuntoGps[],
+  anchoDestino: number,
+  altoDestino: number,
+  // El video rediseñado pasa false acá: las etiquetas de calles/lugares
+  // horneadas en el tile (fuente fija del proveedor, se ve borrosa al
+  // reescalarse y peor todavía tras la recompresión de WhatsApp/redes)
+  // se reemplazan por una casilla propia con el sector, dibujada nítida en
+  // cada cuadro (ver dibujarEtiquetaSector en dibujarCuadroVideo). La
+  // tarjeta estática (generarTarjetaRecorrido) sigue pidiendo las
+  // etiquetas como siempre.
+  incluirEtiquetas: boolean = true,
+): Promise<MapaGenerado | null> {
+  const lats = puntos.map((p) => p.lat);
+  const lons = puntos.map((p) => p.lon);
+  const minLat = Math.min(...lats);
+  const maxLat = Math.max(...lats);
+  const minLon = Math.min(...lons);
+  const maxLon = Math.max(...lons);
+
+  const zoom = elegirZoom(minLat, maxLat, minLon, maxLon, anchoDestino, altoDestino);
+  const centroPxX = lonAPixelX((minLon + maxLon) / 2, zoom);
+  const centroPxY = latAPixelY((minLat + maxLat) / 2, zoom);
+
+  return generarMapaEnZoom(centroPxX, centroPxY, zoom, anchoDestino, altoDestino, incluirEtiquetas, 48);
+}
+
+// Segundo mapa, EXCLUSIVO del video, con más detalle real que el panorámico
+// (generarMapaReal): mismo centro geográfico y mismo recuadro que `mapaBase`,
+// pero un zoom más arriba (el doble de densidad de píxeles reales de tile) en
+// un lienzo del doble de ancho/alto -- cubre exactamente la misma zona que
+// mapaBase, solo que con el doble de detalle. Antes, la cámara "cercana" del
+// video (ver ESCALA_CAMARA_CERCANA) hacía un acercamiento puramente digital
+// sobre el mapa panorámico -- en recorridos largos ese panorámico ya viene a
+// un zoom bajo (para que entre todo el trazo), así que acercarse digitalmente
+// solo agrandaba píxeles borrosos ("puro montañas", sin calles). Con este
+// segundo mapa, el tramo de persecución de la cámara dibuja tiles reales de
+// más detalle en vez de agrandar los mismos píxeles -- ver dibujarFondoMapaVideo.
+// Al cubrir el mismo recuadro que mapaBase, la posición de cualquier punto acá
+// es exactamente `factorDetalle` veces su posición en mapaBase (mismo centro,
+// mismo ángulo) -- por eso no hace falta una proyección x()/y() aparte, el
+// trazo/pines/etiquetas siguen calculándose en el espacio de mapaBase.
+async function generarMapaDetallado(
+  mapaBase: MapaGenerado,
+  anchoDestino: number,
+  altoDestino: number,
+): Promise<MapaGenerado | null> {
+  const incrementoZoom = 1;
+  const factorDetalle = 2 ** incrementoZoom;
+  return generarMapaEnZoom(
+    mapaBase.centroPxX * factorDetalle,
+    mapaBase.centroPxY * factorDetalle,
+    mapaBase.zoom + incrementoZoom,
+    anchoDestino * factorDetalle,
+    altoDestino * factorDetalle,
+    false,
+    // Lienzo del doble de ancho/alto en el zoom siguiente = ~4x los tiles
+    // del panorámico -- tope más generoso porque es un "mejor esfuerzo"
+    // (si falla, dibujarFondoMapaVideo cae de vuelta al panorámico solo).
+    160,
+  );
 }
 
 function iconoDistancia(cx: number, y: number): string {
@@ -755,6 +809,53 @@ function estadoCamara(
   };
 }
 
+// Fondo del cuadro: dibuja siempre el panorámico (mapaImg, base segura), y
+// si hay mapa detallado (ver generarMapaDetallado) lo superpone encima con
+// un alpha que sigue exactamente la misma curva que el acercamiento de la
+// cámara -- 100% detallado mientras la cámara persigue de cerca (escala ==
+// ESCALA_CAMARA_CERCANA), crossfade hacia el panorámico a medida que la
+// cámara se aleja (escala -> 1), 0% detallado en la panorámica final. Ambos
+// mapas cubren EXACTAMENTE el mismo recuadro geográfico (mismo centro, un
+// zoom de diferencia) -- por eso alcanza con escalar/trasladar el detallado
+// por factorDetalle para que calce pixel a pixel con el trazo/pines, que se
+// siguen dibujando en el espacio de coordenadas del panorámico (ver
+// dibujarCuadroVideo).
+// Se llama con ctx en la transformación identidad (antes del bloque de
+// transformación de cámara que usa el trazo/pines/etiquetas) -- arma su
+// propia transformación para cada capa, así el llamador no necesita saber
+// si hay uno o dos mapas de fondo.
+function dibujarFondoMapaVideo(
+  ctx: CanvasRenderingContext2D,
+  mapaImg: HTMLImageElement | null,
+  mapaDetalladoImg: HTMLImageElement | null,
+  factorDetalle: number,
+  camara: EstadoCamara,
+) {
+  if (!mapaImg) {
+    ctx.fillStyle = "#1a1108";
+    ctx.fillRect(0, 0, ANCHO_VIDEO, ALTO_VIDEO);
+  } else {
+    ctx.save();
+    ctx.translate(ANCHO_VIDEO / 2, ALTO_VIDEO / 2);
+    ctx.scale(camara.escala, camara.escala);
+    ctx.translate(-camara.cx, -camara.cy);
+    ctx.drawImage(mapaImg, 0, 0, ANCHO_VIDEO, ALTO_VIDEO);
+    ctx.restore();
+  }
+
+  if (!mapaDetalladoImg) return;
+  const pesoDetallado = clamp((camara.escala - 1) / (ESCALA_CAMARA_CERCANA - 1), 0, 1);
+  if (pesoDetallado <= 0) return;
+
+  ctx.save();
+  ctx.globalAlpha = pesoDetallado;
+  ctx.translate(ANCHO_VIDEO / 2, ALTO_VIDEO / 2);
+  ctx.scale(camara.escala / factorDetalle, camara.escala / factorDetalle);
+  ctx.translate(-camara.cx * factorDetalle, -camara.cy * factorDetalle);
+  ctx.drawImage(mapaDetalladoImg, 0, 0, ANCHO_VIDEO * factorDetalle, ALTO_VIDEO * factorDetalle);
+  ctx.restore();
+}
+
 function cargarImagenDesdeSrc(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -1128,6 +1229,8 @@ function dibujarCuadroVideo(
   ctx: CanvasRenderingContext2D,
   datos: DatosTarjetaRecorrido,
   mapaImg: HTMLImageElement | null,
+  mapaDetalladoImg: HTMLImageElement | null,
+  factorDetalle: number,
   x: (lon: number) => number,
   y: (lat: number) => number,
   focoCentroPx: { x: number; y: number },
@@ -1185,16 +1288,13 @@ function dibujarCuadroVideo(
   ctx.beginPath();
   ctx.rect(0, 0, ANCHO_VIDEO, ALTO_VIDEO);
   ctx.clip();
+
+  dibujarFondoMapaVideo(ctx, mapaImg, mapaDetalladoImg, factorDetalle, camara);
+
+  ctx.save();
   ctx.translate(ANCHO_VIDEO / 2, ALTO_VIDEO / 2);
   ctx.scale(camara.escala, camara.escala);
   ctx.translate(-camara.cx, -camara.cy);
-
-  if (mapaImg) {
-    ctx.drawImage(mapaImg, 0, 0, ANCHO_VIDEO, ALTO_VIDEO);
-  } else {
-    ctx.fillStyle = "#1a1108";
-    ctx.fillRect(0, 0, ANCHO_VIDEO, ALTO_VIDEO);
-  }
 
   // El trazo se dibuja tramo a tramo (no una sola polyline) para poder
   // colorear cada segmento según la velocidad real ahí -- más dorado/claro
@@ -1261,6 +1361,7 @@ function dibujarCuadroVideo(
     }
   }
 
+  ctx.restore();
   ctx.restore();
 
   // Cuadro de cierre (panorámica, sin foto o con estiloFoto "mapa"): la
@@ -1434,6 +1535,15 @@ export async function generarVideoRecorrido(
     avatarUrl ? cargarImagenComoDataUrl(avatarUrl) : Promise.resolve(null),
   ]);
 
+  // Segundo mapa, más detallado, para el tramo en que la cámara persigue de
+  // cerca (ver dibujarFondoMapaVideo/generarMapaDetallado) -- depende del
+  // zoom que haya elegido el panorámico, así que se pide después. Si falla
+  // (sin conexión, recorrido demasiado grande para el tope de tiles) queda
+  // null y el video sigue exactamente como antes: acercamiento digital sobre
+  // el panorámico, sin cortar la generación.
+  const mapaDetallado = mapa ? await generarMapaDetallado(mapa, ANCHO_VIDEO, ALTO_VIDEO) : null;
+  const factorDetalle = mapa && mapaDetallado ? 2 ** (mapaDetallado.zoom - mapa.zoom) : 1;
+
   // Las imágenes (mapa, fotos, avatar, logo) se decodifican UNA sola vez acá,
   // antes de arrancar la animación -- la versión anterior reincrustaba el
   // mapa completo (base64) dentro de un SVG nuevo en CADA cuadro y lo volvía
@@ -1446,8 +1556,9 @@ export async function generarVideoRecorrido(
   // grande (real, con todo su detalle) solo se usa en el cuadro de cierre
   // final -- ahí es lo bastante grande para verse bien; el corner badge
   // chico que se veía pixelado se sacó del video.
-  const [mapaImg, fotoFinalImg, fotosPinImg, avatarImg, logoGrandeImg] = await Promise.all([
+  const [mapaImg, mapaDetalladoImg, fotoFinalImg, fotosPinImg, avatarImg, logoGrandeImg] = await Promise.all([
     cargarImagenOpcional(mapa?.dataUrl ?? null),
+    cargarImagenOpcional(mapaDetallado?.dataUrl ?? null),
     cargarImagenOpcional(fotoFinalDataUrl),
     Promise.all(fotosPinDataUrl.map((d) => cargarImagenOpcional(d))),
     cargarImagenOpcional(avatarDataUrl),
@@ -1556,6 +1667,8 @@ export async function generarVideoRecorrido(
       ctx!,
       datos,
       mapaImg,
+      mapaDetalladoImg,
+      factorDetalle,
       x,
       y,
       focoCentroPx,
