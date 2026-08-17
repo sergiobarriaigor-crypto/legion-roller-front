@@ -4,14 +4,10 @@ import { useMemo, useState } from "react";
 import { apiPost, ApiError } from "@/lib/api";
 import { ImageUploadCrop } from "@/components/ImageUploadCrop";
 import { useNoAutofill } from "@/lib/useNoAutofill";
+import { SelectorCiudad } from "./SelectorCiudad";
 
 interface Props {
   onVolver: () => void;
-}
-
-interface CodigoResponse {
-  mensaje: string;
-  codigoDev: string;
 }
 
 interface RegistroResponse {
@@ -38,21 +34,14 @@ export function FormularioRegistro({ onVolver }: Props) {
   const noAutofillNombre = useNoAutofill();
   const [correo, setCorreo] = useState("");
   const [fechaNacimiento, setFechaNacimiento] = useState("");
+  const [ciudad, setCiudad] = useState("");
+  const [telefono, setTelefono] = useState("");
   const [clave, setClave] = useState("");
   const [confirmarClave, setConfirmarClave] = useState("");
   const [mostrarClave, setMostrarClave] = useState(false);
   const [fotoUrl, setFotoUrl] = useState("");
 
   const [tocado, setTocado] = useState<Record<string, boolean>>({});
-
-  const [codigo, setCodigo] = useState("");
-  const noAutofillCodigo = useNoAutofill();
-  const [codigoEnviado, setCodigoEnviado] = useState(false);
-  const [codigoDevHint, setCodigoDevHint] = useState("");
-  const [correoVerificado, setCorreoVerificado] = useState(false);
-  const [enviandoCodigo, setEnviandoCodigo] = useState(false);
-  const [verificandoCodigo, setVerificandoCodigo] = useState(false);
-  const [errorCodigo, setErrorCodigo] = useState("");
 
   const [enviando, setEnviando] = useState(false);
   const [errorFinal, setErrorFinal] = useState("");
@@ -62,59 +51,12 @@ export function FormularioRegistro({ onVolver }: Props) {
     setTocado((prev) => ({ ...prev, [campo]: true }));
   }
 
-  function onCambiarCorreo(v: string) {
-    setCorreo(v);
-    if (correoVerificado || codigoEnviado) {
-      setCorreoVerificado(false);
-      setCodigoEnviado(false);
-      setCodigo("");
-      setCodigoDevHint("");
-      setErrorCodigo("");
-    }
-  }
-
-  async function enviarCodigo() {
-    if (!correoValido(correo)) {
-      marcarTocado("correo");
-      return;
-    }
-    setErrorCodigo("");
-    setEnviandoCodigo(true);
-    try {
-      const res = await apiPost<CodigoResponse>("/auth/correo/enviar-codigo", {
-        correo: correo.trim(),
-      });
-      setCodigoEnviado(true);
-      setCodigoDevHint(res.codigoDev);
-    } catch (err) {
-      setErrorCodigo(err instanceof ApiError ? err.message : "No se pudo enviar el código.");
-    } finally {
-      setEnviandoCodigo(false);
-    }
-  }
-
-  async function verificarCodigo() {
-    if (codigo.length !== 6) return;
-    setErrorCodigo("");
-    setVerificandoCodigo(true);
-    try {
-      await apiPost("/auth/correo/confirmar-codigo", {
-        correo: correo.trim(),
-        codigo,
-      });
-      setCorreoVerificado(true);
-    } catch (err) {
-      setErrorCodigo(err instanceof ApiError ? err.message : "No se pudo verificar el código.");
-    } finally {
-      setVerificandoCodigo(false);
-    }
-  }
-
   const erroresCampos = useMemo(() => {
     return {
       nombre: nombre.trim().length === 0 ? "Ingresa tu nombre o apodo." : "",
       correo: !correoValido(correo) ? "Correo con formato inválido." : "",
       fechaNacimiento: !fechaNacimiento ? "Ingresa tu fecha de nacimiento." : "",
+      ciudad: !ciudad.trim() ? "Selecciona tu ciudad de la lista." : "",
       clave:
         !claveTieneLongitud(clave) || !claveTieneMayuscula(clave)
           ? "Mínimo 8 caracteres y al menos una mayúscula."
@@ -122,12 +64,13 @@ export function FormularioRegistro({ onVolver }: Props) {
       confirmarClave: confirmarClave !== clave ? "Las contraseñas no coinciden." : "",
       fotoUrl: !fotoUrl ? "Sube una foto de perfil." : "",
     };
-  }, [nombre, correo, fechaNacimiento, clave, confirmarClave, fotoUrl]);
+  }, [nombre, correo, fechaNacimiento, ciudad, clave, confirmarClave, fotoUrl]);
 
   const camposValidos = {
     nombre: !erroresCampos.nombre,
-    correo: correoVerificado,
+    correo: !erroresCampos.correo,
     fechaNacimiento: !erroresCampos.fechaNacimiento,
+    ciudad: !erroresCampos.ciudad,
     clave: !erroresCampos.clave,
     confirmarClave: !erroresCampos.confirmarClave,
     fotoUrl: !erroresCampos.fotoUrl,
@@ -144,6 +87,7 @@ export function FormularioRegistro({ onVolver }: Props) {
       nombre: true,
       correo: true,
       fechaNacimiento: true,
+      ciudad: true,
       clave: true,
       confirmarClave: true,
       fotoUrl: true,
@@ -157,6 +101,8 @@ export function FormularioRegistro({ onVolver }: Props) {
         nombre: nombre.trim(),
         correo: correo.trim(),
         fechaNacimiento,
+        ciudad: ciudad.trim(),
+        telefono: telefono.trim() || undefined,
         fotoUrl,
         clave,
       });
@@ -209,68 +155,16 @@ export function FormularioRegistro({ onVolver }: Props) {
           </div>
 
           <div className="flex flex-col gap-1">
-            <div className="flex gap-2">
-              <input
-                type="email"
-                placeholder="Correo electrónico"
-                value={correo}
-                onChange={(e) => onCambiarCorreo(e.target.value)}
-                onBlur={() => marcarTocado("correo")}
-                disabled={correoVerificado}
-                className="min-w-0 flex-1 rounded-app border border-border bg-surface-2 px-3 py-2 text-text-primary outline-none disabled:opacity-60"
-              />
-              {!correoVerificado && (
-                <button
-                  type="button"
-                  disabled={!correoValido(correo) || enviandoCodigo}
-                  onClick={enviarCodigo}
-                  className="shrink-0 whitespace-nowrap rounded-app border border-border px-2 py-2 text-[11px] text-text-secondary disabled:opacity-40"
-                >
-                  {enviandoCodigo ? "Enviando..." : codigoEnviado ? "Reenviar" : "Enviar código"}
-                </button>
-              )}
-            </div>
-            {tocado.correo && !correoVerificado && erroresCampos.correo && (
+            <input
+              type="email"
+              placeholder="Correo electrónico"
+              value={correo}
+              onChange={(e) => setCorreo(e.target.value)}
+              onBlur={() => marcarTocado("correo")}
+              className="rounded-app border border-border bg-surface-2 px-3 py-2 text-text-primary outline-none"
+            />
+            {tocado.correo && erroresCampos.correo && (
               <p className="text-xs text-fill-warning">{erroresCampos.correo}</p>
-            )}
-
-            {correoVerificado ? (
-              <p className="text-xs text-fill-success">Correo verificado.</p>
-            ) : (
-              codigoEnviado && (
-                <div className="flex flex-col gap-1 rounded-app border border-border bg-surface-2 p-2">
-                  <p className="text-[11px] text-text-muted">
-                    Ingresa el código de 6 dígitos enviado a tu correo.
-                  </p>
-                  {codigoDevHint && (
-                    <p className="text-[11px] text-text-accent">
-                      Modo simulado — código: {codigoDevHint}
-                    </p>
-                  )}
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      autoComplete="off"
-                      {...noAutofillCodigo}
-                      maxLength={6}
-                      placeholder="123456"
-                      value={codigo}
-                      onChange={(e) => setCodigo(e.target.value.replace(/\D/g, ""))}
-                      className="min-w-0 flex-1 rounded-app border border-border bg-surface-1 px-3 py-2 text-text-primary outline-none"
-                    />
-                    <button
-                      type="button"
-                      disabled={codigo.length !== 6 || verificandoCodigo}
-                      onClick={verificarCodigo}
-                      className="btn-hero shrink-0 rounded-app px-3 py-2 text-xs disabled:opacity-40"
-                    >
-                      {verificandoCodigo ? "Verificando..." : "Verificar"}
-                    </button>
-                  </div>
-                  {errorCodigo && <p className="text-xs text-fill-warning">{errorCodigo}</p>}
-                </div>
-              )
             )}
           </div>
 
@@ -286,6 +180,22 @@ export function FormularioRegistro({ onVolver }: Props) {
             {tocado.fechaNacimiento && erroresCampos.fechaNacimiento && (
               <p className="text-xs text-fill-warning">{erroresCampos.fechaNacimiento}</p>
             )}
+          </div>
+
+          <SelectorCiudad value={ciudad} onChange={setCiudad} onBlurCampo={() => marcarTocado("ciudad")} />
+          {tocado.ciudad && erroresCampos.ciudad && (
+            <p className="-mt-2 text-xs text-fill-warning">{erroresCampos.ciudad}</p>
+          )}
+
+          <div className="flex flex-col gap-1">
+            <input
+              type="tel"
+              autoComplete="off"
+              placeholder="Teléfono (opcional)"
+              value={telefono}
+              onChange={(e) => setTelefono(e.target.value)}
+              className="rounded-app border border-border bg-surface-2 px-3 py-2 text-text-primary outline-none"
+            />
           </div>
 
           <div className="flex flex-col gap-1">

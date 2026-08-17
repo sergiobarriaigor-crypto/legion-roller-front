@@ -31,6 +31,38 @@ export async function buscarLugares(consulta: string): Promise<LugarBuscado[]> {
   }
 }
 
+// Búsqueda acotada a ciudades/comunas (featureType=settlement incluye
+// city/town/village/hamlet en Nominatim) -- a diferencia de buscarLugares
+// (cualquier lugar: calles, negocios, etc.), pensada para un selector de
+// "ciudad donde vivo" en el registro: el usuario elige de esta lista en vez
+// de escribir libre, para que no queden variantes distintas ("Pto Montt",
+// "puerto montt", "P. Montt") de la misma ciudad en la base. Se agrega la
+// región cuando el nombre de la ciudad por sí solo sería ambiguo (Chile
+// tiene localidades con el mismo nombre en regiones distintas).
+export async function buscarCiudades(consulta: string): Promise<string[]> {
+  const q = consulta.trim();
+  if (!q) return [];
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/search?format=json&limit=8&countrycodes=cl&accept-language=es&featureType=settlement&addressdetails=1&q=${encodeURIComponent(q)}`,
+    );
+    if (!res.ok) return [];
+    const data: unknown = await res.json();
+    if (!Array.isArray(data)) return [];
+    const nombres = data
+      .map((r) => {
+        const address = (r as { address?: DireccionNominatim }).address;
+        const ciudad = address?.city || address?.town || address?.village || address?.municipality;
+        if (!ciudad) return null;
+        return address?.state && address.state !== ciudad ? `${ciudad}, ${address.state}` : ciudad;
+      })
+      .filter((n): n is string => !!n);
+    return Array.from(new Set(nombres));
+  } catch {
+    return [];
+  }
+}
+
 interface DireccionNominatim {
   road?: string;
   pedestrian?: string;
@@ -40,6 +72,7 @@ interface DireccionNominatim {
   town?: string;
   village?: string;
   municipality?: string;
+  state?: string;
 }
 
 // Arma "<calle/barrio>, <ciudad>" a partir del desglose estructurado en vez de
