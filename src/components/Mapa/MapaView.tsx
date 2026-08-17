@@ -144,6 +144,19 @@ const MS_PAUSA_TOLERADA_EN_TRAMO_RAPIDO = 90 * 1000;
 // grabado como parte de la ruta y la distancia patinada.
 const PRECISION_MAXIMA_PUNTO_GRABADO_M = 35;
 
+// El primer punto grabado de la sesión queda de ancla para el filtro de
+// ruido de más abajo (comparación contra "el último punto ya grabado") --
+// si esa ancla nace de un fix recién arrancado el GPS (más impreciso
+// mientras "calienta", aun dentro de PRECISION_MAXIMA_PUNTO_GRABADO_M de
+// arriba), todo el resto de la sesión compara contra un punto ya corrido de
+// la posición real, y las primeras lecturas rebotan a su alrededor
+// dibujando el mismo salto que se quería evitar. Por eso el primer punto
+// exige una precisión más estricta -- las lecturas de arranque que no la
+// cumplan simplemente no fijan la ancla todavía (se siguen mostrando en
+// pantalla igual, ver registrarMovimiento) hasta que llegue una lo bastante
+// buena.
+const PRECISION_INICIAL_MAXIMA_M = 20;
+
 // Cerca del agua el GPS puede reportar buena precisión (dentro del umbral de
 // arriba) y aun así estar decenas de metros lejos de donde la persona está
 // parada de verdad (reflejo de la señal sobre el mar) -- confirmado con dos
@@ -870,10 +883,18 @@ export function MapaView() {
           // acepta igual (no se pierde movimiento lento real, solo ruido).
           const puntoGrabado = { ...punto, timestamp: Date.now() };
           const ultimoGrabado = puntosGrabadosRef.current[puntosGrabadosRef.current.length - 1];
-          const umbralKm = Math.max(KM_MOVIMIENTO_SIGNIFICATIVO, (pos.accuracy * 1.5) / 1000);
-          const esRuido = ultimoGrabado && distanciaHaversineKm(ultimoGrabado, puntoGrabado) < umbralKm;
-          if (!esRuido) {
-            registrarPuntoGrabado(puntoGrabado);
+          if (!ultimoGrabado) {
+            // Ver PRECISION_INICIAL_MAXIMA_M: todavía no hay ancla -- recién
+            // se fija con la primera lectura lo bastante precisa.
+            if (pos.accuracy <= PRECISION_INICIAL_MAXIMA_M) {
+              registrarPuntoGrabado(puntoGrabado);
+            }
+          } else {
+            const umbralKm = Math.max(KM_MOVIMIENTO_SIGNIFICATIVO, (pos.accuracy * 1.5) / 1000);
+            const esRuido = distanciaHaversineKm(ultimoGrabado, puntoGrabado) < umbralKm;
+            if (!esRuido) {
+              registrarPuntoGrabado(puntoGrabado);
+            }
           }
         }
 
