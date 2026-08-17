@@ -86,6 +86,14 @@ let grabacionActivaModulo: {
   // remontaje ocurre justo con el aviso ya mostrado.
   ultimoMovimientoEn: number;
   avisoInactividadDesde: number | null;
+  // Milisegundos ya descontados de la duración final por tramos de
+  // velocidad sospechosa (ver revisarVelocidadSospechosa/tiempoDescartadoMsRef
+  // más abajo) -- la distancia de esos tramos ya se descarta al filtrar
+  // puntosGrabados, pero el reloj de duración es wall-clock puro (Date.now()
+  // menos inicioGrabacion) y sin esto seguía contando el rato entero andado
+  // en vehículo, inflando la duración final sin la distancia que la
+  // acompañaría si de verdad hubiera sido patinando.
+  tiempoDescartadoMs: number;
 } | null = null;
 
 // Si la nueva posición del GPS difiere de la que ya se muestra en menos de
@@ -492,6 +500,11 @@ export function MapaView() {
   // velocidad está arriba del umbral, o cuando no hay ningún tramo
   // sospechoso en curso.
   const inicioTramoLentoRef = useRef<number | null>(null);
+  // Ver comentario de tiempoDescartadoMs en grabacionActivaModulo -- acumula
+  // cuánto de la duración final hay que descontar por tramos de velocidad
+  // sospechosa ya cerrados (el tramo en curso, si finalizarModo() se llama
+  // en medio de uno, se suma aparte ahí mismo).
+  const tiempoDescartadoMsRef = useRef(0);
   const avisoVelocidadRef = useRef(false);
   // A diferencia de avisoVelocidadRef (se apaga con continuarTrasVelocidad,
   // para dejar seguir grabando), esto queda en true toda la sesión una vez
@@ -653,7 +666,13 @@ export function MapaView() {
       }
       // La baja ya se sostuvo lo suficiente como para asumir que de verdad
       // terminó el tramo rápido (se bajó del vehículo, o era solo un pico
-      // puntual real de patinaje) -- recién ahí se sale del todo.
+      // puntual real de patinaje) -- recién ahí se sale del todo. La
+      // distancia de ese tramo ya se descartó al filtrar puntosGrabados (ver
+      // más abajo); acá se descuenta también su duración real (desde que
+      // arrancó hasta que la velocidad bajó de verdad), para que el reloj
+      // wall-clock de finalizarModo() no la siga contando.
+      tiempoDescartadoMsRef.current += inicioTramoLentoRef.current - inicioTramoRapidoRef.current;
+      if (grabacionActivaModulo) grabacionActivaModulo.tiempoDescartadoMs = tiempoDescartadoMsRef.current;
       inicioTramoRapidoRef.current = null;
       inicioTramoLentoRef.current = null;
       return false;
@@ -960,6 +979,7 @@ export function MapaView() {
               mapeadoRef.current = grabacionActivaModulo.mapeado;
               setMapeado(grabacionActivaModulo.mapeado);
               rodadaUnidaIdRef.current = grabacionActivaModulo.rodadaUnidaId;
+              tiempoDescartadoMsRef.current = grabacionActivaModulo.tiempoDescartadoMs;
 
               // Mismo motivo que arriba, pero para el aviso de inactividad:
               // ultimoMovimientoEnRef es un ref normal, así que sin esto
@@ -1096,6 +1116,7 @@ export function MapaView() {
     setMapeado(false);
     inicioTramoRapidoRef.current = null;
     inicioTramoLentoRef.current = null;
+    tiempoDescartadoMsRef.current = 0;
     setAvisoVelocidad(false);
     avisoVelocidadRef.current = false;
     huboVelocidadSospechosaRef.current = false;
@@ -1107,6 +1128,7 @@ export function MapaView() {
       rodadaUnidaId: null,
       ultimoMovimientoEn: ultimoMovimientoEnRef.current,
       avisoInactividadDesde: null,
+      tiempoDescartadoMs: 0,
     };
   }
 
@@ -1237,7 +1259,16 @@ export function MapaView() {
     // en Ruta" registra km/tiempo, se haya mostrado el trazado o no (ver
     // activarModo, que graba desde el inicio del modo en ambos casos).
     const puntos = puntosGrabadosRef.current;
-    const duracionSeg = Math.round((Date.now() - inicioGrabacionRef.current) / 1000);
+    // Si se termina el modo con un tramo de velocidad sospechosa todavía en
+    // curso (no llegó a bajar de nuevo antes de "Finalizar recorrido"), ese
+    // tramo nunca pasó por el descuento de arriba -- se suma acá para no
+    // dejarlo colado en la duración final.
+    const tiempoDescartadoMs =
+      tiempoDescartadoMsRef.current +
+      (inicioTramoRapidoRef.current !== null ? Date.now() - inicioTramoRapidoRef.current : 0);
+    const duracionSeg = Math.round(
+      (Date.now() - inicioGrabacionRef.current - tiempoDescartadoMs) / 1000,
+    );
     const distanciaKm = distanciaTotalKm(puntos);
 
     if (tokenActual && puntos.length >= 2) {
