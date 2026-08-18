@@ -130,10 +130,14 @@ const MS_MOVIMIENTO_SOSTENIDO_EXPLORACION = 6000;
 
 // Anti-trampa: si la velocidad entre dos puntos grabados se mantiene arriba de
 // este umbral de forma sostenida (sin bajar ni un momento), lo más probable es
-// que la persona ande en auto con el modo activo, no patinando. 35 km/h es más
-// rápido que un patinador sostenido en llano; 5 minutos seguidos descarta que
-// sea solo una bajada rápida o un salto de GPS puntual.
-const KMH_VELOCIDAD_SOSPECHOSA = 35;
+// que la persona ande en auto con el modo activo, no patinando. El umbral
+// tiene que quedar por ENCIMA de lo que el club realmente alcanza patinando:
+// en DH (bajadas en cuenta) se llega hasta ~100 km/h reales, sostenidos hasta
+// ~5 minutos -- un umbral más bajo (35 km/h se probó primero) descartaba tramos
+// enteros de DH real como si fueran auto. 115 km/h deja margen sobre ese
+// máximo real (ruido de GPS) sin dejar de agarrar un auto verdadero, que
+// sostiene velocidad mucho más tiempo que cualquier bajada.
+const KMH_VELOCIDAD_SOSPECHOSA = 115;
 const MS_VELOCIDAD_SOSPECHOSA_SOSTENIDA = 5 * 60 * 1000;
 // Manejar en ciudad tiene semáforos, esquinas y tráfico -- una baja momentánea
 // de velocidad ahí no significa "se bajó del auto y ahora patina". Antes,
@@ -184,8 +188,11 @@ const PRECISION_INICIAL_MAXIMA_M = 20;
 // cerca del último confirmado, el pendiente era un rebote puntual (va y
 // vuelve) y se descarta entero -- ninguno de los dos entra al trazado. Si en
 // cambio la siguiente lectura sigue lejos, era un desplazamiento sostenido
-// real y se agregan ambos. Ver registrarPuntoGrabado más abajo.
-const KMH_SALTO_SOSPECHOSO = 45;
+// real y se agregan ambos. Ver registrarPuntoGrabado más abajo. Mismo techo
+// que KMH_VELOCIDAD_SOSPECHOSA (ver su comentario: DH real llega a ~100 km/h) --
+// un valor más bajo confirmaba una bajada real de DH como si fuera un salto
+// de GPS que "va y vuelve".
+const KMH_SALTO_SOSPECHOSO = 115;
 
 // Zoom usado para centrar el mapa automáticamente al activar un modo (más cercano
 // que el zoom inicial de la sección 1 del PDF, pensado para ubicarte de un vistazo).
