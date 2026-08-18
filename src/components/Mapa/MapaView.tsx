@@ -13,7 +13,13 @@ import { HTML_PUNTO_PARTIDA, htmlIconoAvatar, TAM_AVATAR } from "@/lib/iconosMap
 import { useSession } from "@/context/SessionContext";
 import { useEmergencias } from "@/context/EmergenciaContext";
 import { apiPost, apiPut, apiGet, apiDelete, ApiError } from "@/lib/api";
-import { distanciaTotalKm, distanciaHaversineKm, simplificarRutaParaDibujo, type PuntoGps } from "@/lib/geo";
+import {
+  distanciaTotalKm,
+  distanciaHaversineKm,
+  simplificarRutaParaDibujo,
+  dividirEnTramosParaDibujo,
+  type PuntoGps,
+} from "@/lib/geo";
 import type { Publicacion } from "@/lib/publicaciones";
 import {
   combinarFechaHora,
@@ -1804,14 +1810,24 @@ export function MapaView() {
               </Popup>
             </Marker>
           ))}
-          {mapeado && puntosGrabados.length > 1 && (
-            <Polyline
-              // Solo para el dibujo -- distancia/duracion siguen calculandose
-              // sobre puntosGrabados sin tocar (ver finalizarModo/registrarMovimiento).
-              positions={simplificarRutaParaDibujo(puntosGrabados).map((p) => [p.lat, p.lon])}
-              pathOptions={{ color: "#C99A3D", weight: 4 }}
-            />
-          )}
+          {mapeado &&
+            puntosGrabados.length > 1 &&
+            // Se divide en tramos ANTES de simplificar (ver
+            // dividirEnTramosParaDibujo): cada hueco por un salto de GPS
+            // implausible o un tramo descartado por velocidad sospechosa se
+            // dibuja como un corte real en el trazado, nunca como una línea
+            // recta uniendo el punto válido previo con el posterior.
+            dividirEnTramosParaDibujo(puntosGrabados)
+              .filter((tramo) => tramo.length > 1)
+              .map((tramo, i) => (
+                <Polyline
+                  key={`tramo-${i}-${tramo[0].timestamp}`}
+                  // Solo para el dibujo -- distancia/duracion siguen calculandose
+                  // sobre puntosGrabados sin tocar (ver finalizarModo/registrarMovimiento).
+                  positions={simplificarRutaParaDibujo(tramo).map((p) => [p.lat, p.lon])}
+                  pathOptions={{ color: "#C99A3D", weight: 4 }}
+                />
+              ))}
           {emergenciasActivas
             // Si ese miembro ya se ve con su propio avatar parpadeando en
             // rojo (arriba), no hace falta el pin aparte -- solo se dibuja

@@ -11,7 +11,13 @@ import {
   IconShare,
 } from "@tabler/icons-react";
 import { apiGet, apiPatch, apiDelete, ApiError } from "@/lib/api";
-import { velocidadMaximaKmH, distanciaHaversineKm, simplificarRutaParaDibujo, type PuntoGps } from "@/lib/geo";
+import {
+  velocidadMaximaKmH,
+  distanciaHaversineKm,
+  simplificarRutaParaDibujo,
+  dividirEnTramosParaDibujo,
+  type PuntoGps,
+} from "@/lib/geo";
 import { useNombreLugar, useNombreLugarEspecifico, useCiudad } from "@/lib/sectores";
 import { NombreLugar } from "@/components/Mapa/NombreLugar";
 import { CompartirRecorridoModal } from "@/components/Mapa/CompartirRecorridoModal";
@@ -61,9 +67,9 @@ function VistaPreviaSvg({ puntos }: { puntos: PuntoGps[] }) {
 
   const inicio = puntos[0];
   const fin = puntos[puntos.length - 1];
-  const trazo = simplificarRutaParaDibujo(puntos)
-    .map((p) => `${x(p.lon)},${y(p.lat)}`)
-    .join(" ");
+  const tramos = dividirEnTramosParaDibujo(puntos)
+    .filter((tramo) => tramo.length > 1)
+    .map((tramo) => simplificarRutaParaDibujo(tramo).map((p) => `${x(p.lon)},${y(p.lat)}`).join(" "));
 
   return (
     <svg
@@ -72,7 +78,17 @@ function VistaPreviaSvg({ puntos }: { puntos: PuntoGps[] }) {
       height={TAM_PREVIEW}
       className="shrink-0 rounded-app bg-surface-2"
     >
-      <polyline points={trazo} fill="none" stroke="#C99A3D" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+      {tramos.map((trazo, i) => (
+        <polyline
+          key={i}
+          points={trazo}
+          fill="none"
+          stroke="#C99A3D"
+          strokeWidth={2}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      ))}
       <circle cx={x(inicio.lon)} cy={y(inicio.lat)} r={3} fill="#5fae4e" />
       <circle cx={x(fin.lon)} cy={y(fin.lat)} r={3} fill="#d8342f" />
     </svg>
@@ -270,10 +286,15 @@ function FichaRecorrido({
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
-            <Polyline
-              positions={simplificarRutaParaDibujo(puntos).map((p) => [p.lat, p.lon])}
-              pathOptions={{ color: "#C99A3D", weight: 4 }}
-            />
+            {dividirEnTramosParaDibujo(puntos)
+              .filter((tramo) => tramo.length > 1)
+              .map((tramo, i) => (
+                <Polyline
+                  key={`tramo-${i}-${tramo[0].timestamp}`}
+                  positions={simplificarRutaParaDibujo(tramo).map((p) => [p.lat, p.lon])}
+                  pathOptions={{ color: "#C99A3D", weight: 4 }}
+                />
+              ))}
             <CircleMarker
               center={[inicio.lat, inicio.lon]}
               radius={6}

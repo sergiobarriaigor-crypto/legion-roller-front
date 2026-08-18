@@ -125,6 +125,39 @@ function distanciaPerpendicularKm(punto: PuntoGps, a: PuntoGps, b: PuntoGps): nu
   return Math.sqrt((px - proyX) ** 2 + (py - proyY) ** 2) * KM_POR_GRADO_LAT;
 }
 
+// Divide el trazado en tramos separados por cada salto físicamente
+// implausible (misma referencia que VELOCIDAD_PLAUSIBLE_MAX_KMH de arriba:
+// nada de esto es velocidad real de patinaje, es GPS que perdió señal y
+// "teletransportó" al reconectar, o un tramo descartado por
+// revisarVelocidadSospechosa en MapaView.tsx). Sin esto, el punto válido
+// previo al salto y el punto válido posterior quedaban unidos por una línea
+// recta en el mapa, como si el patinador se hubiera desplazado
+// instantáneamente entre ambos. Cada tramo se dibuja como una Polyline
+// aparte -- el hueco entre tramos simplemente no se dibuja.
+export function dividirEnTramosParaDibujo(puntos: PuntoGps[]): PuntoGps[][] {
+  if (puntos.length === 0) return [];
+  const tramos: PuntoGps[][] = [[puntos[0]]];
+  for (let i = 1; i < puntos.length; i++) {
+    const anterior = puntos[i - 1];
+    const actual = puntos[i];
+    const dtSeg = (actual.timestamp - anterior.timestamp) / 1000;
+    const distKm = distanciaHaversineKm(anterior, actual);
+    // Si el intervalo es demasiado corto (o nulo/negativo) para confiar en
+    // una velocidad calculada, un salto de todos modos se nota en la
+    // distancia sola -- por eso el umbral absoluto de respaldo.
+    const esSalto =
+      dtSeg > 0
+        ? (distKm / dtSeg) * 3600 > VELOCIDAD_PLAUSIBLE_MAX_KMH
+        : distKm > TOLERANCIA_SIMPLIFICADO_DIBUJO_KM;
+    if (esSalto) {
+      tramos.push([actual]);
+    } else {
+      tramos[tramos.length - 1].push(actual);
+    }
+  }
+  return tramos;
+}
+
 export function simplificarRutaParaDibujo(
   puntos: PuntoGps[],
   toleranciaKm: number = TOLERANCIA_SIMPLIFICADO_DIBUJO_KM,
