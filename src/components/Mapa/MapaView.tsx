@@ -94,6 +94,13 @@ let grabacionActivaModulo: {
   // en vehículo, inflando la duración final sin la distancia que la
   // acompañaría si de verdad hubiera sido patinando.
   tiempoDescartadoMs: number;
+  // Igual que tiempoDescartadoMs: sin mirrorear esto acá, si el usuario
+  // cambiaba de pestaña (o el proceso se reiniciaba por estar mucho rato con
+  // la pantalla bloqueada) después de un tramo descartado por velocidad
+  // sospechosa, el aviso explicativo de finalizarModo() nunca llegaba a
+  // mostrarse -- huboVelocidadSospechosaRef (un ref de React común) se
+  // perdía en el remontaje sin dejar ningún rastro de que había pasado algo.
+  huboVelocidadSospechosa: boolean;
 } | null = null;
 
 // Si la nueva posición del GPS difiere de la que ya se muestra en menos de
@@ -668,7 +675,7 @@ export function MapaView() {
         return false;
       }
       if (inicioTramoLentoRef.current === null) {
-        inicioTramoLentoRef.current = anterior.timestamp;
+        inicioTramoLentoRef.current = Date.now();
         return false;
       }
       if (Date.now() - inicioTramoLentoRef.current < MS_PAUSA_TOLERADA_EN_TRAMO_RAPIDO) {
@@ -695,8 +702,16 @@ export function MapaView() {
     // (semáforo), no era el fin del tramo rápido, se sigue acumulando igual.
     inicioTramoLentoRef.current = null;
 
+    // Se ancla a Date.now() (el instante real en que se nota la lectura
+    // rápida), NO a anterior.timestamp: si hubo un corte real de GPS antes de
+    // esta lectura (pantalla bloqueada, pérdida momentánea de señal), el
+    // último punto grabado puede ser de varios minutos atrás. Anclar ahí
+    // hacía que "sostenida por 5 minutos" se cumpliera de instantáneo con una
+    // sola lectura rara al reconectar la señal, sin que la velocidad alta se
+    // haya sostenido de verdad ni un segundo -- justo el falso positivo que
+    // se quería evitar con el requisito de "sostenida".
     if (inicioTramoRapidoRef.current === null) {
-      inicioTramoRapidoRef.current = anterior.timestamp;
+      inicioTramoRapidoRef.current = Date.now();
       return false;
     }
 
@@ -712,6 +727,7 @@ export function MapaView() {
     setAvisoVelocidad(true);
     avisoVelocidadRef.current = true;
     huboVelocidadSospechosaRef.current = true;
+    if (grabacionActivaModulo) grabacionActivaModulo.huboVelocidadSospechosa = true;
     // Push real (no solo el modal en pantalla): quien está patinando suele
     // llevar el celular guardado, con la pantalla apagada, así que el aviso
     // tiene que llegar como notificación del sistema, no solo como un modal
@@ -1017,6 +1033,7 @@ export function MapaView() {
               setMapeado(grabacionActivaModulo.mapeado);
               rodadaUnidaIdRef.current = grabacionActivaModulo.rodadaUnidaId;
               tiempoDescartadoMsRef.current = grabacionActivaModulo.tiempoDescartadoMs;
+              huboVelocidadSospechosaRef.current = grabacionActivaModulo.huboVelocidadSospechosa;
 
               // Mismo motivo que arriba, pero para el aviso de inactividad:
               // ultimoMovimientoEnRef es un ref normal, así que sin esto
@@ -1166,6 +1183,7 @@ export function MapaView() {
       ultimoMovimientoEn: ultimoMovimientoEnRef.current,
       avisoInactividadDesde: null,
       tiempoDescartadoMs: 0,
+      huboVelocidadSospechosa: false,
     };
   }
 
