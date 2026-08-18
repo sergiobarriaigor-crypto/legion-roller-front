@@ -31,7 +31,6 @@ import {
 import { ETIQUETA_MOTIVO, type EmergenciaActiva } from "@/lib/emergencias";
 import { salaIndividual } from "@/lib/chat";
 import { obtenerSocket } from "@/lib/socket";
-import { notificarme } from "@/lib/push";
 import { iniciarSeguimientoUbicacion, obtenerPosicionActual } from "@/lib/geolocacionNativa";
 import { PatinadoresActivosPanel } from "@/components/Mapa/PatinadoresActivosPanel";
 import { MisRutasPanel } from "@/components/Mapa/MisRutasPanel";
@@ -92,21 +91,6 @@ let grabacionActivaModulo: {
   // remontaje ocurre justo con el aviso ya mostrado.
   ultimoMovimientoEn: number;
   avisoInactividadDesde: number | null;
-  // Milisegundos ya descontados de la duración final por tramos de
-  // velocidad sospechosa (ver revisarVelocidadSospechosa/tiempoDescartadoMsRef
-  // más abajo) -- la distancia de esos tramos ya se descarta al filtrar
-  // puntosGrabados, pero el reloj de duración es wall-clock puro (Date.now()
-  // menos inicioGrabacion) y sin esto seguía contando el rato entero andado
-  // en vehículo, inflando la duración final sin la distancia que la
-  // acompañaría si de verdad hubiera sido patinando.
-  tiempoDescartadoMs: number;
-  // Igual que tiempoDescartadoMs: sin mirrorear esto acá, si el usuario
-  // cambiaba de pestaña (o el proceso se reiniciaba por estar mucho rato con
-  // la pantalla bloqueada) después de un tramo descartado por velocidad
-  // sospechosa, el aviso explicativo de finalizarModo() nunca llegaba a
-  // mostrarse -- huboVelocidadSospechosaRef (un ref de React común) se
-  // perdía en el remontaje sin dejar ningún rastro de que había pasado algo.
-  huboVelocidadSospechosa: boolean;
 } | null = null;
 
 // Si la nueva posición del GPS difiere de la que ya se muestra en menos de
@@ -123,42 +107,19 @@ const MIN_CIERRE_AUTOMATICO = 10;
 // alcanza para asumir que el usuario "empezó a patinar" — en interiores, o con
 // GPS aproximado (Wi-Fi/IP, como en un navegador de escritorio sin chip GPS),
 // una lectura puntual puede superarlo estando completamente quieto. Se exige
-// que el desplazamiento se sostenga por unos segundos (mismo criterio que
-// revisarVelocidadSospechosa con la velocidad sostenida) antes de mover la
+// que el desplazamiento se sostenga por unos segundos antes de mover la
 // cámara y sacar al usuario del modo Exploración.
 const MS_MOVIMIENTO_SOSTENIDO_EXPLORACION = 6000;
-
-// Anti-trampa: si la velocidad entre dos puntos grabados se mantiene arriba de
-// este umbral de forma sostenida (sin bajar ni un momento), lo más probable es
-// que la persona ande en auto con el modo activo, no patinando. El umbral
-// tiene que quedar por ENCIMA de lo que el club realmente alcanza patinando:
-// en DH (bajadas en cuenta) se llega hasta ~100 km/h reales, sostenidos hasta
-// ~5 minutos -- un umbral más bajo (35 km/h se probó primero) descartaba tramos
-// enteros de DH real como si fueran auto. 115 km/h deja margen sobre ese
-// máximo real (ruido de GPS) sin dejar de agarrar un auto verdadero, que
-// sostiene velocidad mucho más tiempo que cualquier bajada.
-const KMH_VELOCIDAD_SOSPECHOSA = 115;
-const MS_VELOCIDAD_SOSPECHOSA_SOSTENIDA = 5 * 60 * 1000;
-// Manejar en ciudad tiene semáforos, esquinas y tráfico -- una baja momentánea
-// de velocidad ahí no significa "se bajó del auto y ahora patina". Antes,
-// CUALQUIER lectura por debajo del umbral reiniciaba el contador de
-// "sostenido" a cero, así que varios semáforos en los primeros minutos podían
-// impedir que el contador llegara nunca a los 5 minutos seguidos, dejando
-// pasar varios km reales de auto sin descartar. Ahora una baja tiene que
-// sostenerse ELLA MISMA por más de esto para recién ahí asumir que de verdad
-// se dejó de andar en vehículo (ver inicioTramoLentoRef).
-const MS_PAUSA_TOLERADA_EN_TRAMO_RAPIDO = 90 * 1000;
 
 // Un fix puntual de mala precisión (rebote entre edificios, ubicación por
 // red/Wi-Fi en vez de GPS real) puede reportar una posición decenas o
 // cientos de metros lejos de donde la persona está en verdad, aunque solo
-// dure una lectura. revisarVelocidadSospechosa no lo agarra a propósito
-// (exige velocidad sostenida por varios minutos para no descartar bajadas
-// rápidas reales) -- un salto aislado que va y vuelve queda invisible para
-// esa lógica y termina dibujado como un pico agudo en el trazado del
-// recorrido. Se descarta ANTES de llegar a la lista grabada; no afecta la
-// posición mostrada en pantalla (marcador propio/otros), solo qué queda
-// grabado como parte de la ruta y la distancia patinada.
+// dure una lectura -- un salto aislado que va y vuelve queda invisible para
+// el filtro de saltos de más abajo (que exige que la lectura SIGUIENTE
+// confirme el desplazamiento) y terminaría dibujado como un pico agudo en el
+// trazado del recorrido. Se descarta ANTES de llegar a la lista grabada; no
+// afecta la posición mostrada en pantalla (marcador propio/otros), solo qué
+// queda grabado como parte de la ruta y la distancia patinada.
 const PRECISION_MAXIMA_PUNTO_GRABADO_M = 35;
 
 // El primer punto grabado de la sesión queda de ancla para el filtro de
@@ -188,10 +149,10 @@ const PRECISION_INICIAL_MAXIMA_M = 20;
 // cerca del último confirmado, el pendiente era un rebote puntual (va y
 // vuelve) y se descarta entero -- ninguno de los dos entra al trazado. Si en
 // cambio la siguiente lectura sigue lejos, era un desplazamiento sostenido
-// real y se agregan ambos. Ver registrarPuntoGrabado más abajo. Mismo techo
-// que KMH_VELOCIDAD_SOSPECHOSA (ver su comentario: DH real llega a ~100 km/h) --
-// un valor más bajo confirmaba una bajada real de DH como si fuera un salto
-// de GPS que "va y vuelve".
+// real y se agregan ambos. Ver registrarPuntoGrabado más abajo. El umbral
+// tiene que quedar por encima de lo que el club realmente alcanza patinando
+// -- en DH (bajadas en cuenta) se llega a ~100 km/h reales -- para no
+// confirmar una bajada real como si fuera un salto de GPS que "va y vuelve".
 const KMH_SALTO_SOSPECHOSO = 115;
 
 // Zoom usado para centrar el mapa automáticamente al activar un modo (más cercano
@@ -474,7 +435,6 @@ export function MapaView() {
   const [guardandoEstado, setGuardandoEstado] = useState(false);
 
   const [avisoInactividad, setAvisoInactividad] = useState(false);
-  const [avisoVelocidad, setAvisoVelocidad] = useState(false);
   const [mostrarPreguntaMapeo, setMostrarPreguntaMapeo] = useState(false);
   const [mostrarMisRutas, setMostrarMisRutas] = useState(false);
   const [chatFlotante, setChatFlotante] = useState<{
@@ -522,33 +482,8 @@ export function MapaView() {
   const ultimoMovimientoEnRef = useRef<number>(Date.now());
   const avisoInactividadRef = useRef(false);
   const cierreAutomaticoTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Marca desde cuándo viene el tramo sospechoso de vehículo. Ya NO se
-  // reinicia ante cualquier baja momentánea de velocidad (semáforo, esquina)
-  // — solo se reinicia si esa baja se sostiene más de
-  // MS_PAUSA_TOLERADA_EN_TRAMO_RAPIDO (ver inicioTramoLentoRef), así que
-  // tolera manejo real en ciudad con paradas cortas.
-  const inicioTramoRapidoRef = useRef<number | null>(null);
-  // Desde cuándo viene la baja de velocidad ACTUAL dentro de un tramo que
-  // todavía se considera sospechoso de vehículo -- null mientras la
-  // velocidad está arriba del umbral, o cuando no hay ningún tramo
-  // sospechoso en curso.
-  const inicioTramoLentoRef = useRef<number | null>(null);
-  // Ver comentario de tiempoDescartadoMs en grabacionActivaModulo -- acumula
-  // cuánto de la duración final hay que descontar por tramos de velocidad
-  // sospechosa ya cerrados (el tramo en curso, si finalizarModo() se llama
-  // en medio de uno, se suma aparte ahí mismo).
-  const tiempoDescartadoMsRef = useRef(0);
-  const avisoVelocidadRef = useRef(false);
-  // A diferencia de avisoVelocidadRef (se apaga con continuarTrasVelocidad,
-  // para dejar seguir grabando), esto queda en true toda la sesión una vez
-  // que se descartó al menos un tramo por velocidad sospechosa -- así
-  // finalizarModo() sabe, aunque el aviso en pantalla nunca haya llegado a
-  // verse (ej. pantalla bloqueada todo el trayecto, o se terminó desde el
-  // botón normal en vez de desde el modal del aviso), que tiene que avisar
-  // igual al cerrar en vez de dejar la ruta más corta sin ninguna explicación.
-  const huboVelocidadSospechosaRef = useRef(false);
   const necesitaCentrarInicialRef = useRef(false);
-  // Igual que inicioTramoRapidoRef, pero para el desplazamiento que retoma el
+  // Marca desde cuándo viene un desplazamiento sostenido, para retomar el
   // seguimiento del mapa tras el modo Exploración (ver registrarMovimiento).
   const inicioDesplazamientoExploracionRef = useRef<number | null>(null);
   // Rodadas cercanas (asistencia confirmada): al activar "Estoy en Ruta" se
@@ -666,93 +601,6 @@ export function MapaView() {
     }
   }
 
-  // Anti-trampa: compara el punto nuevo contra el último ya grabado. Si la
-  // velocidad implícita supera KMH_VELOCIDAD_SOSPECHOSA de forma sostenida por
-  // MS_VELOCIDAD_SOSPECHOSA_SOSTENIDA, descarta todo ese tramo (nada de lo
-  // grabado desde que empezó a ir rápido cuenta como distancia patinada) y
-  // pausa la grabación con un aviso — mismo criterio que la inactividad, pero
-  // al revés. Devuelve true si acaba de pausar (para que el llamador no
-  // agregue el punto sospechoso a la lista ya truncada).
-  function revisarVelocidadSospechosa(puntoNuevo: PuntoGps): boolean {
-    const anteriores = puntosGrabadosRef.current;
-    const anterior = anteriores[anteriores.length - 1];
-    if (!anterior) return false;
-
-    const dtSeg = (puntoNuevo.timestamp - anterior.timestamp) / 1000;
-    if (dtSeg <= 0) return false;
-    const kmh = (distanciaHaversineKm(anterior, puntoNuevo) / dtSeg) * 3600;
-
-    if (kmh <= KMH_VELOCIDAD_SOSPECHOSA) {
-      if (inicioTramoRapidoRef.current === null) {
-        // No hay ningún tramo sospechoso en curso -- nada que tolerar.
-        return false;
-      }
-      if (inicioTramoLentoRef.current === null) {
-        inicioTramoLentoRef.current = Date.now();
-        return false;
-      }
-      if (Date.now() - inicioTramoLentoRef.current < MS_PAUSA_TOLERADA_EN_TRAMO_RAPIDO) {
-        // Baja momentánea (semáforo, esquina, tráfico) -- no alcanza para
-        // asumir que de verdad se dejó de andar rápido, se mantiene el
-        // tramo sospechoso en curso sin reiniciar el contador.
-        return false;
-      }
-      // La baja ya se sostuvo lo suficiente como para asumir que de verdad
-      // terminó el tramo rápido (se bajó del vehículo, o era solo un pico
-      // puntual real de patinaje) -- recién ahí se sale del todo. La
-      // distancia de ese tramo ya se descartó al filtrar puntosGrabados (ver
-      // más abajo); acá se descuenta también su duración real (desde que
-      // arrancó hasta que la velocidad bajó de verdad), para que el reloj
-      // wall-clock de finalizarModo() no la siga contando.
-      tiempoDescartadoMsRef.current += inicioTramoLentoRef.current - inicioTramoRapidoRef.current;
-      if (grabacionActivaModulo) grabacionActivaModulo.tiempoDescartadoMs = tiempoDescartadoMsRef.current;
-      inicioTramoRapidoRef.current = null;
-      inicioTramoLentoRef.current = null;
-      return false;
-    }
-
-    // Volvió a superar el umbral -- si veníamos en una pausa tolerada
-    // (semáforo), no era el fin del tramo rápido, se sigue acumulando igual.
-    inicioTramoLentoRef.current = null;
-
-    // Se ancla a Date.now() (el instante real en que se nota la lectura
-    // rápida), NO a anterior.timestamp: si hubo un corte real de GPS antes de
-    // esta lectura (pantalla bloqueada, pérdida momentánea de señal), el
-    // último punto grabado puede ser de varios minutos atrás. Anclar ahí
-    // hacía que "sostenida por 5 minutos" se cumpliera de instantáneo con una
-    // sola lectura rara al reconectar la señal, sin que la velocidad alta se
-    // haya sostenido de verdad ni un segundo -- justo el falso positivo que
-    // se quería evitar con el requisito de "sostenida".
-    if (inicioTramoRapidoRef.current === null) {
-      inicioTramoRapidoRef.current = Date.now();
-      return false;
-    }
-
-    if (Date.now() - inicioTramoRapidoRef.current < MS_VELOCIDAD_SOSPECHOSA_SOSTENIDA) {
-      return false;
-    }
-
-    const inicioTramo = inicioTramoRapidoRef.current;
-    const puntosLimpios = anteriores.filter((p) => p.timestamp < inicioTramo);
-    setPuntosGrabados(puntosLimpios);
-    puntosGrabadosRef.current = puntosLimpios;
-    if (grabacionActivaModulo) grabacionActivaModulo.puntos = puntosLimpios;
-    setAvisoVelocidad(true);
-    avisoVelocidadRef.current = true;
-    huboVelocidadSospechosaRef.current = true;
-    if (grabacionActivaModulo) grabacionActivaModulo.huboVelocidadSospechosa = true;
-    // Push real (no solo el modal en pantalla): quien está patinando suele
-    // llevar el celular guardado, con la pantalla apagada, así que el aviso
-    // tiene que llegar como notificación del sistema, no solo como un modal
-    // que nadie va a ver hasta sacar el teléfono.
-    notificarme(tokenRef.current, {
-      titulo: "⚠️ Recorrido pausado",
-      cuerpo: "Detectamos una velocidad que no parece de patinaje. Revisa la app.",
-      url: "/mapa",
-    }).catch(() => {});
-    return true;
-  }
-
   // Ver KMH_SALTO_SOSPECHOSO arriba. Reemplaza al enfoque anterior de un
   // umbral de velocidad fijo: acá no se rechaza el punto sospechoso de
   // una -- se retiene hasta la lectura siguiente, que confirma o desmiente
@@ -773,8 +621,6 @@ export function MapaView() {
     }
 
     function confirmarPunto(p: PuntoGps) {
-      const acabaDePausar = revisarVelocidadSospechosa(p);
-      if (acabaDePausar) return;
       const nuevos = [...puntosGrabadosRef.current, p];
       puntosGrabadosRef.current = nuevos;
       setPuntosGrabados(nuevos);
@@ -802,13 +648,6 @@ export function MapaView() {
     }
 
     confirmarPunto(puntoNuevo);
-  }
-
-  function continuarTrasVelocidad() {
-    inicioTramoRapidoRef.current = null;
-    inicioTramoLentoRef.current = null;
-    setAvisoVelocidad(false);
-    avisoVelocidadRef.current = false;
   }
 
   // Centrado por GPS (sin modo activo): cada vez que se monta esta pantalla
@@ -894,11 +733,7 @@ export function MapaView() {
         setErrorGeo("");
         registrarMovimiento(punto, pos.accuracy);
 
-        if (
-          grabandoRef.current &&
-          !avisoVelocidadRef.current &&
-          pos.accuracy <= PRECISION_MAXIMA_PUNTO_GRABADO_M
-        ) {
+        if (grabandoRef.current && pos.accuracy <= PRECISION_MAXIMA_PUNTO_GRABADO_M) {
           // Mismo ruido de GPS que ya se filtra en registrarMovimiento (ver
           // su comentario): quieto de verdad, el GPS igual puede reportar
           // lecturas que saltan varias decenas de metros de un lado a otro
@@ -1045,8 +880,6 @@ export function MapaView() {
               mapeadoRef.current = grabacionActivaModulo.mapeado;
               setMapeado(grabacionActivaModulo.mapeado);
               rodadaUnidaIdRef.current = grabacionActivaModulo.rodadaUnidaId;
-              tiempoDescartadoMsRef.current = grabacionActivaModulo.tiempoDescartadoMs;
-              huboVelocidadSospechosaRef.current = grabacionActivaModulo.huboVelocidadSospechosa;
 
               // Mismo motivo que arriba, pero para el aviso de inactividad:
               // ultimoMovimientoEnRef es un ref normal, así que sin esto
@@ -1181,12 +1014,6 @@ export function MapaView() {
     grabandoRef.current = true;
     mapeadoRef.current = false;
     setMapeado(false);
-    inicioTramoRapidoRef.current = null;
-    inicioTramoLentoRef.current = null;
-    tiempoDescartadoMsRef.current = 0;
-    setAvisoVelocidad(false);
-    avisoVelocidadRef.current = false;
-    huboVelocidadSospechosaRef.current = false;
     grabacionActivaModulo = {
       modo: nuevoModo,
       puntos: [],
@@ -1195,8 +1022,6 @@ export function MapaView() {
       rodadaUnidaId: null,
       ultimoMovimientoEn: ultimoMovimientoEnRef.current,
       avisoInactividadDesde: null,
-      tiempoDescartadoMs: 0,
-      huboVelocidadSospechosa: false,
     };
   }
 
@@ -1298,10 +1123,6 @@ export function MapaView() {
     }
     setAvisoInactividad(false);
     avisoInactividadRef.current = false;
-    inicioTramoRapidoRef.current = null;
-    inicioTramoLentoRef.current = null;
-    setAvisoVelocidad(false);
-    avisoVelocidadRef.current = false;
     // Un punto pendiente de confirmar nunca llegó a agregarse a
     // puntosGrabados -- si la sesión termina justo ahí, se descarta sin más
     // (no hay lectura siguiente que lo confirme).
@@ -1327,16 +1148,7 @@ export function MapaView() {
     // en Ruta" registra km/tiempo, se haya mostrado el trazado o no (ver
     // activarModo, que graba desde el inicio del modo en ambos casos).
     const puntos = puntosGrabadosRef.current;
-    // Si se termina el modo con un tramo de velocidad sospechosa todavía en
-    // curso (no llegó a bajar de nuevo antes de "Finalizar recorrido"), ese
-    // tramo nunca pasó por el descuento de arriba -- se suma acá para no
-    // dejarlo colado en la duración final.
-    const tiempoDescartadoMs =
-      tiempoDescartadoMsRef.current +
-      (inicioTramoRapidoRef.current !== null ? Date.now() - inicioTramoRapidoRef.current : 0);
-    const duracionSeg = Math.round(
-      (Date.now() - inicioGrabacionRef.current - tiempoDescartadoMs) / 1000,
-    );
+    const duracionSeg = Math.round((Date.now() - inicioGrabacionRef.current) / 1000);
     const distanciaKm = distanciaTotalKm(puntos);
 
     if (tokenActual && puntos.length >= 2) {
@@ -1367,33 +1179,6 @@ export function MapaView() {
       } catch (err) {
         setMensaje(err instanceof ApiError ? err.message : "No se pudo guardar el recorrido.");
         setLimiteRutasAlcanzado(err instanceof ApiError && err.status === 409);
-      }
-    }
-
-    // Garantiza el aviso de velocidad sospechosa aunque nunca se haya
-    // llegado a ver el modal en pantalla (pantalla bloqueada todo el
-    // trayecto, o se terminó desde el botón normal "Finalizar recorrido" en
-    // vez de desde el modal) -- sin esto, el tramo se descartaba en
-    // silencio total: ni push, ni aviso en la app, ni rastro de por qué los
-    // km salieron más bajos (o la ruta ni se guardó, si lo que quedó fue
-    // menos de los 75m mínimos). Se reintenta el push acá porque en este
-    // punto la app seguro está en primer plano (el usuario recién tocó
-    // "Finalizar"), a diferencia del intento original en
-    // revisarVelocidadSospechosa que puede haber ocurrido con la pantalla
-    // bloqueada y no haber llegado a enviarse.
-    if (huboVelocidadSospechosaRef.current) {
-      huboVelocidadSospechosaRef.current = false;
-      setMensaje((previo) => {
-        const texto =
-          "Detectamos una velocidad que no parece de patinaje durante este recorrido (posible traslado en vehículo) y se descartó ese tramo de la distancia.";
-        return previo ? `${previo} ${texto}` : texto;
-      });
-      if (tokenActual) {
-        notificarme(tokenActual, {
-          titulo: "⚠️ Recorrido con tramo descartado",
-          cuerpo: "Detectamos una velocidad que no parece de patinaje y se descartó ese tramo. Revisa la app.",
-          url: "/mapa",
-        }).catch(() => {});
       }
     }
 
@@ -2280,34 +2065,6 @@ export function MapaView() {
                 className="rounded-app border border-border px-4 py-2 text-sm text-text-primary"
               >
                 Continuar patinando
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {avisoVelocidad && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-6">
-          <div className="card flex w-full max-w-xs flex-col gap-3 p-5">
-            <h2 className="text-sm font-semibold text-text-accent">Velocidad no consistente con patinaje</h2>
-            <p className="text-xs text-text-secondary">
-              Detectamos una velocidad de más de {KMH_VELOCIDAD_SOSPECHOSA} km/h sostenida por varios
-              minutos — no se está registrando como distancia patinada. Si fue un error, puedes reanudar.
-            </p>
-            <div className="flex flex-col gap-2">
-              <button
-                type="button"
-                onClick={continuarTrasVelocidad}
-                className="btn-hero rounded-app px-4 py-2 text-sm"
-              >
-                Reanudar
-              </button>
-              <button
-                type="button"
-                onClick={finalizarModo}
-                className="rounded-app border border-border px-4 py-2 text-sm text-text-primary"
-              >
-                Finalizar recorrido
               </button>
             </div>
           </div>
