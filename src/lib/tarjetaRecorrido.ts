@@ -2,6 +2,7 @@ import {
   distanciaHaversineKm,
   velocidadMaximaConPunto,
   simplificarRutaParaDibujo,
+  clasificarTramos,
   type PuntoGps,
 } from "./geo";
 import { cargarImagenComoDataUrl } from "./imagenDataUrl";
@@ -2828,6 +2829,43 @@ async function generarVideoRecorridoInterno(
   segmentosRapidos.forEach((s) => {
     console.warn(`[vel-max]   ${s.indice} | ${s.distKm.toFixed(4)}km | ${s.dtSeg.toFixed(2)}s | ${s.kmh.toFixed(1)}km/h`);
   });
+
+  // Instrumentación temporal: corre la clasificación REAL de
+  // clasificarTramos() (geo.ts, sin tocar su lógica -- se llama tal cual) y,
+  // para diseñar la clasificación compartida video/mosaicos/velocidad,
+  // muestra el veredicto real de cada segmento >45km/h más el chequeo de
+  // desplazamiento neto (punto antes de la racha -> punto después) que
+  // clasifica cada racha como rapidoValido o saltoGps. Solo lectura -- no
+  // cambia clasificarTramos, velocidadesKmh, el trazado ni los mosaicos.
+  const clasificacionTramosDiag = clasificarTramos(datos.puntos);
+  console.warn(`[clasificacion] veredicto real por segmento (>45km/h):`);
+  segmentosRapidos.forEach((s) => {
+    console.warn(
+      `[clasificacion]   ${s.indice} | ${s.distKm.toFixed(4)}km | ${s.dtSeg.toFixed(2)}s | ${s.kmh.toFixed(1)}km/h | ${clasificacionTramosDiag[s.indice]}`,
+    );
+  });
+  let iRacha = 1;
+  while (iRacha < clasificacionTramosDiag.length) {
+    if (clasificacionTramosDiag[iRacha] === "normal") {
+      iRacha++;
+      continue;
+    }
+    const etiquetaRacha = clasificacionTramosDiag[iRacha];
+    let finRacha = iRacha;
+    while (finRacha + 1 < clasificacionTramosDiag.length && clasificacionTramosDiag[finRacha + 1] === etiquetaRacha) {
+      finRacha++;
+    }
+    const hayDespues = finRacha + 1 < datos.puntos.length;
+    const antesRacha = datos.puntos[iRacha - 1];
+    const despuesRacha = datos.puntos[Math.min(datos.puntos.length - 1, finRacha + 1)];
+    const distNetaKm = distanciaHaversineKm(antesRacha, despuesRacha);
+    const dtNetoSeg = (despuesRacha.timestamp - antesRacha.timestamp) / 1000;
+    const kmhNeto = dtNetoSeg > 0 ? (distNetaKm / dtNetoSeg) * 3600 : Infinity;
+    console.warn(
+      `[clasificacion] racha [${iRacha}-${finRacha}] = ${etiquetaRacha} -- neto punto[${iRacha - 1}]->punto[${Math.min(datos.puntos.length - 1, finRacha + 1)}]: distancia=${distNetaKm.toFixed(4)}km dt=${dtNetoSeg.toFixed(2)}s kmhNeto=${kmhNeto.toFixed(1)} (${hayDespues ? "hay punto despues" : "SIN punto despues -- se acepta por defecto"})`,
+    );
+    iRacha = finRacha + 1;
+  }
 
   // Cada pin de foto se clava en un punto real del recorrido, repartido POR
   // DISTANCIA (no por índice ni por tiempo -- así se ve repartido en el
