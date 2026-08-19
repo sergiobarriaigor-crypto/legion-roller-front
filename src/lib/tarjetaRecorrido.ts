@@ -976,6 +976,11 @@ interface SeleccionMosaico {
   // último mosaico válido (ver ultimoValidoRef en seleccionarMosaico), null
   // si no hay ninguno. Solo para instrumentación/diagnóstico.
   indiceMostrado: number | null;
+  // Cuántos índices avanzó el while de seleccionarMosaico EN ESTE frame
+  // (0 en el caso normal) -- instrumentación temporal para detectar saltos
+  // anormales (ver el reporte del salto 1->15) y disparar la comparación de
+  // puntos GPS crudos en dibujarFrame.
+  pasosAvanzados: number;
 }
 
 // Decide, para la posición actual del patinador, qué mosaico(s) mostrar:
@@ -1007,18 +1012,38 @@ function seleccionarMosaico(
   ventana: EstadoVentanaMosaicos,
   indiceRef: { valor: number },
   ultimoValidoRef: { valor: UltimoMosaicoValido | null },
+  // Instrumentación temporal (ver el reporte del salto 1->15): solo para
+  // loguear cada paso del while de abajo, no afecta ninguna decisión.
+  fraccionTotal: number,
 ): SeleccionMosaico {
   const metas = ventana.metas;
   const gx = lonAPixelX(puntoActual.lon, ZOOM_SEGUIMIENTO);
   const gy = latAPixelY(puntoActual.lat, ZOOM_SEGUIMIENTO);
 
+  const indiceAlEntrar = indiceRef.valor;
+  let pasosAvanzados = 0;
   while (indiceRef.valor < metas.length - 1) {
     const metaActual = metas[indiceRef.valor];
     const distActual = Math.hypot(gx - metaActual.centroPxX, gy - metaActual.centroPxY);
     if (distActual <= metaActual.radioLimitePx) break;
+    // Instrumentación temporal: un log por CADA paso del while, no solo el
+    // resultado final -- así "1 -> 15" se ve como 14 líneas individuales
+    // con la distancia real de cada una, en vez de un solo salto opaco.
+    console.log(
+      `[mosaico-salto] fraccionTotal=${fraccionTotal.toFixed(3)} paso indice ${indiceRef.valor}->${indiceRef.valor + 1} -- ` +
+        `lat=${puntoActual.lat.toFixed(6)} lon=${puntoActual.lon.toFixed(6)} ` +
+        `puntoZ17=(${gx.toFixed(2)},${gy.toFixed(2)}) centroMosaico=(${metaActual.centroPxX.toFixed(2)},${metaActual.centroPxY.toFixed(2)}) ` +
+        `distActual=${distActual.toFixed(2)} radioZonaSeguraPx=${metaActual.radioZonaSeguraPx.toFixed(2)} radioLimitePx=${metaActual.radioLimitePx.toFixed(2)}`,
+    );
     // Ya superó incluso la banda de transición del mosaico actual -- avanza
     // sin más (caso límite de red muy lenta o mosaicos mal calibrados).
     indiceRef.valor++;
+    pasosAvanzados++;
+  }
+  if (pasosAvanzados > 0) {
+    console.log(
+      `[mosaico-salto] fraccionTotal=${fraccionTotal.toFixed(3)} total pasos en este frame=${pasosAvanzados} (indice ${indiceAlEntrar} -> ${indiceRef.valor})`,
+    );
   }
 
   const indiceActual = indiceRef.valor;
@@ -1053,6 +1078,7 @@ function seleccionarMosaico(
     siguiente: metaSiguiente ? (ventana.imagenes[indiceActual + 1] ?? null) : null,
     metaSiguiente,
     peso,
+    pasosAvanzados,
   };
 }
 
@@ -2896,6 +2922,7 @@ async function generarVideoRecorridoInterno(
           ventanaMosaicos,
           indiceMosaicoRef,
           ultimoMosaicoValidoRef,
+          fraccionTotal,
         );
         if (indiceMosaicoRef.valor !== indicePrevio) {
           console.log(
@@ -2903,6 +2930,52 @@ async function generarVideoRecorridoInterno(
           );
           mantenerVentana(ventanaMosaicos, indiceMosaicoRef.valor, ultimoMosaicoValidoRef.valor?.indice ?? null).catch(
             () => {},
+          );
+        }
+
+        // Instrumentación temporal: si el while de seleccionarMosaico avanzó
+        // MÁS DE UN índice en este mismo frame (justo el patrón "1 -> 15"
+        // reportado), comparar los puntos GPS CRUDOS (no el punto
+        // interpolado) alrededor del segmento que estadoEnFraccion está
+        // usando ahora mismo -- misma búsqueda que hace estadoEnFraccion
+        // internamente (duplicada acá solo para diagnóstico, no cambia qué
+        // segmento se usa para dibujar). Objetivo: confirmar si es un
+        // outlier/salto real de GPS, y si coincide con el mismo punto que
+        // alimenta velocidadesKmh (la misma fuente de la lectura de 300+
+        // km/h ya reportada aparte).
+        if (seleccionMosaico.pasosAvanzados > 1) {
+          const distObjetivoKm = fraccionTrazo * datos.distanciaKm;
+          let ib = 0;
+          while (ib < datos.puntos.length - 2 && distanciaAcumuladaKm[ib + 1] <= distObjetivoKm) ib++;
+          const anterior = datos.puntos[Math.max(0, ib - 1)];
+          const actualBase = datos.puntos[ib];
+          const siguiente = datos.puntos[Math.min(datos.puntos.length - 1, ib + 1)];
+          const distAntActualKm = distanciaHaversineKm(anterior, actualBase);
+          const distActualSigKm = distanciaHaversineKm(actualBase, siguiente);
+          const dtAntActualSeg = (actualBase.timestamp - anterior.timestamp) / 1000;
+          const dtActualSigSeg = (siguiente.timestamp - actualBase.timestamp) / 1000;
+          const velAntActual = dtAntActualSeg > 0 ? (distAntActualKm / dtAntActualSeg) * 3600 : Infinity;
+          const velActualSig = dtActualSigSeg > 0 ? (distActualSigKm / dtActualSigSeg) * 3600 : Infinity;
+          console.warn(
+            `[mosaico-salto] SALTO ANORMAL -- fraccionTotal=${fraccionTotal.toFixed(3)} pasos=${seleccionMosaico.pasosAvanzados} indiceBase(datos.puntos)=${ib}/${datos.puntos.length - 1}`,
+          );
+          console.warn(
+            `[mosaico-salto] punto anterior: lat=${anterior.lat.toFixed(6)} lon=${anterior.lon.toFixed(6)} t=${anterior.timestamp}`,
+          );
+          console.warn(
+            `[mosaico-salto] punto actual (base): lat=${actualBase.lat.toFixed(6)} lon=${actualBase.lon.toFixed(6)} t=${actualBase.timestamp}`,
+          );
+          console.warn(
+            `[mosaico-salto] punto siguiente: lat=${siguiente.lat.toFixed(6)} lon=${siguiente.lon.toFixed(6)} t=${siguiente.timestamp}`,
+          );
+          console.warn(
+            `[mosaico-salto] anterior->actual: distancia=${distAntActualKm.toFixed(4)}km dt=${dtAntActualSeg.toFixed(2)}s velocidadImplicita=${velAntActual.toFixed(1)}km/h`,
+          );
+          console.warn(
+            `[mosaico-salto] actual->siguiente: distancia=${distActualSigKm.toFixed(4)}km dt=${dtActualSigSeg.toFixed(2)}s velocidadImplicita=${velActualSig.toFixed(1)}km/h`,
+          );
+          console.warn(
+            `[mosaico-salto] cruce con velocidadesKmh (misma fuente que la vel. maxima reportada): velocidadesKmh[${ib}]=${velocidadesKmh[ib]?.toFixed(1)} velocidadesKmh[${ib + 1}]=${velocidadesKmh[ib + 1]?.toFixed(1)}`,
           );
         }
       }
@@ -2979,6 +3052,7 @@ async function generarVideoRecorridoInterno(
             actual: null,
             metaActual: null,
             indiceMostrado: null,
+            pasosAvanzados: 0,
             siguiente: ventanaMosaicos.imagenes[0] ?? null,
             metaSiguiente: ventanaMosaicos.metas[0] ?? null,
             peso: pesoMosaico,
