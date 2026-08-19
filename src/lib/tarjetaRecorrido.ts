@@ -2799,3 +2799,140 @@ export async function generarVideoRecorrido(
   onProgreso?.(1);
   return grabacionLista;
 }
+
+// ============================================================================
+// DIAGNÓSTICO TEMPORAL -- eliminar este bloque completo (y la página
+// frontend/src/app/debug-mosaico/page.tsx que lo consume) una vez resuelta
+// la alineación de mosaicos. No forma parte del pipeline real de
+// generarVideoRecorrido/dibujarCuadroVideo -- no se llama desde ahí.
+//
+// Prueba el sistema más chico posible: UN mosaico Z17, UNA coordenada
+// conocida, UN recorte, UN canvas 720x1280 -- sin panorámica, sin cadena de
+// mosaicos, sin cámara suavizada/dead zone/anticipación, sin crossfade, sin
+// fallback, sin intro/outro/etiquetas/estadísticas. Reutiliza
+// generarMapaEnZoom/calcularRecorteMosaico/recorteValido TAL CUAL (las
+// mismas funciones que usa la generación real), para que el diagnóstico sea
+// confiable -- no una reimplementación aparte que podría tener sus propios
+// bugs y no probar nada real.
+export interface ResultadoDiagnosticoMosaico {
+  canvas: HTMLCanvasElement;
+  texto: string;
+}
+
+// Coordenada de prueba fija (zona del club, Puerto Montt) -- no hace falta
+// una ruta real, esto prueba solo la matemática de proyección/recorte.
+const DIAG_LON = -72.9407;
+const DIAG_LAT = -41.4707;
+
+export async function generarDiagnosticoMosaico(
+  despZ17X: number,
+  despZ17Y: number,
+): Promise<ResultadoDiagnosticoMosaico> {
+  const centroPxX = lonAPixelX(DIAG_LON, ZOOM_SEGUIMIENTO);
+  const centroPxY = latAPixelY(DIAG_LAT, ZOOM_SEGUIMIENTO);
+  const anchoPx = Math.round(ANCHO_VIDEO * FACTOR_COBERTURA_MOSAICO);
+  const altoPx = Math.round(ALTO_VIDEO * FACTOR_COBERTURA_MOSAICO);
+
+  const canvas = document.createElement("canvas");
+  canvas.width = ANCHO_VIDEO;
+  canvas.height = ALTO_VIDEO;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return { canvas, texto: "ERROR: no se pudo crear el contexto 2D del canvas." };
+  ctx.fillStyle = "#000000";
+  ctx.fillRect(0, 0, ANCHO_VIDEO, ALTO_VIDEO);
+
+  const lineas: string[] = [
+    `ZOOM = ${ZOOM_SEGUIMIENTO}`,
+    `ESCALA (retina) = ${ESCALA}`,
+    `ESCALA_SEGUIMIENTO = ${ESCALA_SEGUIMIENTO}`,
+    `lon,lat prueba = ${DIAG_LON}, ${DIAG_LAT}`,
+    `mosaico.anchoPx x altoPx (lógico) = ${anchoPx} x ${altoPx}`,
+    `mosaico.centroPxX,Y (Z17) = ${centroPxX.toFixed(2)}, ${centroPxY.toFixed(2)}`,
+  ];
+
+  // OJO: acá se usa un tope de tiles mucho más alto que
+  // MAX_TILES_MOSAICO_SEGUIMIENTO (64) a propósito -- el diagnóstico
+  // encontró que 64 es insuficiente para el tamaño real del mosaico
+  // (1872x3328 requiere 112 tiles a zoom 17), así que con el tope real
+  // generarMapaEnZoom devuelve null SIEMPRE. Acá se sube solo para poder
+  // completar la verificación matemática pedida -- el tope real de
+  // producción NO se toca todavía, queda para la siguiente decisión.
+  const generado = await generarMapaEnZoom(centroPxX, centroPxY, ZOOM_SEGUIMIENTO, anchoPx, altoPx, false, 200);
+
+  if (!generado) {
+    lineas.push("CROP INVALIDO: generarMapaEnZoom devolvio null (fallo de red/tiles).");
+    dibujarOverlayDiagnostico(ctx, lineas, false);
+    return { canvas, texto: lineas.join("\n") };
+  }
+
+  const img = await cargarImagenDesdeSrc(generado.dataUrl).catch(() => null);
+  if (!img) {
+    lineas.push("CROP INVALIDO: la imagen del mosaico no decodifico.");
+    dibujarOverlayDiagnostico(ctx, lineas, false);
+    return { canvas, texto: lineas.join("\n") };
+  }
+
+  lineas.push(`img.naturalWidth x naturalHeight (fisico) = ${img.naturalWidth} x ${img.naturalHeight}`);
+  lineas.push(`esperado fisico = ${anchoPx * ESCALA} x ${altoPx * ESCALA}`);
+
+  const mosaico: MosaicoSeguimientoMeta = {
+    centroPxX,
+    centroPxY,
+    anchoPx,
+    altoPx,
+    radioZonaSeguraPx: 0,
+    radioLimitePx: 0,
+  };
+
+  const camaraZ17 = { x: centroPxX + despZ17X, y: centroPxY + despZ17Y };
+  const recorte = calcularRecorteMosaico(camaraZ17, mosaico, ESCALA_SEGUIMIENTO);
+  const valido = recorteValido(recorte, mosaico);
+
+  lineas.push(`desplazamiento Z17 aplicado = +${despZ17X}, +${despZ17Y}`);
+  lineas.push(`camaraZ17.x,y = ${camaraZ17.x.toFixed(2)}, ${camaraZ17.y.toFixed(2)}`);
+  lineas.push(
+    `sx,sy,sWidth,sHeight = ${recorte.sx.toFixed(2)}, ${recorte.sy.toFixed(2)}, ${recorte.sWidth.toFixed(2)}, ${recorte.sHeight.toFixed(2)}`,
+  );
+  lineas.push(`recorteValido = ${valido}`);
+
+  if (!valido) {
+    lineas.push("CROP INVALIDO: el recorte pedido cae fuera del PNG fisico del mosaico.");
+    dibujarOverlayDiagnostico(ctx, lineas, false);
+    return { canvas, texto: lineas.join("\n") };
+  }
+
+  ctx.drawImage(img, recorte.sx, recorte.sy, recorte.sWidth, recorte.sHeight, 0, 0, ANCHO_VIDEO, ALTO_VIDEO);
+  dibujarOverlayDiagnostico(ctx, lineas, true);
+  return { canvas, texto: lineas.join("\n") };
+}
+
+function dibujarOverlayDiagnostico(ctx: CanvasRenderingContext2D, lineas: string[], huboRecorte: boolean) {
+  // Cruz roja en el centro exacto del canvas (360,640) -- la coordenada de
+  // prueba (DIAG_LON/DIAG_LAT) debe caer visualmente ahí cuando
+  // despZ17X/Y = 0.
+  ctx.strokeStyle = "#ff2d2d";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(ANCHO_VIDEO / 2 - 24, ALTO_VIDEO / 2);
+  ctx.lineTo(ANCHO_VIDEO / 2 + 24, ALTO_VIDEO / 2);
+  ctx.moveTo(ANCHO_VIDEO / 2, ALTO_VIDEO / 2 - 24);
+  ctx.lineTo(ANCHO_VIDEO / 2, ALTO_VIDEO / 2 + 24);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(ANCHO_VIDEO / 2, ALTO_VIDEO / 2, 24, 0, Math.PI * 2);
+  ctx.stroke();
+
+  if (!huboRecorte) {
+    ctx.fillStyle = "#ff2d2d";
+    ctx.font = "700 28px monospace";
+    ctx.fillText("CROP INVALIDO", 16, 300);
+  }
+
+  ctx.fillStyle = "#000000e0";
+  ctx.fillRect(0, 0, ANCHO_VIDEO, 22 * lineas.length + 16);
+  ctx.fillStyle = "#39ff6a";
+  ctx.font = "13px monospace";
+  lineas.forEach((linea, i) => ctx.fillText(linea, 10, 22 + i * 18));
+
+  console.log("[diagnostico-mosaico]", lineas.join(" | "));
+}
