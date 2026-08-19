@@ -795,6 +795,81 @@ function calcularCamaraZ17(
   };
 }
 
+// Inversa exacta de calcularCamaraZ17 -- convierte un punto YA en píxeles
+// globales de ZOOM_SEGUIMIENTO (ej. el centro de un mosaico) de vuelta a
+// coordenadas canvas-base (el mismo espacio en el que vive EstadoCamara).
+// Solo la usa la Opción 5 (huecos de cobertura, ver calcularCamaraHueco) para
+// poder encuadrar dos mosaicos con la cámara sin pasar por Z17 en ningún
+// otro lado del cálculo.
+function z17ACanvasBase(
+  z17: { x: number; y: number },
+  mapaBase: MapaGenerado,
+  factor: number,
+): { x: number; y: number } {
+  return {
+    x: z17.x / factor - mapaBase.centroPxX + ANCHO_VIDEO / 2,
+    y: z17.y / factor - mapaBase.centroPxY + ALTO_VIDEO / 2,
+  };
+}
+
+// Opción 5 -- huecos de cobertura entre puntos GPS reales sin mosaicos
+// intermedios (ver el diseño largo aprobado, comentario de seleccionarMosaico
+// más abajo). En vez de forzar el seguimiento Z17 a través de una zona sin
+// datos, la cámara se aleja lo justo para encuadrar el ORIGEN (último
+// mosaico válido) y el DESTINO (adonde el recorrido forward-only normal
+// habría llegado) en un solo cuadro, el marcador avanza sobre esa vista
+// (panorámica ya cargada, dibujarFondoMapaVideo) sin ninguna geometría
+// inventada, y al acercarse geográficamente al destino la cámara vuelve
+// sola al seguimiento cercano -- ver el chequeo de recorteValido en
+// dibujarFrame, no un umbral de escala arbitrario.
+type FaseHueco = "ninguno" | "en_hueco" | "regresando";
+
+interface EstadoHueco {
+  fase: FaseHueco;
+  indiceDestino: number | null;
+  // Encuadre fijo calculado UNA sola vez al detectar el hueco (ver
+  // calcularCamaraHueco) -- el objetivo de cámara mientras fase="en_hueco".
+  camaraAmplia: EstadoCamara | null;
+  // Escala "en tránsito", con su propio lag (mismo FACTOR_SUAVIZADO_CAMARA
+  // que ya usa la posición en suavizarCamara) -- existe porque
+  // suavizarCamara() NO interpola escala, solo posición (ver su código: pasa
+  // objetivo.escala directo). Sin esto, el alejamiento/acercamiento de
+  // escala se vería como un salto instantáneo en vez de una curva suave.
+  escalaActual: number | null;
+}
+
+// Encuadre amplio que contiene origen y destino de un hueco, con el mismo
+// criterio de margen que ya usa elegirZoom() para encuadrar un recuadro
+// completo (MARGEN=0.78). Protegida contra: puntos coincidentes (halfDx=halfDy=0),
+// tramos puramente verticales/horizontales (halfDx=0 o halfDy=0 por
+// separado) y valores no finitos -- en cualquiera de esos casos no hay
+// ningún encuadre más ancho que calcular, se devuelve la escala de
+// seguimiento actual tal cual (no hace falta alejarse).
+function calcularCamaraHueco(
+  origenPx: { x: number; y: number },
+  destinoPx: { x: number; y: number },
+  escalaSeguimientoActual: number,
+): EstadoCamara {
+  const MARGEN_ENCUADRE_HUECO = 0.78; // mismo criterio que MARGEN en elegirZoom()
+
+  const halfDx = Math.abs(destinoPx.x - origenPx.x) / 2;
+  const halfDy = Math.abs(destinoPx.y - origenPx.y) / 2;
+  if (!Number.isFinite(halfDx) || !Number.isFinite(halfDy)) {
+    return { cx: origenPx.x, cy: origenPx.y, escala: escalaSeguimientoActual };
+  }
+
+  const cx = (origenPx.x + destinoPx.x) / 2;
+  const cy = (origenPx.y + destinoPx.y) / 2;
+
+  const escalaPorX = halfDx > 0 ? ((ANCHO_VIDEO / 2) * MARGEN_ENCUADRE_HUECO) / halfDx : Infinity;
+  const escalaPorY = halfDy > 0 ? ((ALTO_VIDEO / 2) * MARGEN_ENCUADRE_HUECO) / halfDy : Infinity;
+  let escala = Math.min(escalaPorX, escalaPorY);
+  if (!Number.isFinite(escala)) escala = escalaSeguimientoActual;
+
+  escala = clamp(escala, 1, escalaSeguimientoActual);
+  return { cx, cy, escala };
+}
+
 interface RecorteMosaico {
   sx: number;
   sy: number;
@@ -983,6 +1058,14 @@ interface SeleccionMosaico {
   // anormales (ver el reporte del salto 1->15) y disparar la comparación de
   // puntos GPS crudos en dibujarFrame.
   pasosAvanzados: number;
+  // Índice del mosaico al que el while hubiera llegado SI se le dejaba
+  // avanzar libre, cuando en el camino detectó un hueco de cobertura (ver
+  // margenUtilPx dentro del while) -- null en operación normal. Cuando no
+  // es null, indiceActual/actual/etc. de este mismo objeto ya reflejan el
+  // índice de ORIGEN (congelado, revertido), no este destino -- es
+  // responsabilidad de dibujarFrame armar la transición panorámica de la
+  // Opción 5 usando este valor, no aplicarlo directo.
+  huecoDetectado: number | null;
 }
 
 // Decide, para la posición actual del patinador, qué mosaico(s) mostrar:
@@ -1035,10 +1118,28 @@ function seleccionarMosaico(
 
   const indiceAlEntrar = indiceRef.valor;
   let pasosAvanzados = 0;
+  // Índice desde el que arrancó el hueco detectado en este frame (ver Opción
+  // 5) -- el punto exacto al que hay que revertir indiceRef.valor una vez
+  // que el while termine su recorrido forward-only normal. null mientras no
+  // se detecta ningún hueco.
+  let indiceAntesDelHueco: number | null = null;
   while (tramoConfiable && indiceRef.valor < metas.length - 1) {
     const metaActual = metas[indiceRef.valor];
     const distActual = Math.hypot(gx - metaActual.centroPxX, gy - metaActual.centroPxY);
     if (distActual <= metaActual.radioLimitePx) break;
+
+    // Hueco de cobertura (Opción 5): si este candidato ya está más allá del
+    // borde FÍSICO absoluto que cualquier mosaico puede cubrir (no solo su
+    // radioLimitePx "blando"), ningún ajuste geométrico va a hacerlo válido
+    // -- es un hueco real entre puntos GPS, no una racha rápida con mosaicos
+    // reales en el medio. margenUtilPx se reconstruye desde radioLimitePx
+    // (que sí vive en el meta) y las mismas fracciones ya usadas en
+    // calcularMosaicosSeguimiento -- ningún valor nuevo.
+    if (indiceAntesDelHueco === null) {
+      const margenUtilPx = metaActual.radioLimitePx / (FRACCION_ZONA_SEGURA + FRACCION_BANDA_TRANSICION);
+      if (distActual > margenUtilPx) indiceAntesDelHueco = indiceRef.valor;
+    }
+
     // Instrumentación temporal: un log por CADA paso del while, no solo el
     // resultado final -- así "1 -> 15" se ve como 14 líneas individuales
     // con la distancia real de cada una, en vez de un solo salto opaco.
@@ -1057,6 +1158,19 @@ function seleccionarMosaico(
     console.log(
       `[mosaico-salto] fraccionTotal=${fraccionTotal.toFixed(3)} total pasos en este frame=${pasosAvanzados} (indice ${indiceAlEntrar} -> ${indiceRef.valor})`,
     );
+  }
+
+  // Se detectó un hueco: el while ya terminó su recorrido forward-only
+  // normal (llegó a indiceRef.valor -- ESE es el destino real, elegido con
+  // el mismo mecanismo de siempre, sin búsqueda libre). Se revierte acá,
+  // ANTES de calcular indiceActual/metaActual/etc. más abajo, para que el
+  // resto de esta función siga operando sobre el mosaico de ORIGEN
+  // (congelado) como si el while nunca hubiera avanzado -- dibujarFrame
+  // decide qué hacer con el destino reportado en huecoDetectado.
+  let huecoDetectado: number | null = null;
+  if (indiceAntesDelHueco !== null) {
+    huecoDetectado = indiceRef.valor;
+    indiceRef.valor = indiceAntesDelHueco;
   }
 
   const indiceActual = indiceRef.valor;
@@ -1092,6 +1206,7 @@ function seleccionarMosaico(
     metaSiguiente,
     peso,
     pasosAvanzados,
+    huecoDetectado,
   };
 }
 
@@ -2999,6 +3114,11 @@ async function generarVideoRecorridoInterno(
   // que sigue llamando a estadoCamara exactamente igual que siempre.
   const camaraSuavizadaRef: { valor: CamaraSuavizada | null } = { valor: null };
   const direccionAnticipacionRef: { valor: DireccionAnticipacion | null } = { valor: null };
+  // Opción 5 -- estado del hueco de cobertura en curso, si hay uno (ver
+  // EstadoHueco/calcularCamaraHueco). "ninguno" el resto del video.
+  const huecoRef: { valor: EstadoHueco } = {
+    valor: { fase: "ninguno", indiceDestino: null, camaraAmplia: null, escalaActual: null },
+  };
 
   function dibujarFrame(fraccionTotal: number, mostrarFotoFinal: boolean, pulsoVelMax = 0) {
     const fraccionTrazo = Math.min(1, fraccionTotal / FRACCION_TRAZO_COMPLETO);
@@ -3033,7 +3153,28 @@ async function generarVideoRecorridoInterno(
         factorSeguimiento * ESCALA_SEGUIMIENTO,
       );
       direccionAnticipacionRef.valor = anticipacion.direccion;
-      const objetivoCrudo = estadoCamara(fraccionTotal, anticipacion.foco, focoCentroPx, factorSeguimiento);
+      const objetivoCercanoNormal = estadoCamara(fraccionTotal, anticipacion.foco, focoCentroPx, factorSeguimiento);
+
+      // Opción 5 (hueco de cobertura): el objetivo real de este frame es el
+      // de seguimiento cercano de siempre, SALVO mientras haya un hueco en
+      // curso -- ahí el objetivo pasa a ser el encuadre amplio (fase
+      // "en_hueco") o, ya de vuelta, el mismo objetivo cercano normal pero
+      // con la escala todavía convergiendo (fase "regresando"). La escala se
+      // suaviza a mano (mismo FACTOR_SUAVIZADO_CAMARA que ya usa la posición
+      // en suavizarCamara, que no interpola escala) -- ver EstadoHueco.
+      let objetivoCrudo: EstadoCamara = objetivoCercanoNormal;
+      if (huecoRef.valor.fase === "en_hueco" && huecoRef.valor.camaraAmplia && huecoRef.valor.escalaActual !== null) {
+        const camaraAmplia = huecoRef.valor.camaraAmplia;
+        const escalaActual = huecoRef.valor.escalaActual + (camaraAmplia.escala - huecoRef.valor.escalaActual) * FACTOR_SUAVIZADO_CAMARA;
+        huecoRef.valor = { ...huecoRef.valor, escalaActual };
+        objetivoCrudo = { cx: camaraAmplia.cx, cy: camaraAmplia.cy, escala: escalaActual };
+      } else if (huecoRef.valor.fase === "regresando" && huecoRef.valor.escalaActual !== null) {
+        const escalaActual =
+          huecoRef.valor.escalaActual + (objetivoCercanoNormal.escala - huecoRef.valor.escalaActual) * FACTOR_SUAVIZADO_CAMARA;
+        huecoRef.valor = { ...huecoRef.valor, escalaActual };
+        objetivoCrudo = { cx: objetivoCercanoNormal.cx, cy: objetivoCercanoNormal.cy, escala: escalaActual };
+      }
+
       camara = suavizarCamara(objetivoCrudo, camaraSuavizadaRef.valor, fraccionTotal);
       camaraSuavizadaRef.valor = { cx: camara.cx, cy: camara.cy };
 
@@ -3047,72 +3188,148 @@ async function generarVideoRecorridoInterno(
       // nuevo entorno, protegiendo el último mosaico válido en uso como
       // fallback -- ver mantenerVentana/liberarFueraDeVentana.
       if (mosaicosSeguimiento.length > 0 && mapa) {
-        camaraZ17 = calcularCamaraZ17(camara, mapa, factorSeguimiento);
-        const indicePrevio = indiceMosaicoRef.valor;
-        seleccionMosaico = seleccionarMosaico(
-          focoActual,
-          camaraZ17,
-          camara.escala,
-          ventanaMosaicos,
-          indiceMosaicoRef,
-          ultimoMosaicoValidoRef,
-          fraccionTotal,
-          tramoConfiable,
-        );
-        if (indiceMosaicoRef.valor !== indicePrevio) {
-          console.log(
-            `[video] fraccionTotal=${fraccionTotal.toFixed(3)} indice geometrico activo: ${indicePrevio} -> ${indiceMosaicoRef.valor}`,
-          );
-          mantenerVentana(ventanaMosaicos, indiceMosaicoRef.valor, ultimoMosaicoValidoRef.valor?.indice ?? null).catch(
-            () => {},
-          );
+        // Transiciones de fase de la Opción 5, evaluadas con la cámara YA
+        // calculada este mismo frame (ver diseño aprobado: mismo `camara`
+        // para panorámica y para el chequeo de si Z17 ya puede reactivarse).
+        if (huecoRef.valor.fase === "en_hueco" && huecoRef.valor.indiceDestino !== null) {
+          const metaDestino = ventanaMosaicos.metas[huecoRef.valor.indiceDestino];
+          const gxDestino = lonAPixelX(focoActual.lon, ZOOM_SEGUIMIENTO);
+          const gyDestino = latAPixelY(focoActual.lat, ZOOM_SEGUIMIENTO);
+          const distADestino = Math.hypot(gxDestino - metaDestino.centroPxX, gyDestino - metaDestino.centroPxY);
+          if (distADestino <= metaDestino.radioLimitePx) {
+            console.log(
+              `[hueco] fraccionTotal=${fraccionTotal.toFixed(3)} en_hueco -> regresando (destino=${huecoRef.valor.indiceDestino})`,
+            );
+            huecoRef.valor = { ...huecoRef.valor, fase: "regresando" };
+          }
+        } else if (huecoRef.valor.fase === "regresando" && huecoRef.valor.indiceDestino !== null) {
+          const metaDestino = ventanaMosaicos.metas[huecoRef.valor.indiceDestino];
+          const imagenDestino = ventanaMosaicos.imagenes[huecoRef.valor.indiceDestino];
+          const camaraZ17Regreso = calcularCamaraZ17(camara, mapa, factorSeguimiento);
+          const recorteRegreso = calcularRecorteMosaico(camaraZ17Regreso, metaDestino, camara.escala);
+          // Única condición para reactivar Z17: el crop del mosaico destino
+          // YA es geométricamente válido con la cámara actual (misma cámara
+          // que se está usando para la panorámica este frame) Y la imagen
+          // ya terminó de decodificar. Sin umbral de escala/posición
+          // arbitrario -- recorteValido() ya combina las dos cosas.
+          if (imagenDestino && recorteValido(recorteRegreso, metaDestino)) {
+            console.log(
+              `[hueco] fraccionTotal=${fraccionTotal.toFixed(3)} regresando -> ninguno (Z17 reactivado en indice=${huecoRef.valor.indiceDestino})`,
+            );
+            const indicePrevioHueco = indiceMosaicoRef.valor;
+            indiceMosaicoRef.valor = huecoRef.valor.indiceDestino;
+            huecoRef.valor = { fase: "ninguno", indiceDestino: null, camaraAmplia: null, escalaActual: null };
+            if (indiceMosaicoRef.valor !== indicePrevioHueco) {
+              mantenerVentana(ventanaMosaicos, indiceMosaicoRef.valor, ultimoMosaicoValidoRef.valor?.indice ?? null).catch(
+                () => {},
+              );
+            }
+          }
         }
 
-        // Instrumentación temporal: si el while de seleccionarMosaico avanzó
-        // MÁS DE UN índice en este mismo frame (justo el patrón "1 -> 15"
-        // reportado), comparar los puntos GPS CRUDOS (no el punto
-        // interpolado) alrededor del segmento que estadoEnFraccion está
-        // usando ahora mismo -- misma búsqueda que hace estadoEnFraccion
-        // internamente (duplicada acá solo para diagnóstico, no cambia qué
-        // segmento se usa para dibujar). Objetivo: confirmar si es un
-        // outlier/salto real de GPS, y si coincide con el mismo punto que
-        // alimenta velocidadesKmh (la misma fuente de la lectura de 300+
-        // km/h ya reportada aparte).
-        if (seleccionMosaico.pasosAvanzados > 1) {
-          const distObjetivoKm = fraccionTrazo * datos.distanciaKm;
-          let ib = 0;
-          while (ib < datos.puntos.length - 2 && distanciaAcumuladaKm[ib + 1] <= distObjetivoKm) ib++;
-          const anterior = datos.puntos[Math.max(0, ib - 1)];
-          const actualBase = datos.puntos[ib];
-          const siguiente = datos.puntos[Math.min(datos.puntos.length - 1, ib + 1)];
-          const distAntActualKm = distanciaHaversineKm(anterior, actualBase);
-          const distActualSigKm = distanciaHaversineKm(actualBase, siguiente);
-          const dtAntActualSeg = (actualBase.timestamp - anterior.timestamp) / 1000;
-          const dtActualSigSeg = (siguiente.timestamp - actualBase.timestamp) / 1000;
-          const velAntActual = dtAntActualSeg > 0 ? (distAntActualKm / dtAntActualSeg) * 3600 : Infinity;
-          const velActualSig = dtActualSigSeg > 0 ? (distActualSigKm / dtActualSigSeg) * 3600 : Infinity;
-          console.warn(
-            `[mosaico-salto] SALTO ANORMAL -- fraccionTotal=${fraccionTotal.toFixed(3)} pasos=${seleccionMosaico.pasosAvanzados} indiceBase(datos.puntos)=${ib}/${datos.puntos.length - 1}`,
+        if (huecoRef.valor.fase === "ninguno") {
+          camaraZ17 = calcularCamaraZ17(camara, mapa, factorSeguimiento);
+          const indicePrevio = indiceMosaicoRef.valor;
+          const resultado = seleccionarMosaico(
+            focoActual,
+            camaraZ17,
+            camara.escala,
+            ventanaMosaicos,
+            indiceMosaicoRef,
+            ultimoMosaicoValidoRef,
+            fraccionTotal,
+            tramoConfiable,
           );
-          console.warn(
-            `[mosaico-salto] punto anterior: lat=${anterior.lat.toFixed(6)} lon=${anterior.lon.toFixed(6)} t=${anterior.timestamp}`,
-          );
-          console.warn(
-            `[mosaico-salto] punto actual (base): lat=${actualBase.lat.toFixed(6)} lon=${actualBase.lon.toFixed(6)} t=${actualBase.timestamp}`,
-          );
-          console.warn(
-            `[mosaico-salto] punto siguiente: lat=${siguiente.lat.toFixed(6)} lon=${siguiente.lon.toFixed(6)} t=${siguiente.timestamp}`,
-          );
-          console.warn(
-            `[mosaico-salto] anterior->actual: distancia=${distAntActualKm.toFixed(4)}km dt=${dtAntActualSeg.toFixed(2)}s velocidadImplicita=${velAntActual.toFixed(1)}km/h`,
-          );
-          console.warn(
-            `[mosaico-salto] actual->siguiente: distancia=${distActualSigKm.toFixed(4)}km dt=${dtActualSigSeg.toFixed(2)}s velocidadImplicita=${velActualSig.toFixed(1)}km/h`,
-          );
-          console.warn(
-            `[mosaico-salto] cruce con velocidadesKmh (misma fuente que la vel. maxima reportada): velocidadesKmh[${ib}]=${velocidadesKmh[ib]?.toFixed(1)} velocidadesKmh[${ib + 1}]=${velocidadesKmh[ib + 1]?.toFixed(1)}`,
-          );
+          seleccionMosaico = resultado;
+
+          if (resultado.huecoDetectado !== null) {
+            // Hueco de cobertura recién detectado (ver margenUtilPx dentro
+            // del while de seleccionarMosaico) -- indiceMosaicoRef.valor ya
+            // quedó revertido al origen (congelado) por esa misma función;
+            // acá solo se arma el encuadre amplio y se dispara el prefetch
+            // del destino. Este mismo frame se sigue dibujando con el
+            // mosaico de origen (seleccionMosaico=resultado, sin cambios
+            // visuales todavía) -- la panorámica arranca recién el frame
+            // siguiente, cuando el objetivo de cámara ya apunta a
+            // camaraAmplia.
+            const metaOrigen = ventanaMosaicos.metas[indiceMosaicoRef.valor];
+            const metaDestino = ventanaMosaicos.metas[resultado.huecoDetectado];
+            const origenPx = z17ACanvasBase({ x: metaOrigen.centroPxX, y: metaOrigen.centroPxY }, mapa, factorSeguimiento);
+            const destinoPx = z17ACanvasBase({ x: metaDestino.centroPxX, y: metaDestino.centroPxY }, mapa, factorSeguimiento);
+            const camaraAmplia = calcularCamaraHueco(origenPx, destinoPx, camara.escala);
+            huecoRef.valor = {
+              fase: "en_hueco",
+              indiceDestino: resultado.huecoDetectado,
+              camaraAmplia,
+              escalaActual: camara.escala,
+            };
+            console.log(
+              `[hueco] fraccionTotal=${fraccionTotal.toFixed(3)} detectado -- origen=${indiceMosaicoRef.valor} destino=${resultado.huecoDetectado} camaraAmplia.escala=${camaraAmplia.escala.toFixed(3)}`,
+            );
+            mantenerVentana(ventanaMosaicos, resultado.huecoDetectado, ultimoMosaicoValidoRef.valor?.indice ?? null).catch(
+              () => {},
+            );
+          }
+
+          if (indiceMosaicoRef.valor !== indicePrevio) {
+            console.log(
+              `[video] fraccionTotal=${fraccionTotal.toFixed(3)} indice geometrico activo: ${indicePrevio} -> ${indiceMosaicoRef.valor}`,
+            );
+            mantenerVentana(ventanaMosaicos, indiceMosaicoRef.valor, ultimoMosaicoValidoRef.valor?.indice ?? null).catch(
+              () => {},
+            );
+          }
+
+          // Instrumentación temporal: si el while de seleccionarMosaico avanzó
+          // MÁS DE UN índice en este mismo frame (justo el patrón "1 -> 15"
+          // reportado), comparar los puntos GPS CRUDOS (no el punto
+          // interpolado) alrededor del segmento que estadoEnFraccion está
+          // usando ahora mismo -- misma búsqueda que hace estadoEnFraccion
+          // internamente (duplicada acá solo para diagnóstico, no cambia qué
+          // segmento se usa para dibujar). Objetivo: confirmar si es un
+          // outlier/salto real de GPS, y si coincide con el mismo punto que
+          // alimenta velocidadesKmh (la misma fuente de la lectura de 300+
+          // km/h ya reportada aparte).
+          if (resultado.pasosAvanzados > 1) {
+            const distObjetivoKm = fraccionTrazo * datos.distanciaKm;
+            let ib = 0;
+            while (ib < datos.puntos.length - 2 && distanciaAcumuladaKm[ib + 1] <= distObjetivoKm) ib++;
+            const anterior = datos.puntos[Math.max(0, ib - 1)];
+            const actualBase = datos.puntos[ib];
+            const siguiente = datos.puntos[Math.min(datos.puntos.length - 1, ib + 1)];
+            const distAntActualKm = distanciaHaversineKm(anterior, actualBase);
+            const distActualSigKm = distanciaHaversineKm(actualBase, siguiente);
+            const dtAntActualSeg = (actualBase.timestamp - anterior.timestamp) / 1000;
+            const dtActualSigSeg = (siguiente.timestamp - actualBase.timestamp) / 1000;
+            const velAntActual = dtAntActualSeg > 0 ? (distAntActualKm / dtAntActualSeg) * 3600 : Infinity;
+            const velActualSig = dtActualSigSeg > 0 ? (distActualSigKm / dtActualSigSeg) * 3600 : Infinity;
+            console.warn(
+              `[mosaico-salto] SALTO ANORMAL -- fraccionTotal=${fraccionTotal.toFixed(3)} pasos=${resultado.pasosAvanzados} indiceBase(datos.puntos)=${ib}/${datos.puntos.length - 1}`,
+            );
+            console.warn(
+              `[mosaico-salto] punto anterior: lat=${anterior.lat.toFixed(6)} lon=${anterior.lon.toFixed(6)} t=${anterior.timestamp}`,
+            );
+            console.warn(
+              `[mosaico-salto] punto actual (base): lat=${actualBase.lat.toFixed(6)} lon=${actualBase.lon.toFixed(6)} t=${actualBase.timestamp}`,
+            );
+            console.warn(
+              `[mosaico-salto] punto siguiente: lat=${siguiente.lat.toFixed(6)} lon=${siguiente.lon.toFixed(6)} t=${siguiente.timestamp}`,
+            );
+            console.warn(
+              `[mosaico-salto] anterior->actual: distancia=${distAntActualKm.toFixed(4)}km dt=${dtAntActualSeg.toFixed(2)}s velocidadImplicita=${velAntActual.toFixed(1)}km/h`,
+            );
+            console.warn(
+              `[mosaico-salto] actual->siguiente: distancia=${distActualSigKm.toFixed(4)}km dt=${dtActualSigSeg.toFixed(2)}s velocidadImplicita=${velActualSig.toFixed(1)}km/h`,
+            );
+            console.warn(
+              `[mosaico-salto] cruce con velocidadesKmh (misma fuente que la vel. maxima reportada): velocidadesKmh[${ib}]=${velocidadesKmh[ib]?.toFixed(1)} velocidadesKmh[${ib + 1}]=${velocidadesKmh[ib + 1]?.toFixed(1)}`,
+            );
+          }
         }
+        // Si huecoRef.valor.fase !== "ninguno": seleccionMosaico/camaraZ17
+        // quedan null (declarados arriba) -- dibujarCuadroVideo cae a
+        // dibujarFondoMapaVideo (panorámica), con la MISMA `camara` de este
+        // frame.
       }
     } else {
       // Outro: SIN anticipación ni suavizado, misma llamada de siempre
@@ -3189,6 +3406,7 @@ async function generarVideoRecorridoInterno(
             metaActual: null,
             indiceMostrado: null,
             pasosAvanzados: 0,
+            huecoDetectado: null,
             siguiente: ventanaMosaicos.imagenes[0] ?? null,
             metaSiguiente: ventanaMosaicos.metas[0] ?? null,
             peso: pesoMosaico,
