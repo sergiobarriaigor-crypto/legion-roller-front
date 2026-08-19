@@ -562,12 +562,30 @@ async function asegurarDecodificado(estado: EstadoVentanaMosaicos, indice: numbe
   estado.imagenes[indice] = await cargarImagenOpcional(url);
 }
 
+// Último mosaico que SÍ llegó a decodificar y mostrarse -- ver
+// seleccionarMosaico/liberarFueraDeVentana. Mientras el mosaico "actual"
+// (según la posición real de la cámara) todavía no decodificó, se sigue
+// mostrando este en su lugar, en vez de caer a la panorámica.
+interface UltimoMosaicoValido {
+  indice: number;
+  img: HTMLImageElement;
+  meta: MosaicoSeguimientoMeta;
+}
+
 // Libera lo que quedó fuera de la ventana (imágenes decodificadas primero,
 // que son lo más pesado; dataURLs con un margen un poco mayor hacia atrás,
 // por si un mosaico recién superado hiciera falta de nuevo por algún
 // reordenamiento -- en la práctica el índice solo avanza, nunca retrocede).
-function liberarFueraDeVentana(estado: EstadoVentanaMosaicos, indiceActual: number): void {
+// `indiceProtegido` (el último mosaico válido en uso como fallback, ver
+// seleccionarMosaico) queda EXCLUIDO de esta limpieza sin importar la
+// ventana -- si la cámara ya avanzó de índice pero la imagen nueva todavía
+// no decodificó, se sigue mostrando la protegida; liberarla acá la borraría
+// de memoria mientras todavía está en pantalla. Deja de estar protegida
+// sola, en la siguiente llamada, en cuanto el llamador actualiza cuál es el
+// "último válido" a uno más nuevo (ver dibujarFrame).
+function liberarFueraDeVentana(estado: EstadoVentanaMosaicos, indiceActual: number, indiceProtegido: number | null): void {
   for (let i = 0; i < estado.metas.length; i++) {
+    if (i === indiceProtegido) continue;
     if (i < indiceActual - VENTANA_DECODIFICADA_ADELANTE || i > indiceActual + VENTANA_DECODIFICADA_ADELANTE + 1) {
       estado.imagenes[i] = null;
     }
@@ -580,12 +598,13 @@ function liberarFueraDeVentana(estado: EstadoVentanaMosaicos, indiceActual: numb
 // Mantiene la ventana alrededor de indiceActual: dispara descargas (rango
 // más amplio, por delante) y decodificaciones (rango más angosto, lo justo
 // para dibujar ya mismo y el próximo cambio) en paralelo, y libera lo que
-// quedó atrás. Se llama tanto antes de arrancar MediaRecorder (con await,
-// para no empezar a grabar sin lo mínimo listo) como en segundo plano
-// durante la grabación (sin await, ver generarVideoRecorrido) cada vez que
-// el índice activo avanza.
-async function mantenerVentana(estado: EstadoVentanaMosaicos, indiceActual: number): Promise<void> {
-  liberarFueraDeVentana(estado, indiceActual);
+// quedó atrás (salvo indiceProtegido, ver liberarFueraDeVentana). Se llama
+// tanto antes de arrancar MediaRecorder (con await, para no empezar a
+// grabar sin lo mínimo listo) como en segundo plano durante la grabación
+// (sin await, ver generarVideoRecorrido) cada vez que el índice activo
+// avanza.
+async function mantenerVentana(estado: EstadoVentanaMosaicos, indiceActual: number, indiceProtegido: number | null): Promise<void> {
+  liberarFueraDeVentana(estado, indiceActual, indiceProtegido);
   const tareas: Promise<void>[] = [];
   const finDescarga = Math.min(estado.metas.length - 1, indiceActual + VENTANA_DESCARGA_ADELANTE);
   for (let i = indiceActual; i <= finDescarga; i++) tareas.push(asegurarDescarga(estado, i));
@@ -613,10 +632,19 @@ interface SeleccionMosaico {
 // mutable y persiste entre cuadros -- el índice SOLO avanza, nunca
 // retrocede (la cámara nunca "vuelve" a un mosaico anterior aunque la ruta
 // geográficamente pase cerca de un tramo ya recorrido).
+//
+// `ultimoValidoRef` es el fallback del punto 5: si la imagen del índice
+// activo todavía no decodificó, se sustituye en el resultado por el último
+// mosaico que sí estaba listo (mutando ultimoValidoRef.valor cuando
+// corresponde) -- dibujarMosaicosSeguimiento no necesita saber nada de esto,
+// solo recibe un "actual" que casi nunca es null en la práctica. Sin
+// crossfade hacia el siguiente mientras se está mostrando el fallback (no
+// tendría sentido cruzar hacia una imagen que tampoco es la real).
 function seleccionarMosaico(
   puntoActual: PuntoGps,
   ventana: EstadoVentanaMosaicos,
   indiceRef: { valor: number },
+  ultimoValidoRef: { valor: UltimoMosaicoValido | null },
 ): SeleccionMosaico {
   const metas = ventana.metas;
   const gx = lonAPixelX(puntoActual.lon, ZOOM_SEGUIMIENTO);
@@ -634,9 +662,14 @@ function seleccionarMosaico(
   const indiceActual = indiceRef.valor;
   const metaActual = metas[indiceActual] ?? null;
   const metaSiguiente = metas[indiceActual + 1] ?? null;
+  const imagenActual = ventana.imagenes[indiceActual] ?? null;
+
+  if (imagenActual && metaActual) {
+    ultimoValidoRef.valor = { indice: indiceActual, img: imagenActual, meta: metaActual };
+  }
 
   let peso = 0;
-  if (metaActual && metaSiguiente) {
+  if (imagenActual && metaActual && metaSiguiente) {
     const distActual = Math.hypot(gx - metaActual.centroPxX, gy - metaActual.centroPxY);
     if (distActual > metaActual.radioZonaSeguraPx) {
       const rango = metaActual.radioLimitePx - metaActual.radioZonaSeguraPx;
@@ -647,8 +680,8 @@ function seleccionarMosaico(
 
   return {
     indiceActual,
-    actual: ventana.imagenes[indiceActual] ?? null,
-    metaActual,
+    actual: imagenActual ?? ultimoValidoRef.valor?.img ?? null,
+    metaActual: imagenActual ? metaActual : (ultimoValidoRef.valor?.meta ?? null),
     siguiente: metaSiguiente ? (ventana.imagenes[indiceActual + 1] ?? null) : null,
     metaSiguiente,
     peso,
@@ -991,6 +1024,62 @@ const VOLUMEN_MUSICA = 0.65;
 const ANCHO_VIDEO = 720;
 const ALTO_VIDEO = 1280;
 
+// --- Cámara de seguimiento: suavizado, zona de tolerancia y anticipación ---
+// (mejora sobre la cámara de mosaicos ya existente -- no toca ZOOM_SEGUIMIENTO
+// ni la cadena de mosaicos en sí, solo CÓMO se mueve la cámara sobre ellos).
+
+// Radio (px, a escala 1, canvas base) de la zona muerta alrededor de la
+// cámara: mientras el foco crudo (la posición real del patinador) quede
+// adentro, la cámara no se mueve nada -- recién al salir empieza a
+// acompañarlo. Se deriva de la dimensión visible del video (no un número
+// fijo pensado para 720x1280) para que el comportamiento se sienta parecido
+// si el video cambia de resolución/relación de aspecto más adelante.
+const FACTOR_TOLERANCIA_CAMARA = 0.1;
+const RADIO_TOLERANCIA_MIN_PX = 30;
+const RADIO_TOLERANCIA_MAX_PX = 120;
+const RADIO_TOLERANCIA_PX = clamp(
+  Math.min(ANCHO_VIDEO, ALTO_VIDEO) * FACTOR_TOLERANCIA_CAMARA,
+  RADIO_TOLERANCIA_MIN_PX,
+  RADIO_TOLERANCIA_MAX_PX,
+);
+// Qué fracción de la distancia pendiente (entre la cámara y el borde de la
+// zona de tolerancia) se recupera por cuadro, una vez que la cámara
+// necesita moverse -- más alto = alcanza más rápido (más "pegada" al
+// patinador), más bajo = más lag mercado.
+const FACTOR_SUAVIZADO_CAMARA = 0.18;
+// A partir de qué fracción de FRACCION_TRAZO_COMPLETO se empieza a apagar
+// el suavizado (ver suavizarCamara) para llegar EXACTAMENTE convergida al
+// objetivo crudo justo antes de que estadoCamara arranque su propia curva
+// de alejamiento -- sin esto, un pequeño rezago acumulado por la zona de
+// tolerancia se notaría como un salto en el corte hacia el outro.
+const FRACCION_INICIO_CONVERGENCIA_CAMARA = 0.92;
+
+// Anticipación de dirección: cuánto más adelante en la ruta (en km reales)
+// se mira para calcular hacia dónde se está yendo, y cuánto se desplaza el
+// PUNTO DE MIRA de la cámara (no la posición dibujada del marcador) en esa
+// dirección -- así queda más mapa visible hacia adelante que hacia atrás.
+// MAX_DESPLAZAMIENTO_ANTICIPACION_PX es un techo explícito, independiente
+// de DESPLAZAMIENTO_ANTICIPACION_PX: en curvas cerradas o zigzags la
+// dirección calculada puede cambiar mucho de un tramo a otro, pero la
+// MAGNITUD del desplazamiento nunca debe superar este techo -- evita que el
+// patinador termine empujado demasiado lejos del centro del cuadro.
+const DISTANCIA_ANTICIPACION_KM = 0.12;
+const DESPLAZAMIENTO_ANTICIPACION_PX = 70;
+const MAX_DESPLAZAMIENTO_ANTICIPACION_PX = 90;
+// Suavizado de la DIRECCIÓN (no de la magnitud, que ya es constante) entre
+// cuadros -- evita que un cambio de rumbo de la ruta (curva) desplace el
+// punto de mira de golpe. Mismo principio que SUAVIZADO_BEARING en
+// geo-flyover.util.ts, aplicado acá a un vector 2D de pantalla en vez de un
+// ángulo (no hace falta manejar wrap-around de 360°).
+const FACTOR_SUAVIZADO_ANTICIPACION = 0.08;
+
+// Intro: pausa panorámica quieta + acercamiento suave hasta la posición y
+// escala exactas del arranque del seguimiento (ver el bloque de intro en
+// generarVideoRecorrido). Se suman como tiempo REAL extra al video, no
+// consumen nada del eje fraccionTotal existente.
+const DURACION_PAUSA_INTRO_SEG = 0.8;
+const DURACION_ACERCAMIENTO_INTRO_SEG = 1.6;
+
 // La cámara "persigue" el punto actual con este acercamiento durante el
 // dibujado del trazo (estilo Relive), y en el último tramo de la animación
 // se aleja hasta volver a 1 (panorámica del recorrido completo). Es un zoom
@@ -1133,6 +1222,144 @@ function estadoCamara(
     cx: focoCercano.x + (focoCentro.x - focoCercano.x) * t,
     cy: focoCercano.y + (focoCentro.y - focoCercano.y) * t,
     escala: ESCALA_CAMARA_CERCANA + (1 - ESCALA_CAMARA_CERCANA) * t,
+  };
+}
+
+// Igual que la interpolación de estadoEnFraccion, pero parametrizada por una
+// distancia (km) cualquiera en vez de por fraccionTotal -- se usa para
+// "mirar adelante" en calcularFocoConAnticipacion sin duplicar el índice que
+// ya devuelve estadoEnFraccion (esa sigue exactamente igual, sin tocar).
+function puntoADistanciaKm(puntos: PuntoGps[], distanciaAcumuladaKm: number[], distObjetivoKmCrudo: number): PuntoGps {
+  const distTotal = distanciaAcumuladaKm[distanciaAcumuladaKm.length - 1];
+  const distObjetivoKm = clamp(distObjetivoKmCrudo, 0, distTotal);
+  let i = 0;
+  while (i < puntos.length - 2 && distanciaAcumuladaKm[i + 1] <= distObjetivoKm) i++;
+  const actual = puntos[i];
+  const siguiente = puntos[i + 1];
+  const distTramoKm = distanciaAcumuladaKm[i + 1] - distanciaAcumuladaKm[i];
+  const progresoTramo = distTramoKm > 0 ? clamp((distObjetivoKm - distanciaAcumuladaKm[i]) / distTramoKm, 0, 1) : 0;
+  return {
+    lat: actual.lat + (siguiente.lat - actual.lat) * progresoTramo,
+    lon: actual.lon + (siguiente.lon - actual.lon) * progresoTramo,
+    timestamp: actual.timestamp + (siguiente.timestamp - actual.timestamp) * progresoTramo,
+  };
+}
+
+interface DireccionAnticipacion {
+  dx: number;
+  dy: number;
+}
+
+interface ResultadoAnticipacion {
+  foco: { x: number; y: number };
+  direccion: DireccionAnticipacion;
+}
+
+// Desplaza el PUNTO DE MIRA (no la posición dibujada del marcador, que sigue
+// yendo en su lugar real) hacia donde continúa la ruta, mirando un poco más
+// adelante en distancia real -- así queda más mapa visible por delante que
+// por detrás. La dirección se suaviza entre cuadros (no la magnitud, fija y
+// topeada por MAX_DESPLAZAMIENTO_ANTICIPACION_PX) para que un cambio de
+// rumbo en una curva la mueva gradual, nunca de golpe. `direccionAnterior`
+// es de solo lectura acá -- el llamador decide si persiste el resultado
+// (ver dibujarFrame/generarVideoRecorrido), función pura sin estado propio.
+function calcularFocoConAnticipacion(
+  focoActualPx: { x: number; y: number },
+  datos: DatosTarjetaRecorrido,
+  distanciaAcumuladaKm: number[],
+  fraccionTrazo: number,
+  x: (lon: number) => number,
+  y: (lat: number) => number,
+  direccionAnterior: DireccionAnticipacion | null,
+): ResultadoAnticipacion {
+  const distanciaActualKm = fraccionTrazo * datos.distanciaKm;
+  const puntoAdelante = puntoADistanciaKm(datos.puntos, distanciaAcumuladaKm, distanciaActualKm + DISTANCIA_ANTICIPACION_KM);
+  const adelantePx = { x: x(puntoAdelante.lon), y: y(puntoAdelante.lat) };
+
+  let dx = adelantePx.x - focoActualPx.x;
+  let dy = adelantePx.y - focoActualPx.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist > 0) {
+    dx /= dist;
+    dy /= dist;
+  }
+
+  let direccion: DireccionAnticipacion = { dx, dy };
+  if (direccionAnterior) {
+    if (dist === 0) {
+      // Sin punto adelante confiable (fin de la ruta) -- mantiene la
+      // última dirección conocida en vez de colapsar a (0,0).
+      direccion = direccionAnterior;
+    } else {
+      const sx = direccionAnterior.dx + (dx - direccionAnterior.dx) * FACTOR_SUAVIZADO_ANTICIPACION;
+      const sy = direccionAnterior.dy + (dy - direccionAnterior.dy) * FACTOR_SUAVIZADO_ANTICIPACION;
+      const norm = Math.hypot(sx, sy);
+      direccion = norm > 0 ? { dx: sx / norm, dy: sy / norm } : direccionAnterior;
+    }
+  }
+
+  const desplazamiento = Math.min(DESPLAZAMIENTO_ANTICIPACION_PX, MAX_DESPLAZAMIENTO_ANTICIPACION_PX);
+  return {
+    foco: {
+      x: focoActualPx.x + direccion.dx * desplazamiento,
+      y: focoActualPx.y + direccion.dy * desplazamiento,
+    },
+    direccion,
+  };
+}
+
+interface CamaraSuavizada {
+  cx: number;
+  cy: number;
+}
+
+// Cámara con "zona muerta": mientras el objetivo crudo (ya calculado por
+// estadoCamara, con su propio clamp a los bordes del mapa) quede a menos de
+// RADIO_TOLERANCIA_PX de la posición actual de la cámara, la cámara no se
+// mueve -- el patinador puede moverse dentro de esa zona sin que la cámara
+// reaccione a cada micro-variación del GPS. Al salir de la zona, la cámara
+// avanza hacia el punto que deja al objetivo justo en el borde (no de vuelta
+// al centro exacto), con una interpolación suave (FACTOR_SUAVIZADO_CAMARA)
+// en vez de un salto instantáneo al borde.
+//
+// `anterior === null` pasa exactamente una vez, en el primer cuadro del
+// seguimiento (ya sea el último del intro o, si no hubo intro, el primero
+// del loop real) -- ahí no hay "desde dónde" suavizar, así que se devuelve
+// el objetivo tal cual (coincide con cómo termina el acercamiento del intro,
+// ver generarVideoRecorrido).
+//
+// Sobre el final del tramo (ver FRACCION_INICIO_CONVERGENCIA_CAMARA) el
+// suavizado se apaga a propósito para llegar EXACTAMENTE convergida al
+// objetivo crudo antes del corte al outro -- estadoCamara arranca su propia
+// curva de alejamiento ahí partiendo del objetivo crudo (sin suavizar), así
+// que sin esto un pequeño rezago acumulado se notaría como un salto.
+function suavizarCamara(objetivo: EstadoCamara, anterior: CamaraSuavizada | null, fraccionTotal: number): EstadoCamara {
+  if (!anterior) return objetivo;
+
+  const inicioConvergencia = FRACCION_INICIO_CONVERGENCIA_CAMARA * FRACCION_TRAZO_COMPLETO;
+  if (fraccionTotal >= inicioConvergencia) {
+    const t = suavizar((fraccionTotal - inicioConvergencia) / (FRACCION_TRAZO_COMPLETO - inicioConvergencia));
+    const factor = Math.max(FACTOR_SUAVIZADO_CAMARA, t);
+    return {
+      cx: anterior.cx + (objetivo.cx - anterior.cx) * factor,
+      cy: anterior.cy + (objetivo.cy - anterior.cy) * factor,
+      escala: objetivo.escala,
+    };
+  }
+
+  const dx = objetivo.cx - anterior.cx;
+  const dy = objetivo.cy - anterior.cy;
+  const dist = Math.hypot(dx, dy);
+  if (dist <= RADIO_TOLERANCIA_PX) {
+    return { cx: anterior.cx, cy: anterior.cy, escala: objetivo.escala };
+  }
+  const excedente = dist - RADIO_TOLERANCIA_PX;
+  const objetivoEfectivoX = anterior.cx + (dx / dist) * excedente;
+  const objetivoEfectivoY = anterior.cy + (dy / dist) * excedente;
+  return {
+    cx: anterior.cx + (objetivoEfectivoX - anterior.cx) * FACTOR_SUAVIZADO_CAMARA,
+    cy: anterior.cy + (objetivoEfectivoY - anterior.cy) * FACTOR_SUAVIZADO_CAMARA,
+    escala: objetivo.escala,
   };
 }
 
@@ -1565,12 +1792,24 @@ function dibujarCuadroVideo(
   fraccionTotal: number,
   config: ConfigVideo,
   mostrarFotoFinal: boolean,
+  // Ya resuelta por el llamador (dibujarFrame o la secuencia de intro en
+  // generarVideoRecorrido) -- esta función ya no calcula estadoCamara
+  // internamente, así el llamador puede aplicarle suavizado/anticipación
+  // (tramo de seguimiento) o pasarla cruda (outro, sin cambios) según
+  // corresponda, sin que dibujarCuadroVideo necesite saber cuál es cuál.
+  camara: EstadoCamara,
   pulsoVelMax = 0,
   suavizadoEtiquetas: Map<number, { x: number; y: number }> = new Map(),
   // Solo se pasa (no-null) durante el tramo de seguimiento -- ver
   // generarVideoRecorrido. En el tramo final (panorámica + resumen) va
   // null y el fondo sigue siendo dibujarFondoMapaVideo, sin cambios.
   seleccionMosaico: SeleccionMosaico | null = null,
+  // Solo true durante el intro (panorámica/pausa/acercamiento, ver
+  // generarVideoRecorrido): dibuja el fondo (con la cámara/mosaico que
+  // corresponda) y corta ahí -- sin trazo, marcador, etiquetas, marca de
+  // velocidad máxima ni la barra de estadísticas, que todavía no
+  // corresponde mostrar antes de que arranque el recorrido de verdad.
+  soloFondo = false,
 ) {
   const { puntos } = datos;
   const distanciaMostrar = frame.distanciaKm;
@@ -1611,9 +1850,6 @@ function dibujarCuadroVideo(
 
   const inicio = puntos[0];
   const fin = puntos[puntos.length - 1];
-  const focoActual = frame.posicionActual ?? fin;
-  const focoTrazandoPx = { x: x(focoActual.lon), y: y(focoActual.lat) };
-  const camara = estadoCamara(fraccionTotal, focoTrazandoPx, focoCentroPx);
 
   ctx.save();
   ctx.beginPath();
@@ -1636,6 +1872,16 @@ function dibujarCuadroVideo(
   // transformación anidada extra para esto.
   if (seleccionMosaico) {
     dibujarMosaicosSeguimiento(ctx, seleccionMosaico, mapaImg);
+  }
+
+  // Intro (panorámica/pausa/acercamiento): corta acá, ya con el fondo
+  // dibujado -- todavía no corresponde mostrar trazo, marcador, etiquetas,
+  // marca de velocidad máxima, pines ni la barra de estadísticas (eso
+  // arranca recién con el primer cuadro real del seguimiento).
+  if (soloFondo) {
+    ctx.restore();
+    ctx.restore();
+    return;
   }
 
   // El trazo se dibuja tramo a tramo (no una sola polyline) para poder
@@ -1927,12 +2173,16 @@ export async function generarVideoRecorrido(
   const mosaicosSeguimiento = mapa ? calcularMosaicosSeguimiento(puntosSimplificadosSeguimiento, mapa) : [];
   const ventanaMosaicos = crearVentanaMosaicos(mosaicosSeguimiento);
   const indiceMosaicoRef = { valor: 0 };
+  // Último mosaico válido mostrado (ver seleccionarMosaico) -- todavía
+  // ninguno al arrancar, se llena solo cuando el mosaico 0 termine de
+  // decodificar más abajo.
+  const ultimoMosaicoValidoRef: { valor: UltimoMosaicoValido | null } = { valor: null };
   if (mosaicosSeguimiento.length > 0) {
     // Antes de dibujar el primer cuadro (y bastante antes de arrancar
     // MediaRecorder, ver más abajo): deja el primer mosaico decodificado y
     // unos cuantos más ya descargados -- sin esto, la cámara arrancaría el
     // seguimiento con el mosaico 0 todavía en blanco.
-    await mantenerVentana(ventanaMosaicos, 0);
+    await mantenerVentana(ventanaMosaicos, 0, null);
   }
 
   const { punto: puntoVelMax, indice: indiceVelMax, kmh: kmhVelMax } = velocidadMaximaConPunto(datos.puntos);
@@ -2020,27 +2270,63 @@ export async function generarVideoRecorrido(
   // Posición suavizada de cada etiqueta (por índice), persistida ENTRE
   // cuadros -- ver dibujarEtiquetaSector.
   const suavizadoEtiquetas = new Map<number, { x: number; y: number }>();
+  // Estado de cámara persistido entre cuadros (ver suavizarCamara) y de la
+  // dirección de anticipación (ver calcularFocoConAnticipacion) -- ninguno
+  // de los dos se toca en el outro (fraccionTotal > FRACCION_TRAZO_COMPLETO),
+  // que sigue llamando a estadoCamara exactamente igual que siempre.
+  const camaraSuavizadaRef: { valor: CamaraSuavizada | null } = { valor: null };
+  const direccionAnticipacionRef: { valor: DireccionAnticipacion | null } = { valor: null };
 
   function dibujarFrame(fraccionTotal: number, mostrarFotoFinal: boolean, pulsoVelMax = 0) {
     const fraccionTrazo = Math.min(1, fraccionTotal / FRACCION_TRAZO_COMPLETO);
     const frame = estadoEnFraccion(datos, distanciaAcumuladaKm, fraccionTrazo);
+    const focoActual = frame.posicionActual ?? datos.puntos[datos.puntos.length - 1];
+    const focoTrazandoPx = { x: x(focoActual.lon), y: y(focoActual.lat) };
 
-    // Cámara de mosaicos: solo aplica durante el trazo (nunca en el tramo
-    // final, que sigue usando la panorámica de siempre). El índice de
-    // mosaico activo (indiceMosaicoRef) es mutable y persiste entre
-    // llamadas -- seleccionarMosaico lo avanza cuando corresponde. Si el
-    // índice avanzó respecto del cuadro anterior, se dispara (sin await,
-    // sigue en paralelo mientras la grabación continúa en tiempo real) el
-    // mantenimiento de la ventana de descarga/decodificación para el nuevo
-    // entorno -- ver mantenerVentana.
+    const enSeguimiento = fraccionTotal <= FRACCION_TRAZO_COMPLETO;
+    let camara: EstadoCamara;
     let seleccionMosaico: SeleccionMosaico | null = null;
-    if (mosaicosSeguimiento.length > 0 && fraccionTotal <= FRACCION_TRAZO_COMPLETO) {
-      const indicePrevio = indiceMosaicoRef.valor;
-      const focoActualMosaico = frame.posicionActual ?? datos.puntos[datos.puntos.length - 1];
-      seleccionMosaico = seleccionarMosaico(focoActualMosaico, ventanaMosaicos, indiceMosaicoRef);
-      if (indiceMosaicoRef.valor !== indicePrevio) {
-        mantenerVentana(ventanaMosaicos, indiceMosaicoRef.valor).catch(() => {});
+
+    if (enSeguimiento) {
+      // Punto de mira desplazado hacia adelante en la ruta (ver
+      // calcularFocoConAnticipacion) -- estadoCamara sigue siendo la MISMA
+      // función de siempre (clamp a los bordes del mapa incluido), solo que
+      // acá recibe el foco ya desplazado en vez del crudo.
+      const anticipacion = calcularFocoConAnticipacion(
+        focoTrazandoPx,
+        datos,
+        distanciaAcumuladaKm,
+        fraccionTrazo,
+        x,
+        y,
+        direccionAnticipacionRef.valor,
+      );
+      direccionAnticipacionRef.valor = anticipacion.direccion;
+      const objetivoCrudo = estadoCamara(fraccionTotal, anticipacion.foco, focoCentroPx);
+      camara = suavizarCamara(objetivoCrudo, camaraSuavizadaRef.valor, fraccionTotal);
+      camaraSuavizadaRef.valor = { cx: camara.cx, cy: camara.cy };
+
+      // Cámara de mosaicos: solo aplica durante el trazo (nunca en el tramo
+      // final, que sigue usando la panorámica de siempre). El índice de
+      // mosaico activo (indiceMosaicoRef) es mutable y persiste entre
+      // llamadas -- seleccionarMosaico lo avanza cuando corresponde. Si el
+      // índice avanzó respecto del cuadro anterior, se dispara (sin await,
+      // sigue en paralelo mientras la grabación continúa en tiempo real) el
+      // mantenimiento de la ventana de descarga/decodificación para el
+      // nuevo entorno, protegiendo el último mosaico válido en uso como
+      // fallback -- ver mantenerVentana/liberarFueraDeVentana.
+      if (mosaicosSeguimiento.length > 0) {
+        const indicePrevio = indiceMosaicoRef.valor;
+        seleccionMosaico = seleccionarMosaico(focoActual, ventanaMosaicos, indiceMosaicoRef, ultimoMosaicoValidoRef);
+        if (indiceMosaicoRef.valor !== indicePrevio) {
+          mantenerVentana(ventanaMosaicos, indiceMosaicoRef.valor, ultimoMosaicoValidoRef.valor?.indice ?? null).catch(
+            () => {},
+          );
+        }
       }
+    } else {
+      // Outro: SIN anticipación ni suavizado, misma llamada de siempre.
+      camara = estadoCamara(fraccionTotal, focoTrazandoPx, focoCentroPx);
     }
 
     dibujarCuadroVideo(
@@ -2056,15 +2342,81 @@ export async function generarVideoRecorrido(
       fraccionTotal,
       config,
       mostrarFotoFinal,
+      camara,
       pulsoVelMax,
       suavizadoEtiquetas,
       seleccionMosaico,
     );
   }
 
-  // Primer cuadro dibujado ANTES de arrancar a grabar, para no capturar un
-  // instante en blanco.
-  dibujarFrame(0, false);
+  // --- Intro: panorámica limpia -> pausa -> acercamiento suave hasta la
+  // posición/escala EXACTAS del arranque del seguimiento ---
+  //
+  // A propósito no toca el eje fraccionTotal (que gobierna trazo, etiquetas
+  // de sector y la marca de velocidad máxima, ver alphaEtiqueta/el disparo
+  // de vel. máxima más abajo): en vez de "robarle" una porción al rango
+  // existente [0, FRACCION_TRAZO_COMPLETO] (lo que desincronizaría esas tres
+  // cosas), se agrega como cuadros EXTRA antes de que arranque el loop
+  // principal -- mismo patrón que ya usaba la tarjeta de nombre/avatar
+  // (dibujarOverlayIntro), que también se dibuja con fraccionTotal fijo en
+  // 0. Todos estos cuadros de intro usan soloFondo=true en
+  // dibujarCuadroVideo, así que nunca se alcanza a ver trazo, marcador,
+  // etiquetas, marca de velocidad máxima ni la barra de estadísticas antes
+  // de que el recorrido arranque de verdad.
+  const focoInicioPx = { x: x(datos.puntos[0].lon), y: y(datos.puntos[0].lat) };
+  const anticipacionInicio = calcularFocoConAnticipacion(
+    focoInicioPx,
+    datos,
+    distanciaAcumuladaKm,
+    0,
+    x,
+    y,
+    null,
+  );
+  const camaraPanoramicaIntro: EstadoCamara = { cx: focoCentroPx.x, cy: focoCentroPx.y, escala: 1 };
+  // Misma fórmula, mismos datos que el PRIMER cuadro real del seguimiento
+  // (dibujarFrame(0, ...), fraccionTrazo=0) -- garantiza que el último
+  // cuadro del acercamiento coincida exacto con el primero del loop, sin
+  // salto perceptible.
+  const camaraFinIntro = estadoCamara(0, anticipacionInicio.foco, focoCentroPx);
+  const frameIntro = estadoEnFraccion(datos, distanciaAcumuladaKm, 0);
+
+  function dibujarFondoIntro(camara: EstadoCamara, pesoMosaico: number) {
+    const seleccion: SeleccionMosaico | null =
+      mosaicosSeguimiento.length > 0
+        ? {
+            indiceActual: 0,
+            actual: null,
+            metaActual: null,
+            siguiente: ventanaMosaicos.imagenes[0] ?? null,
+            metaSiguiente: ventanaMosaicos.metas[0] ?? null,
+            peso: pesoMosaico,
+          }
+        : null;
+    dibujarCuadroVideo(
+      ctx!,
+      datos,
+      mapaImg,
+      mapaDetalladoImg,
+      factorDetalle,
+      x,
+      y,
+      focoCentroPx,
+      frameIntro,
+      0,
+      config,
+      false,
+      camara,
+      0,
+      suavizadoEtiquetas,
+      seleccion,
+      true,
+    );
+  }
+
+  // Primer cuadro dibujado ANTES de arrancar a grabar (panorámica quieta),
+  // para no capturar un instante en blanco.
+  dibujarFondoIntro(camaraPanoramicaIntro, 0);
 
   // Música de fondo (opcional): se decodifica y arranca a reproducir ANTES
   // de crear el MediaRecorder, mezclada como un track de audio más sobre el
@@ -2128,21 +2480,44 @@ export async function generarVideoRecorrido(
 
   const intervaloMs = 1000 / fps;
 
+  // Pausa quieta en la panorámica -- le da tiempo al ojo de ubicar el
+  // recorrido completo antes de que la cámara empiece a moverse.
+  dibujarFondoIntro(camaraPanoramicaIntro, 0);
+  await new Promise((r) => setTimeout(r, DURACION_PAUSA_INTRO_SEG * 1000));
+
   if (nombreUsuario && nombreUsuario.trim()) {
     const nombreLimpio = nombreUsuario.trim();
-    dibujarFrame(0, false);
+    dibujarFondoIntro(camaraPanoramicaIntro, 0);
     dibujarOverlayIntro(ctx, avatarImg, nombreLimpio, 1);
     await new Promise((r) => setTimeout(r, duracionIntroSeg * 1000));
 
-    // Desvanecido gradual hacia el cuadro animado (el mismo cuadro 0 ya
-    // dibujado abajo, con la barra de contador/logo/etiqueta ya visibles) en
-    // vez de cortar de golpe de la portada al trazo.
+    // Desvanecido gradual hacia la panorámica limpia (el mismo cuadro de
+    // intro ya dibujado abajo) en vez de cortar de golpe de la portada.
     const framesFundido = Math.max(1, Math.round(FUNDIDO_INTRO_SEG * fps));
     for (let i = 1; i <= framesFundido; i++) {
-      dibujarFrame(0, false);
+      dibujarFondoIntro(camaraPanoramicaIntro, 0);
       dibujarOverlayIntro(ctx, avatarImg, nombreLimpio, 1 - i / framesFundido);
       await new Promise((r) => setTimeout(r, intervaloMs));
     }
+  }
+
+  // Acercamiento progresivo: interpola cámara (panorámica -> cercana) y hace
+  // crossfade del fondo (panorámica -> primer mosaico) al mismo tiempo, con
+  // la misma curva de suavizado (suavizar()) que ya usa el alejamiento del
+  // outro. El último cuadro coincide EXACTO con camaraFinIntro -- misma
+  // fórmula que el primer cuadro real del loop de abajo (ver su comentario
+  // más arriba), así que no hay salto entre el fin del intro y el arranque
+  // del seguimiento.
+  const framesAcercamiento = Math.max(1, Math.round(DURACION_ACERCAMIENTO_INTRO_SEG * fps));
+  for (let i = 1; i <= framesAcercamiento; i++) {
+    const t = suavizar(i / framesAcercamiento);
+    const camaraPaso: EstadoCamara = {
+      cx: camaraPanoramicaIntro.cx + (camaraFinIntro.cx - camaraPanoramicaIntro.cx) * t,
+      cy: camaraPanoramicaIntro.cy + (camaraFinIntro.cy - camaraPanoramicaIntro.cy) * t,
+      escala: camaraPanoramicaIntro.escala + (camaraFinIntro.escala - camaraPanoramicaIntro.escala) * t,
+    };
+    dibujarFondoIntro(camaraPaso, t);
+    await new Promise((r) => setTimeout(r, intervaloMs));
   }
 
   const totalFrames = Math.round(duracionAnimSeg * fps);
