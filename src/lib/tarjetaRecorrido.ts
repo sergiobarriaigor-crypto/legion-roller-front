@@ -203,6 +203,18 @@ function calcularTilesNecesarios(
 // "@2x" de mayor resolución; el tile de 256px se estira al doble (ESCALA) al
 // dibujarlo, se ve un poco menos nítido que antes pero es la misma calidad
 // que ya se ve en el mapa satelital dentro de la app.
+//
+// PENDIENTE DE REVISIÓN antes de masificar el video de seguimiento (no
+// tocar acá, solo documentado): "sin API key" no es lo mismo que "gratis e
+// ilimitado para uso masivo/comercial" -- no hay un límite de solicitudes ni
+// política de uso publicada que hayamos podido confirmar para este endpoint
+// específico de tiles estáticos de server.arcgisonline.com. Mientras el
+// video de seguimiento sea una prueba técnica de bajo volumen esto no es
+// bloqueante, pero antes de lanzarlo a todos los usuarios habría que
+// confirmar con Esri (o migrar a un plan/proveedor con límites conocidos) --
+// ver registrarFalloTile más abajo, que ahora deja explícito en consola
+// cualquier HTTP 429 (señal de throttling) para poder detectar esto durante
+// las pruebas.
 const TILE_SATELITE_URL =
   "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
 const TILE_ETIQUETAS_URL =
@@ -218,17 +230,52 @@ function urlTile(plantilla: string, zoom: number, x: number, y: number): string 
 // video sin ningún mensaje de error ni forma de reintentar.
 const TIMEOUT_TILE_MS = 8000;
 
+// Clasificación explícita del fallo de un tile -- pedido para las pruebas de
+// la Opción C (cache de tiles + tope más alto de MAX_TILES_MOSAICO_SEGUIMIENTO):
+// antes cualquier fallo (red, 404, 429, error de decodificación) caía en el
+// mismo `return null` silencioso, indistinguible entre "no hay internet" y
+// "Esri está limitando la cantidad de pedidos". No cambia el contrato de
+// cargarTileComoImagen (nunca revienta, siempre devuelve null en cualquier
+// fallo) -- solo agrega qué se ve en consola antes de devolver null. Esto es
+// deliberadamente ruidoso (sin agregación/throttling de logs) porque es para
+// las pruebas técnicas actuales, no para producción masiva -- si en el futuro
+// esto se vuelve ruido real, hay que revisarlo antes de escalar el uso del
+// proveedor (ver el comentario "PENDIENTE DE REVISIÓN" sobre la licencia de
+// Esri, más arriba, junto a TILE_SATELITE_URL).
+type MotivoFalloTile = "red" | "http_429" | "http_404" | "http_otro" | "decodificacion";
+
+function registrarFalloTile(motivo: MotivoFalloTile, url: string, detalle: string): void {
+  const mensajes: Record<MotivoFalloTile, string> = {
+    red: `error de red/timeout pidiendo tile (${detalle})`,
+    http_429: `HTTP 429 -- posible rate limit/throttling del proveedor (Esri)`,
+    http_404: `HTTP 404 -- tile inexistente en el proveedor`,
+    http_otro: `HTTP ${detalle} -- respuesta no exitosa`,
+    decodificacion: `no se pudo leer/decodificar el tile descargado (${detalle})`,
+  };
+  console.warn(`[tiles] ${mensajes[motivo]}: ${url}`);
+}
+
 async function cargarTileComoImagen(url: string): Promise<HTMLImageElement | null> {
+  const controlador = new AbortController();
+  const idTimeout = setTimeout(() => controlador.abort(), TIMEOUT_TILE_MS);
+  let res: Response;
   try {
-    const controlador = new AbortController();
-    const idTimeout = setTimeout(() => controlador.abort(), TIMEOUT_TILE_MS);
-    let res: Response;
     try {
       res = await fetch(url, { signal: controlador.signal });
     } finally {
       clearTimeout(idTimeout);
     }
-    if (!res.ok) return null;
+  } catch (err) {
+    registrarFalloTile("red", url, err instanceof Error ? err.message : String(err));
+    return null;
+  }
+  if (!res.ok) {
+    if (res.status === 429) registrarFalloTile("http_429", url, String(res.status));
+    else if (res.status === 404) registrarFalloTile("http_404", url, String(res.status));
+    else registrarFalloTile("http_otro", url, String(res.status));
+    return null;
+  }
+  try {
     const blob = await res.blob();
     const dataUrl = await new Promise<string>((resolve, reject) => {
       const lector = new FileReader();
@@ -239,12 +286,78 @@ async function cargarTileComoImagen(url: string): Promise<HTMLImageElement | nul
     return await new Promise<HTMLImageElement>((resolve, reject) => {
       const img = new Image();
       img.onload = () => resolve(img);
-      img.onerror = () => reject(new Error("no se pudo cargar el tile"));
+      img.onerror = () => reject(new Error("no se pudo decodificar el tile"));
       img.src = dataUrl;
     });
-  } catch {
+  } catch (err) {
+    registrarFalloTile("decodificacion", url, err instanceof Error ? err.message : String(err));
     return null;
   }
+}
+
+// Cache temporal de tiles YA DESCARGADOS, exclusivo de UNA generación de
+// video (ver generarVideoRecorrido) -- no es un cache de módulo ni persiste
+// entre videos/usuarios. Mosaicos de seguimiento consecutivos (ver
+// calcularMosaicosSeguimiento) se superponen mucho geográficamente, así que
+// buena parte de sus tiles son literalmente el mismo z/x/y ya descargado
+// para el mosaico anterior -- sin este cache, generarMapaEnZoom lo vuelve a
+// pedir por red cada vez. Guarda la Promise (no la Image ya resuelta) para
+// que si dos mosaicos vecinos necesitan el mismo tile EN PARALELO (ver
+// mantenerVentana, que dispara varias descargas a la vez), el segundo
+// reutilice el mismo fetch en vuelo en vez de duplicarlo.
+//
+// Solo se usa para la capa satelital de los mosaicos de seguimiento (ver
+// generarMapaEnZoom): la clave es nada más "zoom/x/y" porque esta cache
+// nunca recibe tiles de la capa de etiquetas (asegurarDescarga siempre pide
+// incluirEtiquetas=false) ni tiles del panorámico (generarMapaReal/
+// generarMapaDetallado no reciben cache) -- si algún día se cachea más de
+// una capa, la clave necesitaría incluir cuál.
+interface CacheTilesLRU {
+  entradas: Map<string, Promise<HTMLImageElement | null>>;
+  limite: number;
+}
+
+function crearCacheTilesLRU(limite: number): CacheTilesLRU {
+  return { entradas: new Map(), limite };
+}
+
+// Vacía el cache por completo -- se llama al terminar generarVideoRecorrido
+// (éxito o error, ver el wrapper con try/finally más abajo). Las Promises
+// resueltas (Image ya decodificada) quedan sin ninguna referencia viva acá
+// adentro; como cargarTileComoImagen usa dataURL (no URL.createObjectURL),
+// no hace falta revocar nada explícito -- el recolector de basura se encarga
+// en cuanto no queda ninguna otra referencia (los mosaicos ya compuestos
+// guardan su propio dataURL final, no una referencia a los Image de cada tile).
+function limpiarCacheTilesLRU(cache: CacheTilesLRU): void {
+  cache.entradas.clear();
+}
+
+function obtenerTileConCache(
+  cache: CacheTilesLRU | null,
+  plantilla: string,
+  zoom: number,
+  x: number,
+  y: number,
+): Promise<HTMLImageElement | null> {
+  const url = urlTile(plantilla, zoom, x, y);
+  if (!cache) return cargarTileComoImagen(url);
+  const clave = `${zoom}/${x}/${y}`;
+  const existente = cache.entradas.get(clave);
+  if (existente) {
+    // Reinsertar al final = "más recientemente usado" (Map conserva orden
+    // de inserción, así que el primer par es siempre el menos usado
+    // recientemente -- ver la expulsión más abajo).
+    cache.entradas.delete(clave);
+    cache.entradas.set(clave, existente);
+    return existente;
+  }
+  const promesa = cargarTileComoImagen(url);
+  cache.entradas.set(clave, promesa);
+  if (cache.entradas.size > cache.limite) {
+    const claveMasAntigua = cache.entradas.keys().next().value;
+    if (claveMasAntigua !== undefined) cache.entradas.delete(claveMasAntigua);
+  }
+  return promesa;
 }
 
 interface MapaGenerado {
@@ -268,13 +381,17 @@ async function generarMapaEnZoom(
   altoDestino: number,
   incluirEtiquetas: boolean,
   maxTiles: number,
+  // Solo lo usan los mosaicos de seguimiento (ver asegurarDescarga) -- la
+  // panorámica (generarMapaReal/generarMapaDetallado) sigue sin cache,
+  // exactamente como antes, al no pasar este argumento.
+  cache: CacheTilesLRU | null = null,
 ): Promise<MapaGenerado | null> {
   try {
     const tiles = calcularTilesNecesarios(centroPxX, centroPxY, zoom, anchoDestino, altoDestino);
     if (tiles.length === 0 || tiles.length > maxTiles) return null;
 
     const [imagenesBase, imagenesEtiquetas] = await Promise.all([
-      Promise.all(tiles.map((t) => cargarTileComoImagen(urlTile(TILE_SATELITE_URL, zoom, t.x, t.y)))),
+      Promise.all(tiles.map((t) => obtenerTileConCache(cache, TILE_SATELITE_URL, zoom, t.x, t.y))),
       incluirEtiquetas
         ? Promise.all(tiles.map((t) => cargarTileComoImagen(urlTile(TILE_ETIQUETAS_URL, zoom, t.x, t.y))))
         : Promise.resolve(tiles.map(() => null)),
@@ -436,7 +553,22 @@ const FRACCION_BANDA_TRANSICION = 0.15;
 // Tope de tiles por mosaico de seguimiento -- mismo criterio "mejor
 // esfuerzo" que generarMapaDetallado: si un mosaico puntual falla o pide
 // demasiados tiles, se salta sin romper el video (ver seleccionarMosaico).
-const MAX_TILES_MOSAICO_SEGUIMIENTO = 64;
+//
+// ERA 64 -- confirmado por el diagnóstico aislado (ver debug-mosaico) que un
+// mosaico de FACTOR_COBERTURA_MOSAICO=2.6 necesita ~112 tiles reales (rango
+// 104-126 según cómo caiga el centro en la grilla), así que con 64 CADA
+// mosaico de seguimiento fallaba siempre (generarMapaEnZoom devolvía null),
+// cayendo siempre al fallback panorámico -- esa es la causa raíz real del
+// "rectángulo grande de mapa/mar que no corresponde" reportado. 150 deja
+// margen sobre el máximo observado (126) sin ser un número arbitrario.
+const MAX_TILES_MOSAICO_SEGUIMIENTO = 150;
+// Tope del cache temporal de tiles de seguimiento (ver CacheTilesLRU) --
+// dimensionado para cubrir el mosaico activo completo (~112-126 tiles) más
+// varios vecinos con alto solape geográfico (ver VENTANA_DESCARGA_ADELANTE
+// más abajo), sin crecer sin límite en rutas largas: memoria acotada
+// (~300 tiles × ~0.25 MB/tile decodificado ≈ 75 MB) constante sin importar
+// si la ruta son 5 km o 70 km.
+const LIMITE_CACHE_TILES_SEGUIMIENTO = 300;
 
 // Ventanas de memoria acotadas, independientes de cuántos mosaicos tenga la
 // ruta completa (ver comentario largo en EstadoVentanaMosaicos): cuántos
@@ -607,14 +739,19 @@ interface EstadoVentanaMosaicos {
   dataUrls: (string | null)[];
   imagenes: (HTMLImageElement | null)[];
   descargando: Set<number>;
+  // Cache temporal de tiles, exclusivo de ESTA generación de video (ver
+  // CacheTilesLRU) -- vive acá para que asegurarDescarga lo tenga a mano sin
+  // pasarlo como parámetro suelto por todos lados.
+  cache: CacheTilesLRU;
 }
 
-function crearVentanaMosaicos(metas: MosaicoSeguimientoMeta[]): EstadoVentanaMosaicos {
+function crearVentanaMosaicos(metas: MosaicoSeguimientoMeta[], cache: CacheTilesLRU): EstadoVentanaMosaicos {
   return {
     metas,
     dataUrls: metas.map(() => null),
     imagenes: metas.map(() => null),
     descargando: new Set(),
+    cache,
   };
 }
 
@@ -622,7 +759,10 @@ function crearVentanaMosaicos(metas: MosaicoSeguimientoMeta[]): EstadoVentanaMos
 // generarMapaEnZoom tal cual, solo con el centro/zoom de este mosaico en vez
 // del de toda la ruta) -- el resultado es un dataURL, todavía sin decodificar
 // a Image. `descargando` evita pedir el mismo índice dos veces en paralelo
-// si dos llamadas a mantenerVentana se superponen.
+// si dos llamadas a mantenerVentana se superponen. Pasa estado.cache para
+// que tiles ya descargados por un mosaico vecino (alto solape geográfico
+// entre mosaicos consecutivos, ver calcularMosaicosSeguimiento) no se vuelvan
+// a pedir por red.
 async function asegurarDescarga(estado: EstadoVentanaMosaicos, indice: number): Promise<void> {
   if (indice < 0 || indice >= estado.metas.length) return;
   if (estado.dataUrls[indice] !== null || estado.descargando.has(indice)) return;
@@ -637,6 +777,7 @@ async function asegurarDescarga(estado: EstadoVentanaMosaicos, indice: number): 
       meta.altoPx,
       false,
       MAX_TILES_MOSAICO_SEGUIMIENTO,
+      estado.cache,
     );
     estado.dataUrls[indice] = generado?.dataUrl ?? null;
   } finally {
@@ -2290,9 +2431,29 @@ function fraccionesPines(n: number): number[] {
 // función tarda aproximadamente duracionAnimSeg + duracionFinalSeg segundos
 // reales en resolver — por eso recibe onProgreso, para poder mostrar un
 // indicador mientras tanto.
+// Wrapper delgado: dueño exclusivo del ciclo de vida del cache temporal de
+// tiles (ver CacheTilesLRU) -- lo crea acá y garantiza con try/finally que se
+// libere al terminar, tanto si generarVideoRecorridoInterno termina bien
+// como si tira una excepción en cualquier punto (video demasiado corto,
+// MediaRecorder no soportado, fallo de grabación, etc.). El resto de la
+// lógica (intro, mosaicos, cámara, outro, MediaRecorder) sigue exactamente
+// igual, solo movida a la función interna de abajo.
 export async function generarVideoRecorrido(
   datos: DatosTarjetaRecorrido,
   opciones: OpcionesVideoRecorrido = {},
+): Promise<Blob> {
+  const cacheTiles = crearCacheTilesLRU(LIMITE_CACHE_TILES_SEGUIMIENTO);
+  try {
+    return await generarVideoRecorridoInterno(datos, opciones, cacheTiles);
+  } finally {
+    limpiarCacheTilesLRU(cacheTiles);
+  }
+}
+
+async function generarVideoRecorridoInterno(
+  datos: DatosTarjetaRecorrido,
+  opciones: OpcionesVideoRecorrido,
+  cacheTiles: CacheTilesLRU,
 ): Promise<Blob> {
   const {
     duracionAnimSeg = DURACION_ANIM_SEG_DEFECTO,
@@ -2376,7 +2537,7 @@ export async function generarVideoRecorrido(
   // mosaicos de más).
   const puntosSimplificadosSeguimiento = simplificarRutaParaDibujo(datos.puntos);
   const mosaicosSeguimiento = mapa ? calcularMosaicosSeguimiento(puntosSimplificadosSeguimiento) : [];
-  const ventanaMosaicos = crearVentanaMosaicos(mosaicosSeguimiento);
+  const ventanaMosaicos = crearVentanaMosaicos(mosaicosSeguimiento, cacheTiles);
   const indiceMosaicoRef = { valor: 0 };
   // Último mosaico válido mostrado (ver seleccionarMosaico) -- todavía
   // ninguno al arrancar, se llena solo cuando el mosaico 0 termine de
