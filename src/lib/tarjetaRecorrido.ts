@@ -928,7 +928,13 @@ interface EstadoVentanaMosaicos {
   metas: MosaicoSeguimientoMeta[];
   dataUrls: (string | null)[];
   imagenes: (HTMLImageElement | null)[];
-  descargando: Set<number>;
+  // Promesa de la descarga real en curso para cada índice (no solo un flag)
+  // -- así una segunda llamada concurrente a asegurarDescarga() para el
+  // MISMO índice puede esperar la misma descarga en vez de asumir que ya
+  // terminó (ver asegurarDescarga). Sin esto, asegurarDecodificado() podía
+  // leer dataUrls[indice] todavía null cuando dos llamadas para el mismo
+  // índice arrancaban en el mismo Promise.all (ver mantenerVentana).
+  descargando: Map<number, Promise<void>>;
   // Cache temporal de tiles, exclusivo de ESTA generación de video (ver
   // CacheTilesLRU) -- vive acá para que asegurarDescarga lo tenga a mano sin
   // pasarlo como parámetro suelto por todos lados.
@@ -940,7 +946,7 @@ function crearVentanaMosaicos(metas: MosaicoSeguimientoMeta[], cache: CacheTiles
     metas,
     dataUrls: metas.map(() => null),
     imagenes: metas.map(() => null),
-    descargando: new Set(),
+    descargando: new Map(),
     cache,
   };
 }
@@ -955,25 +961,42 @@ function crearVentanaMosaicos(metas: MosaicoSeguimientoMeta[], cache: CacheTiles
 // a pedir por red.
 async function asegurarDescarga(estado: EstadoVentanaMosaicos, indice: number): Promise<void> {
   if (indice < 0 || indice >= estado.metas.length) return;
-  if (estado.dataUrls[indice] !== null || estado.descargando.has(indice)) return;
-  estado.descargando.add(indice);
-  try {
-    const meta = estado.metas[indice];
-    const generado = await generarMapaEnZoom(
-      meta.centroPxX,
-      meta.centroPxY,
-      ZOOM_SEGUIMIENTO,
-      meta.anchoPx,
-      meta.altoPx,
-      false,
-      MAX_TILES_MOSAICO_SEGUIMIENTO,
-      estado.cache,
-      `indice=${indice}`,
-    );
-    estado.dataUrls[indice] = generado?.dataUrl ?? null;
-  } finally {
-    estado.descargando.delete(indice);
+  if (estado.dataUrls[indice] !== null) return;
+  // Si ya hay una descarga real en curso para este índice (disparada por
+  // otra llamada concurrente -- p.ej. la del propio asegurarDecodificado()
+  // dentro del mismo Promise.all de mantenerVentana), esperar ESA misma
+  // promesa en vez de asumir que ya terminó y devolver de una. Sin esto,
+  // el segundo llamador seguía de largo con dataUrls[indice] todavía null.
+  const enCurso = estado.descargando.get(indice);
+  if (enCurso) {
+    await enCurso;
+    return;
   }
+  // Se registra la promesa en el Map ANTES de cualquier punto de espera
+  // real (todo lo de acá arriba es síncrono) -- así ninguna llamada
+  // concurrente que entre en el mismo tick puede colarse a iniciar una
+  // segunda descarga real para el mismo índice.
+  const promesa = (async () => {
+    try {
+      const meta = estado.metas[indice];
+      const generado = await generarMapaEnZoom(
+        meta.centroPxX,
+        meta.centroPxY,
+        ZOOM_SEGUIMIENTO,
+        meta.anchoPx,
+        meta.altoPx,
+        false,
+        MAX_TILES_MOSAICO_SEGUIMIENTO,
+        estado.cache,
+        `indice=${indice}`,
+      );
+      estado.dataUrls[indice] = generado?.dataUrl ?? null;
+    } finally {
+      estado.descargando.delete(indice);
+    }
+  })();
+  estado.descargando.set(indice, promesa);
+  await promesa;
 }
 
 async function asegurarDecodificado(estado: EstadoVentanaMosaicos, indice: number): Promise<void> {
