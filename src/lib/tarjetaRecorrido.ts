@@ -406,11 +406,26 @@ const ZOOM_SEGUIMIENTO = 17;
 // de la propia diagonal del viewport (para que la cámara nunca llegue a ver
 // el borde real de la imagen cargada, sin importar hacia qué lado se mueva).
 const FACTOR_COBERTURA_MOSAICO = 2.6;
-// Escala FIJA (independiente de la ruta) con la que se dibuja cada mosaico
-// -- ver ESCALA_MOSAICO_FIJA (definida más abajo, junto a
-// ESCALA_CAMARA_CERCANA, de la que depende su valor inicial) y el
-// comentario largo en MosaicoSeguimientoMeta sobre por qué esto ya no
-// puede ser 1/factor.
+
+// Escala del SEGUIMIENTO -- reemplaza el intento anterior (ESCALA_MOSAICO_FIJA,
+// que reescalaba el mosaico completo con un número independiente de la
+// conversión geográfica real, y por eso desalineaba todo lo que no fuera el
+// centro exacto -- ver el diagnóstico correcto en calcularRecorteMosaico).
+// Acá NO se reescala nada: se recorta una ventana real del mosaico
+// (drawImage de 9 argumentos). K = ESCALA_SEGUIMIENTO define cuántos
+// píxeles de VIDEO representa cada píxel LÓGICO de ZOOM_SEGUIMIENTO -- K=1
+// es resolución nativa (ni estirado ni reducido). VALOR INICIAL sujeto a
+// ajuste visual: K>1 acerca la cámara (recorta una ventana más chica del
+// mosaico), K<1 la aleja.
+//
+// Durante el seguimiento, camara.escala (ver estadoCamara) pasa a valer
+// `factor × ESCALA_SEGUIMIENTO` en vez del fijo ESCALA_CAMARA_CERCANA --
+// demostrado matemáticamente que el `factor` (que depende de mapaBase.zoom,
+// o sea de la distancia total de la ruta) se cancela al combinarse con la
+// conversión geográfica real, dejando el nivel de acercamiento final
+// idéntico sin importar qué zoom haya elegido la panorámica para la ruta
+// completa.
+const ESCALA_SEGUIMIENTO = 1;
 
 // Del semirradio útil del mosaico (mitad del lado más chico del lienzo, en
 // píxeles de ZOOM_SEGUIMIENTO), qué fracción es "zona segura" (un solo
@@ -434,28 +449,19 @@ const VENTANA_DESCARGA_ATRAS = 1;
 const VENTANA_DECODIFICADA_ADELANTE = 1;
 
 interface MosaicoSeguimientoMeta {
-  centroPxX: number; // en ZOOM_SEGUIMIENTO
+  centroPxX: number; // en ZOOM_SEGUIMIENTO (lógico, sin ESCALA retina)
   centroPxY: number;
-  anchoPx: number;
+  anchoPx: number; // idem -- lógico
   altoPx: number;
-  // Radios (px, en ZOOM_SEGUIMIENTO) de la zona segura y del límite de la
-  // banda de transición -- la cámara se queda sola en este mosaico mientras
-  // esté a menos de radioZonaSeguraPx de su centro; entre ese radio y
-  // radioLimitePx hace crossfade con el siguiente (ver seleccionarMosaico).
+  // Radios (px lógicos de ZOOM_SEGUIMIENTO) de la zona segura y del límite
+  // de la banda de transición -- la cámara se queda sola en este mosaico
+  // mientras esté a menos de radioZonaSeguraPx de su centro; entre ese
+  // radio y radioLimitePx hace crossfade con el siguiente (ver
+  // seleccionarMosaico). Ya restan el espacio que ocupa la propia ventana
+  // de recorte (ver calcularMosaicosSeguimiento) -- no son una fracción
+  // ingenua del mosaico completo.
   radioZonaSeguraPx: number;
   radioLimitePx: number;
-  // Posición/escala precalculadas UNA sola vez para dibujar este mosaico en
-  // el mismo espacio de "canvas base" que ya usan x()/y() y camara.cx/cy
-  // (el de la panorámica, a mapa.zoom) -- ver dibujarMosaicosSeguimiento.
-  // Así, aunque cada mosaico esté centrado en un punto distinto de la ruta
-  // y a un zoom distinto del panorámico, todos quedan geográficamente
-  // alineados bajo la misma transformación de cámara: dos mosaicos
-  // consecutivos dibujados con estos valores caen exactamente en el mismo
-  // lugar de pantalla para un mismo punto real (calle, costa, manzana), sin
-  // salto perceptible en el crossfade.
-  origenCanvasBaseX: number;
-  origenCanvasBaseY: number;
-  escalaEnCanvasBase: number;
 }
 
 // Recorre la ruta (ya simplificada con Douglas-Peucker) por DESPLAZAMIENTO
@@ -468,46 +474,41 @@ interface MosaicoSeguimientoMeta {
 // (que distorsiona km/píxel) ni si la ruta vuelve cerca de un tramo
 // anterior (acá simplemente se arma un mosaico nuevo en la cadena, nunca se
 // intenta reutilizar uno geográficamente cercano de más atrás).
-function calcularMosaicosSeguimiento(
-  puntosSimplificados: PuntoGps[],
-  mapaBase: MapaGenerado,
-): MosaicoSeguimientoMeta[] {
-  const factor = 2 ** (ZOOM_SEGUIMIENTO - mapaBase.zoom);
+//
+// No recibe `factor` (la conversión geográfica dependiente de la ruta) --
+// justamente porque, como demuestra el comentario de abajo, el tamaño de
+// la ventana de recorte en píxeles de ZOOM_SEGUIMIENTO no depende de él
+// (se cancela algebraicamente), así que esta función no lo necesita para
+// nada.
+function calcularMosaicosSeguimiento(puntosSimplificados: PuntoGps[]): MosaicoSeguimientoMeta[] {
   const anchoPx = Math.round(ANCHO_VIDEO * FACTOR_COBERTURA_MOSAICO);
   const altoPx = Math.round(ALTO_VIDEO * FACTOR_COBERTURA_MOSAICO);
-  const semiradioUtilPx = Math.min(anchoPx, altoPx) / 2;
-  const radioZonaSeguraPx = semiradioUtilPx * FRACCION_ZONA_SEGURA;
-  const radioLimitePx = semiradioUtilPx * (FRACCION_ZONA_SEGURA + FRACCION_BANDA_TRANSICION);
+  // Media ventana de recorte, en píxeles LÓGICOS de ZOOM_SEGUIMIENTO --
+  // ANCHO_VIDEO/(2×camara.escala) canvas-base, convertido a Z17 (×factor):
+  // como camara.escala = factor×ESCALA_SEGUIMIENTO durante el seguimiento,
+  // el factor se cancela y queda ANCHO_VIDEO/(2×ESCALA_SEGUIMIENTO) --
+  // independiente de la ruta, igual que el resto de este sistema. El
+  // margen útil real que le queda al mosaico es lo que sobra después de
+  // reservarle ese espacio a cada lado -- recién sobre ESE margen (no sobre
+  // el semirradio bruto del lienzo) se aplican las fracciones de zona
+  // segura/transición, para no correr el riesgo de que la ventana de
+  // recorte llegue a asomarse fuera de la imagen antes de cambiar de
+  // mosaico (ver también recorteValido, la red de seguridad para el caso
+  // límite).
+  const mitadVentanaXPx = ANCHO_VIDEO / (2 * ESCALA_SEGUIMIENTO);
+  const mitadVentanaYPx = ALTO_VIDEO / (2 * ESCALA_SEGUIMIENTO);
+  const margenUtilPx = Math.min(anchoPx / 2 - mitadVentanaXPx, altoPx / 2 - mitadVentanaYPx);
+  const radioZonaSeguraPx = margenUtilPx * FRACCION_ZONA_SEGURA;
+  const radioLimitePx = margenUtilPx * (FRACCION_ZONA_SEGURA + FRACCION_BANDA_TRANSICION);
 
   function metaEnPunto(punto: PuntoGps): MosaicoSeguimientoMeta {
-    const centroPxX = lonAPixelX(punto.lon, ZOOM_SEGUIMIENTO);
-    const centroPxY = latAPixelY(punto.lat, ZOOM_SEGUIMIENTO);
-    // `factor` convierte una posición GEOGRÁFICA de la grilla de
-    // ZOOM_SEGUIMIENTO a la misma grilla que usa mapaBase (x()/y(), el
-    // trazo, el marcador) -- es la única cuenta correcta para saber DÓNDE
-    // cae el centro real del mosaico en el espacio de canvas base, y por
-    // eso sigue usándose acá tal cual.
-    const centroEnCanvasBaseX = centroPxX / factor - mapaBase.centroPxX + ANCHO_VIDEO / 2;
-    const centroEnCanvasBaseY = centroPxY / factor - mapaBase.centroPxY + ALTO_VIDEO / 2;
-    // El TAMAÑO con que se dibuja, en cambio, ya NO usa `factor` (esa era
-    // la causa real de que se viera panorámico sin importar la ruta -- ver
-    // comentario largo en MosaicoSeguimientoMeta) -- usa la escala FIJA
-    // ESCALA_MOSAICO_FIJA, igual para cualquier ruta. El origen se centra
-    // en el punto geográfico correcto (centroEnCanvasBaseX/Y de arriba)
-    // usando ESE tamaño fijo, así el centro real del mosaico sigue cayendo
-    // exactamente donde corresponde -- el trazo/marcador no se desalinean.
-    const anchoDibujado = anchoPx * ESCALA_MOSAICO_FIJA;
-    const altoDibujado = altoPx * ESCALA_MOSAICO_FIJA;
     return {
-      centroPxX,
-      centroPxY,
+      centroPxX: lonAPixelX(punto.lon, ZOOM_SEGUIMIENTO),
+      centroPxY: latAPixelY(punto.lat, ZOOM_SEGUIMIENTO),
       anchoPx,
       altoPx,
       radioZonaSeguraPx,
       radioLimitePx,
-      origenCanvasBaseX: centroEnCanvasBaseX - anchoDibujado / 2,
-      origenCanvasBaseY: centroEnCanvasBaseY - altoDibujado / 2,
-      escalaEnCanvasBase: ESCALA_MOSAICO_FIJA,
     };
   }
 
@@ -524,6 +525,74 @@ function calcularMosaicosSeguimiento(
   }
 
   return mosaicos;
+}
+
+// Posición de la cámara (canvas-base) expresada en píxeles GLOBALES de
+// ZOOM_SEGUIMIENTO -- ver la demostración algebraica: sustituyendo la
+// definición de canvas-base (cb = gz17/factor - mapaBase.centroPx + mitad
+// video) dentro de la transformación de cámara (screen = mitad + (cb-cx)×
+// escala, con escala=factor×K) se cancela el factor y queda
+// screen = mitad + K×(gz17 - camaraZ17) -- una única transformación lineal
+// "globalZ17 → pantalla". Esta función calcula ese `camaraZ17`; el trazo y
+// el marcador (que siguen pasando por canvas-base, sin tocar ese código)
+// terminan representando la MISMA transformación por construcción
+// algebraica, no por coincidencia -- ver el mensaje de diseño aprobado.
+function calcularCamaraZ17(
+  camara: { cx: number; cy: number },
+  mapaBase: MapaGenerado,
+  factor: number,
+): { x: number; y: number } {
+  return {
+    x: factor * (camara.cx + mapaBase.centroPxX - ANCHO_VIDEO / 2),
+    y: factor * (camara.cy + mapaBase.centroPxY - ALTO_VIDEO / 2),
+  };
+}
+
+interface RecorteMosaico {
+  sx: number;
+  sy: number;
+  sWidth: number;
+  sHeight: number;
+}
+
+// Ventana de recorte real dentro del mosaico -- source crop, no reescalado
+// del mosaico completo. Todo en píxeles LÓGICOS de ZOOM_SEGUIMIENTO hasta
+// el último paso, donde recién se multiplica por ESCALA (retina, 2x) para
+// obtener las coordenadas sobre la imagen FÍSICA que espera drawImage.
+// `escalaSeguimiento` es camara.escala tal cual (ya vale factor×ESCALA_SEGUIMIENTO
+// durante el seguimiento -- ver estadoCamara), así que la ventana lógica
+// (ANCHO_VIDEO/escalaSeguimiento) quiere decir exactamente lo mismo acá que
+// en la transformación de cámara que usan trazo/marcador.
+function calcularRecorteMosaico(
+  camaraZ17: { x: number; y: number },
+  mosaico: MosaicoSeguimientoMeta,
+  escalaSeguimiento: number,
+): RecorteMosaico {
+  const anchoVentanaZ17 = ANCHO_VIDEO / escalaSeguimiento;
+  const altoVentanaZ17 = ALTO_VIDEO / escalaSeguimiento;
+  // Origen del mosaico (su esquina superior izquierda) en píxeles globales
+  // de Z17, para pasar de "global" a "local dentro de este PNG".
+  const origenMosaicoX = mosaico.centroPxX - mosaico.anchoPx / 2;
+  const origenMosaicoY = mosaico.centroPxY - mosaico.altoPx / 2;
+  const localX = camaraZ17.x - anchoVentanaZ17 / 2 - origenMosaicoX;
+  const localY = camaraZ17.y - altoVentanaZ17 / 2 - origenMosaicoY;
+  return {
+    sx: localX * ESCALA,
+    sy: localY * ESCALA,
+    sWidth: anchoVentanaZ17 * ESCALA,
+    sHeight: altoVentanaZ17 * ESCALA,
+  };
+}
+
+// Nunca se clampea el recorte (eso desplazaría qué zona geográfica se
+// muestra, exactamente lo que no queremos) -- si la ventana pedida se sale
+// del PNG físico del mosaico, se descarta el intento entero y el llamador
+// decide el respaldo (último mosaico válido, o panorámica -- ver
+// seleccionarMosaico/dibujarMosaicosSeguimiento). Con los márgenes de
+// calcularMosaicosSeguimiento esto no debería activarse en operación
+// normal; es la red de seguridad para el caso límite.
+function recorteValido(r: RecorteMosaico, mosaico: MosaicoSeguimientoMeta): boolean {
+  return r.sx >= 0 && r.sy >= 0 && r.sx + r.sWidth <= mosaico.anchoPx * ESCALA && r.sy + r.sHeight <= mosaico.altoPx * ESCALA;
 }
 
 // Estado vivo de los mosaicos de seguimiento durante la generación: separa
@@ -655,15 +724,22 @@ interface SeleccionMosaico {
 // retrocede (la cámara nunca "vuelve" a un mosaico anterior aunque la ruta
 // geográficamente pase cerca de un tramo ya recorrido).
 //
-// `ultimoValidoRef` es el fallback del punto 5: si la imagen del índice
-// activo todavía no decodificó, se sustituye en el resultado por el último
-// mosaico que sí estaba listo (mutando ultimoValidoRef.valor cuando
-// corresponde) -- dibujarMosaicosSeguimiento no necesita saber nada de esto,
-// solo recibe un "actual" que casi nunca es null en la práctica. Sin
-// crossfade hacia el siguiente mientras se está mostrando el fallback (no
-// tendría sentido cruzar hacia una imagen que tampoco es la real).
+// "Válido" ahora exige DOS cosas, no solo estar decodificado: además hay
+// que poder recortar la ventana de cámara actual (camaraZ17/escalaSeguimiento)
+// completamente DENTRO de ese mosaico (ver calcularRecorteMosaico/
+// recorteValido) -- con los márgenes ya calculados en
+// calcularMosaicosSeguimiento esto no debería fallar en operación normal,
+// es una red de seguridad para el caso límite (red muy lenta que deja el
+// índice geométrico muy adelantado respecto de lo decodificado). Si no es
+// válido, se sustituye por el último mosaico que sí lo fue
+// (ultimoValidoRef, mutado acá) -- nunca se desplaza la cámara ni se
+// clampea el recorte para "hacerlo entrar" (eso movería qué zona
+// geográfica se muestra). Sin crossfade hacia el siguiente mientras se
+// está mostrando el fallback.
 function seleccionarMosaico(
   puntoActual: PuntoGps,
+  camaraZ17: { x: number; y: number },
+  escalaSeguimiento: number,
   ventana: EstadoVentanaMosaicos,
   indiceRef: { valor: number },
   ultimoValidoRef: { valor: UltimoMosaicoValido | null },
@@ -686,12 +762,17 @@ function seleccionarMosaico(
   const metaSiguiente = metas[indiceActual + 1] ?? null;
   const imagenActual = ventana.imagenes[indiceActual] ?? null;
 
-  if (imagenActual && metaActual) {
-    ultimoValidoRef.valor = { indice: indiceActual, img: imagenActual, meta: metaActual };
+  const actualUsable =
+    !!imagenActual &&
+    !!metaActual &&
+    recorteValido(calcularRecorteMosaico(camaraZ17, metaActual, escalaSeguimiento), metaActual);
+
+  if (actualUsable) {
+    ultimoValidoRef.valor = { indice: indiceActual, img: imagenActual as HTMLImageElement, meta: metaActual as MosaicoSeguimientoMeta };
   }
 
   let peso = 0;
-  if (imagenActual && metaActual && metaSiguiente) {
+  if (actualUsable && metaActual && metaSiguiente) {
     const distActual = Math.hypot(gx - metaActual.centroPxX, gy - metaActual.centroPxY);
     if (distActual > metaActual.radioZonaSeguraPx) {
       const rango = metaActual.radioLimitePx - metaActual.radioZonaSeguraPx;
@@ -702,54 +783,52 @@ function seleccionarMosaico(
 
   return {
     indiceActual,
-    actual: imagenActual ?? ultimoValidoRef.valor?.img ?? null,
-    metaActual: imagenActual ? metaActual : (ultimoValidoRef.valor?.meta ?? null),
+    actual: actualUsable ? imagenActual : (ultimoValidoRef.valor?.img ?? null),
+    metaActual: actualUsable ? metaActual : (ultimoValidoRef.valor?.meta ?? null),
     siguiente: metaSiguiente ? (ventana.imagenes[indiceActual + 1] ?? null) : null,
     metaSiguiente,
     peso,
   };
 }
 
-// Dibuja el fondo del tramo de seguimiento -- se llama DENTRO del mismo
-// bloque ya transformado por la cámara (translate/scale/translate) que usa
-// el trazo/pines/etiquetas, así que cada mosaico se dibuja directo con
-// drawImage() en su origen/escala ya precalculados (ver
-// MosaicoSeguimientoMeta) -- sin transformaciones anidadas propias, a
-// diferencia de dibujarFondoMapaVideo (que sí necesita las suyas porque el
-// panorámico y el detalle comparten centro pero no escala). Si todavía no
-// hay ninguna imagen decodificada (arranque en mala conexión), cae de
-// vuelta al panorámico ya cargado -- nunca deja un cuadro en blanco.
+// Dibuja el fondo del tramo de seguimiento con recorte real (source crop) --
+// a diferencia de dibujarFondoMapaVideo, se llama FUERA del bloque
+// transformado por la cámara (transformación identidad), porque cada
+// recorte ya representa exactamente la ventana final -- dx/dy/dWidth/dHeight
+// son directamente 0,0,ANCHO_VIDEO,ALTO_VIDEO, sin necesitar ninguna
+// transformación anidada.
+//
+// Doble red de seguridad, nunca deja un cuadro en blanco: si el recorte del
+// mosaico "actual" (ya sustituido por el último válido dentro de
+// seleccionarMosaico si hacía falta) igual sale fuera del PNG físico
+// (recorteValido), se cae a la panorámica -- mismo criterio que ya existía
+// para "todavía no decodificó ninguno".
 function dibujarMosaicosSeguimiento(
   ctx: CanvasRenderingContext2D,
   seleccion: SeleccionMosaico,
   mapaImgRespaldo: HTMLImageElement | null,
+  camaraZ17: { x: number; y: number },
+  escalaSeguimiento: number,
 ) {
-  function dibujarUno(img: HTMLImageElement, meta: MosaicoSeguimientoMeta, alpha: number) {
-    if (alpha <= 0) return;
+  function intentarDibujar(img: HTMLImageElement, meta: MosaicoSeguimientoMeta, alpha: number): boolean {
+    if (alpha <= 0) return false;
+    const r = calcularRecorteMosaico(camaraZ17, meta, escalaSeguimiento);
+    if (!recorteValido(r, meta)) return false;
     ctx.globalAlpha = alpha;
-    ctx.drawImage(
-      img,
-      meta.origenCanvasBaseX,
-      meta.origenCanvasBaseY,
-      meta.anchoPx * meta.escalaEnCanvasBase,
-      meta.altoPx * meta.escalaEnCanvasBase,
-    );
+    ctx.drawImage(img, r.sx, r.sy, r.sWidth, r.sHeight, 0, 0, ANCHO_VIDEO, ALTO_VIDEO);
     ctx.globalAlpha = 1;
+    return true;
   }
 
-  if (!seleccion.actual && !seleccion.siguiente) {
-    if (mapaImgRespaldo) ctx.drawImage(mapaImgRespaldo, 0, 0, ANCHO_VIDEO, ALTO_VIDEO);
-    return;
-  }
+  let actualDibujado = false;
   if (seleccion.actual && seleccion.metaActual) {
-    dibujarUno(seleccion.actual, seleccion.metaActual, 1);
-  } else if (mapaImgRespaldo) {
-    // El mosaico "actual" todavía no decodificó (red lenta) -- mejor mostrar
-    // el panorámico de fondo que un hueco, mientras se resuelve.
+    actualDibujado = intentarDibujar(seleccion.actual, seleccion.metaActual, 1);
+  }
+  if (!actualDibujado && mapaImgRespaldo) {
     ctx.drawImage(mapaImgRespaldo, 0, 0, ANCHO_VIDEO, ALTO_VIDEO);
   }
   if (seleccion.peso > 0 && seleccion.siguiente && seleccion.metaSiguiente) {
-    dibujarUno(seleccion.siguiente, seleccion.metaSiguiente, seleccion.peso);
+    intentarDibujar(seleccion.siguiente, seleccion.metaSiguiente, seleccion.peso);
   }
 }
 
@@ -1102,25 +1181,15 @@ const FACTOR_SUAVIZADO_ANTICIPACION = 0.08;
 const DURACION_PAUSA_INTRO_SEG = 0.8;
 const DURACION_ACERCAMIENTO_INTRO_SEG = 1.6;
 
-// La cámara "persigue" el punto actual con este acercamiento durante el
-// dibujado del trazo (estilo Relive), y en el último tramo de la animación
-// se aleja hasta volver a 1 (panorámica del recorrido completo). Es un zoom
-// óptico sobre la MISMA imagen de mapa ya cargada (no se piden tiles nuevos
-// por cuadro) -- barato de calcular, aunque pierde algo de nitidez cuanto
-// más cerca, aceptable para un video comprimido.
-const ESCALA_CAMARA_CERCANA = 1.35;
-
-// Escala FIJA (independiente de la ruta) con la que se dibuja cada mosaico
-// de seguimiento -- ver el comentario largo en MosaicoSeguimientoMeta sobre
-// por qué esto NO puede depender de mapaBase.zoom/factor (route-dependiente,
-// esa era la causa real de "se ve demasiado panorámico" sin importar
-// ZOOM_SEGUIMIENTO). 1/ESCALA_CAMARA_CERCANA deja el mosaico dibujado a su
-// resolución lógica NATIVA de ZOOM_SEGUIMIENTO (ni estirado ni reducido) una
-// vez que camara.escala se le aplica encima -- VALOR INICIAL sujeto a
-// ajuste visual, no asumir que este número final quede así: subirlo acerca
-// más el seguimiento (recorta una ventana más chica del mosaico), bajarlo
-// lo aleja -- todo sin pedir mosaicos distintos ni tocar ZOOM_SEGUIMIENTO.
-const ESCALA_MOSAICO_FIJA = 1 / ESCALA_CAMARA_CERCANA;
+// La cámara "persigue" el punto actual durante el dibujado del trazo
+// (estilo Relive), y en el último tramo de la animación se aleja hasta
+// volver a 1 (panorámica del recorrido completo). El acercamiento durante
+// el seguimiento YA NO es un multiplicador fijo (antes ESCALA_CAMARA_CERCANA,
+// pensado para un zoom óptico sobre la panorámica) -- ver estadoCamara: con
+// mosaicos de verdad, ese número tiene que depender de `factor` para que el
+// nivel de acercamiento final no dependa de qué zoom haya elegido la
+// panorámica (ver ESCALA_SEGUIMIENTO más arriba y la demostración
+// matemática en el diseño aprobado).
 
 // Fracción de duracionAnimSeg en la que el trazo ya terminó de dibujarse y
 // arranca el alejamiento final -- el resto (hasta 1) es pura transición de
@@ -1238,25 +1307,37 @@ interface EstadoCamara {
 // queda quieta en el máximo desplazamiento que el mapa cargado alcanza a
 // cubrir -- se pierde algo de precisión del seguimiento justo ahí, pero
 // nunca se sale del mapa real.
+// `factor` (= 2^(ZOOM_SEGUIMIENTO - mapaBase.zoom), la misma conversión
+// geográfica real que ya usan los mosaicos) es lo único nuevo acá: durante
+// el seguimiento, la escala de cámara pasa a ser `factor × ESCALA_SEGUIMIENTO`
+// en vez del viejo valor fijo -- demostrado matemáticamente que el `factor`
+// se cancela al combinarse con la conversión geográfica, dejando el nivel
+// de acercamiento final independiente de qué zoom haya elegido la
+// panorámica para esta ruta. El outro arranca su interpolación desde ESE
+// mismo valor dinámico (en vez del viejo fijo) para no saltar en el corte
+// -- el resto de la coreografía (aleja con curva suave hasta escala 1,
+// centrada en el recorrido completo) no cambia en nada.
 function estadoCamara(
   fraccionTotal: number,
   focoTrazando: { x: number; y: number },
   focoCentro: { x: number; y: number },
+  factor: number,
 ): EstadoCamara {
-  const mitadVisibleX = ANCHO_VIDEO / (2 * ESCALA_CAMARA_CERCANA);
-  const mitadVisibleY = ALTO_VIDEO / (2 * ESCALA_CAMARA_CERCANA);
+  const escalaSeguimiento = factor * ESCALA_SEGUIMIENTO;
+  const mitadVisibleX = ANCHO_VIDEO / (2 * escalaSeguimiento);
+  const mitadVisibleY = ALTO_VIDEO / (2 * escalaSeguimiento);
   const focoCercano = {
     x: clamp(focoTrazando.x, mitadVisibleX, ANCHO_VIDEO - mitadVisibleX),
     y: clamp(focoTrazando.y, mitadVisibleY, ALTO_VIDEO - mitadVisibleY),
   };
   if (fraccionTotal <= FRACCION_TRAZO_COMPLETO) {
-    return { cx: focoCercano.x, cy: focoCercano.y, escala: ESCALA_CAMARA_CERCANA };
+    return { cx: focoCercano.x, cy: focoCercano.y, escala: escalaSeguimiento };
   }
   const t = suavizar((fraccionTotal - FRACCION_TRAZO_COMPLETO) / (1 - FRACCION_TRAZO_COMPLETO));
   return {
     cx: focoCercano.x + (focoCentro.x - focoCercano.x) * t,
     cy: focoCercano.y + (focoCentro.y - focoCercano.y) * t,
-    escala: ESCALA_CAMARA_CERCANA + (1 - ESCALA_CAMARA_CERCANA) * t,
+    escala: escalaSeguimiento + (1 - escalaSeguimiento) * t,
   };
 }
 
@@ -1401,8 +1482,10 @@ function suavizarCamara(objetivo: EstadoCamara, anterior: CamaraSuavizada | null
 // Fondo del cuadro: dibuja siempre el panorámico (mapaImg, base segura), y
 // si hay mapa detallado (ver generarMapaDetallado) lo superpone encima con
 // un alpha que sigue exactamente la misma curva que el acercamiento de la
-// cámara -- 100% detallado mientras la cámara persigue de cerca (escala ==
-// ESCALA_CAMARA_CERCANA), crossfade hacia el panorámico a medida que la
+// cámara. Ahora se llama SOLO durante el outro (el seguimiento usa
+// dibujarMosaicosSeguimiento) -- 100% detallado al arrancar el outro
+// (camara.escala == escalaInicioOutro, el mismo valor dinámico con el que
+// terminó el seguimiento), crossfade hacia el panorámico a medida que la
 // cámara se aleja (escala -> 1), 0% detallado en la panorámica final. Ambos
 // mapas cubren EXACTAMENTE el mismo recuadro geográfico (mismo centro, un
 // zoom de diferencia) -- por eso alcanza con escalar/trasladar el detallado
@@ -1419,6 +1502,7 @@ function dibujarFondoMapaVideo(
   mapaDetalladoImg: HTMLImageElement | null,
   factorDetalle: number,
   camara: EstadoCamara,
+  escalaInicioOutro: number,
 ) {
   if (!mapaImg) {
     ctx.fillStyle = "#1a1108";
@@ -1433,7 +1517,8 @@ function dibujarFondoMapaVideo(
   }
 
   if (!mapaDetalladoImg) return;
-  const pesoDetallado = clamp((camara.escala - 1) / (ESCALA_CAMARA_CERCANA - 1), 0, 1);
+  const pesoDetallado =
+    escalaInicioOutro > 1 ? clamp((camara.escala - 1) / (escalaInicioOutro - 1), 0, 1) : 0;
   if (pesoDetallado <= 0) return;
 
   ctx.save();
@@ -1833,6 +1918,15 @@ function dibujarCuadroVideo(
   // (tramo de seguimiento) o pasarla cruda (outro, sin cambios) según
   // corresponda, sin que dibujarCuadroVideo necesite saber cuál es cuál.
   camara: EstadoCamara,
+  // Escala con la que arrancó el outro (ver estadoCamara) -- necesaria acá
+  // solo para pasarla a dibujarFondoMapaVideo (crossfade panorámica/detalle
+  // del outro); irrelevante mientras haya seleccionMosaico.
+  escalaInicioOutro: number,
+  // Posición de cámara en píxeles globales de ZOOM_SEGUIMIENTO (ver
+  // calcularCamaraZ17) -- null fuera del tramo de seguimiento. Junto con
+  // camara.escala, define el recorte real de cada mosaico (ver
+  // dibujarMosaicosSeguimiento/calcularRecorteMosaico).
+  camaraZ17: { x: number; y: number } | null,
   pulsoVelMax = 0,
   suavizadoEtiquetas: Map<number, { x: number; y: number }> = new Map(),
   // Solo se pasa (no-null) durante el tramo de seguimiento -- ver
@@ -1891,23 +1985,22 @@ function dibujarCuadroVideo(
   ctx.rect(0, 0, ANCHO_VIDEO, ALTO_VIDEO);
   ctx.clip();
 
-  if (!seleccionMosaico) {
-    dibujarFondoMapaVideo(ctx, mapaImg, mapaDetalladoImg, factorDetalle, camara);
+  // Fondo: mosaicos con recorte real (source crop, ver
+  // dibujarMosaicosSeguimiento) durante el seguimiento, o la panorámica de
+  // siempre (dibujarFondoMapaVideo) en el outro -- ambos se dibujan con la
+  // transformación IDENTIDAD (antes del translate/scale/translate de más
+  // abajo), porque cada uno arma su propio recorte/transformación ya
+  // resuelto en coordenadas finales de pantalla.
+  if (seleccionMosaico && camaraZ17) {
+    dibujarMosaicosSeguimiento(ctx, seleccionMosaico, mapaImg, camaraZ17, camara.escala);
+  } else {
+    dibujarFondoMapaVideo(ctx, mapaImg, mapaDetalladoImg, factorDetalle, camara, escalaInicioOutro);
   }
 
   ctx.save();
   ctx.translate(ANCHO_VIDEO / 2, ALTO_VIDEO / 2);
   ctx.scale(camara.escala, camara.escala);
   ctx.translate(-camara.cx, -camara.cy);
-
-  // Fondo del tramo de seguimiento: se dibuja ACÁ (ya dentro de la
-  // transformación de cámara), a diferencia de dibujarFondoMapaVideo (que
-  // arma la suya propia antes de este bloque) -- ver comentario en
-  // dibujarMosaicosSeguimiento sobre por qué no hace falta una
-  // transformación anidada extra para esto.
-  if (seleccionMosaico) {
-    dibujarMosaicosSeguimiento(ctx, seleccionMosaico, mapaImg);
-  }
 
   // Intro (panorámica/pausa/acercamiento): corta acá, ya con el fondo
   // dibujado -- todavía no corresponde mostrar trazo, marcador, etiquetas,
@@ -2197,15 +2290,21 @@ export async function generarVideoRecorrido(
     velocidadesKmh.push(dtSeg > 0 ? (distTramoKm / dtSeg) * 3600 : 0);
   }
 
+  // Conversión geográfica entre la grilla de ZOOM_SEGUIMIENTO y la del
+  // panorámico -- UNA sola fuente de verdad, reutilizada por
+  // calcularMosaicosSeguimiento, estadoCamara (escala del seguimiento y del
+  // arranque del outro) y calcularCamaraZ17. Si no hay panorámica (sin
+  // conexión), 1 es un valor seguro que no rompe ninguna cuenta -- ese caso
+  // ya cae al respaldo vectorial completo, sin mosaicos ni escala dinámica.
+  const factorSeguimiento = mapa ? 2 ** (ZOOM_SEGUIMIENTO - mapa.zoom) : 1;
+
   // Mosaicos de la cámara de seguimiento (ver comentario largo antes de
   // calcularMosaicosSeguimiento): se calculan sobre la ruta simplificada
   // (mismo criterio que ya usa dividirEnTramosParaDibujo/simplificarRutaParaDibujo
   // en el mapa en vivo, acá para que el jitter normal del GPS no arme
-  // mosaicos de más) y requieren `mapa` (el panorámico) como referencia de
-  // "canvas base" -- si ese mapa no cargó (sin conexión), el video entero ya
-  // cae al respaldo vectorial existente y no hay mosaicos que preparar.
+  // mosaicos de más).
   const puntosSimplificadosSeguimiento = simplificarRutaParaDibujo(datos.puntos);
-  const mosaicosSeguimiento = mapa ? calcularMosaicosSeguimiento(puntosSimplificadosSeguimiento, mapa) : [];
+  const mosaicosSeguimiento = mapa ? calcularMosaicosSeguimiento(puntosSimplificadosSeguimiento) : [];
   const ventanaMosaicos = crearVentanaMosaicos(mosaicosSeguimiento);
   const indiceMosaicoRef = { valor: 0 };
   // Último mosaico válido mostrado (ver seleccionarMosaico) -- todavía
@@ -2321,12 +2420,14 @@ export async function generarVideoRecorrido(
     const enSeguimiento = fraccionTotal <= FRACCION_TRAZO_COMPLETO;
     let camara: EstadoCamara;
     let seleccionMosaico: SeleccionMosaico | null = null;
+    let camaraZ17: { x: number; y: number } | null = null;
 
     if (enSeguimiento) {
       // Punto de mira desplazado hacia adelante en la ruta (ver
       // calcularFocoConAnticipacion) -- estadoCamara sigue siendo la MISMA
-      // función de siempre (clamp a los bordes del mapa incluido), solo que
-      // acá recibe el foco ya desplazado en vez del crudo.
+      // función de siempre (clamp a los bordes del mapa incluido, ahora
+      // referido a la escala dinámica del seguimiento), solo que acá recibe
+      // el foco ya desplazado en vez del crudo.
       const anticipacion = calcularFocoConAnticipacion(
         focoTrazandoPx,
         datos,
@@ -2337,7 +2438,7 @@ export async function generarVideoRecorrido(
         direccionAnticipacionRef.valor,
       );
       direccionAnticipacionRef.valor = anticipacion.direccion;
-      const objetivoCrudo = estadoCamara(fraccionTotal, anticipacion.foco, focoCentroPx);
+      const objetivoCrudo = estadoCamara(fraccionTotal, anticipacion.foco, focoCentroPx, factorSeguimiento);
       camara = suavizarCamara(objetivoCrudo, camaraSuavizadaRef.valor, fraccionTotal);
       camaraSuavizadaRef.valor = { cx: camara.cx, cy: camara.cy };
 
@@ -2350,9 +2451,17 @@ export async function generarVideoRecorrido(
       // mantenimiento de la ventana de descarga/decodificación para el
       // nuevo entorno, protegiendo el último mosaico válido en uso como
       // fallback -- ver mantenerVentana/liberarFueraDeVentana.
-      if (mosaicosSeguimiento.length > 0) {
+      if (mosaicosSeguimiento.length > 0 && mapa) {
+        camaraZ17 = calcularCamaraZ17(camara, mapa, factorSeguimiento);
         const indicePrevio = indiceMosaicoRef.valor;
-        seleccionMosaico = seleccionarMosaico(focoActual, ventanaMosaicos, indiceMosaicoRef, ultimoMosaicoValidoRef);
+        seleccionMosaico = seleccionarMosaico(
+          focoActual,
+          camaraZ17,
+          camara.escala,
+          ventanaMosaicos,
+          indiceMosaicoRef,
+          ultimoMosaicoValidoRef,
+        );
         if (indiceMosaicoRef.valor !== indicePrevio) {
           mantenerVentana(ventanaMosaicos, indiceMosaicoRef.valor, ultimoMosaicoValidoRef.valor?.indice ?? null).catch(
             () => {},
@@ -2360,8 +2469,10 @@ export async function generarVideoRecorrido(
         }
       }
     } else {
-      // Outro: SIN anticipación ni suavizado, misma llamada de siempre.
-      camara = estadoCamara(fraccionTotal, focoTrazandoPx, focoCentroPx);
+      // Outro: SIN anticipación ni suavizado, misma llamada de siempre
+      // (solo cambia que estadoCamara ahora necesita factorSeguimiento para
+      // saber desde qué escala dinámica arrancar su interpolación).
+      camara = estadoCamara(fraccionTotal, focoTrazandoPx, focoCentroPx, factorSeguimiento);
     }
 
     dibujarCuadroVideo(
@@ -2378,6 +2489,8 @@ export async function generarVideoRecorrido(
       config,
       mostrarFotoFinal,
       camara,
+      factorSeguimiento * ESCALA_SEGUIMIENTO,
+      camaraZ17,
       pulsoVelMax,
       suavizadoEtiquetas,
       seleccionMosaico,
@@ -2413,12 +2526,13 @@ export async function generarVideoRecorrido(
   // (dibujarFrame(0, ...), fraccionTrazo=0) -- garantiza que el último
   // cuadro del acercamiento coincida exacto con el primero del loop, sin
   // salto perceptible.
-  const camaraFinIntro = estadoCamara(0, anticipacionInicio.foco, focoCentroPx);
+  const camaraFinIntro = estadoCamara(0, anticipacionInicio.foco, focoCentroPx, factorSeguimiento);
   const frameIntro = estadoEnFraccion(datos, distanciaAcumuladaKm, 0);
 
   function dibujarFondoIntro(camara: EstadoCamara, pesoMosaico: number) {
+    const camaraZ17 = mapa && mosaicosSeguimiento.length > 0 ? calcularCamaraZ17(camara, mapa, factorSeguimiento) : null;
     const seleccion: SeleccionMosaico | null =
-      mosaicosSeguimiento.length > 0
+      camaraZ17 && mosaicosSeguimiento.length > 0
         ? {
             indiceActual: 0,
             actual: null,
@@ -2442,6 +2556,8 @@ export async function generarVideoRecorrido(
       config,
       false,
       camara,
+      factorSeguimiento * ESCALA_SEGUIMIENTO,
+      camaraZ17,
       0,
       suavizadoEtiquetas,
       seleccion,
