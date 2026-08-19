@@ -2781,6 +2781,54 @@ async function generarVideoRecorridoInterno(
 
   const { punto: puntoVelMax, indice: indiceVelMax, kmh: kmhVelMax } = velocidadMaximaConPunto(datos.puntos);
 
+  // Instrumentación temporal: diagnóstico puntual del segmento que produce
+  // kmhVelMax (la velocidad máxima YA REPORTADA -- ver velocidadMaximaConPunto
+  // en geo.ts, que ya filtra con clasificarTramos/VELOCIDAD_PLAUSIBLE_MAX_KMH=45
+  // antes de llegar acá) más la lista COMPLETA, sin filtrar, de todos los
+  // segmentos crudos por sobre 45 km/h -- para distinguir pico aislado, hueco
+  // de grabación, racha rápida real o error GPS evidente. Solo lee datos.puntos
+  // y velocidadMaximaConPunto -- no cambia velocidadesKmh, clasificarTramos,
+  // el trazado ni ningún otro sistema.
+  if (indiceVelMax > 0 && puntoVelMax) {
+    const iv = indiceVelMax;
+    const antesDelAnterior = datos.puntos[Math.max(0, iv - 2)];
+    const anterior = datos.puntos[iv - 1];
+    const actual = datos.puntos[iv];
+    const siguiente = datos.puntos[Math.min(datos.puntos.length - 1, iv + 1)];
+    const distKm = distanciaHaversineKm(anterior, actual);
+    const dtSeg = (actual.timestamp - anterior.timestamp) / 1000;
+    const enCadenaMosaicos = puntosSimplificadosSeguimiento.includes(actual);
+    console.warn(`[vel-max] indice=${iv}/${datos.puntos.length - 1} kmhReportado=${kmhVelMax.toFixed(1)}`);
+    console.warn(
+      `[vel-max] punto antes-del-anterior: lat=${antesDelAnterior.lat.toFixed(6)} lon=${antesDelAnterior.lon.toFixed(6)} t=${antesDelAnterior.timestamp}`,
+    );
+    console.warn(`[vel-max] punto anterior: lat=${anterior.lat.toFixed(6)} lon=${anterior.lon.toFixed(6)} t=${anterior.timestamp}`);
+    console.warn(`[vel-max] punto actual (del salto): lat=${actual.lat.toFixed(6)} lon=${actual.lon.toFixed(6)} t=${actual.timestamp}`);
+    console.warn(`[vel-max] punto siguiente: lat=${siguiente.lat.toFixed(6)} lon=${siguiente.lon.toFixed(6)} t=${siguiente.timestamp}`);
+    console.warn(
+      `[vel-max] anterior->actual: distancia=${distKm.toFixed(4)}km dt=${dtSeg.toFixed(2)}s velocidad=${kmhVelMax.toFixed(1)}km/h`,
+    );
+    console.warn(
+      `[vel-max] ¿"actual" pertenece a puntosSimplificadosSeguimiento (la cadena usada por calcularMosaicosSeguimiento)? ${enCadenaMosaicos}`,
+    );
+  } else {
+    console.warn(`[vel-max] velocidadMaximaConPunto no encontró ningún tramo confiable (indiceVelMax=${indiceVelMax})`);
+  }
+
+  const UMBRAL_DIAGNOSTICO_KMH = 45;
+  const segmentosRapidos: { indice: number; distKm: number; dtSeg: number; kmh: number }[] = [];
+  for (let iSeg = 1; iSeg < datos.puntos.length; iSeg++) {
+    const distKmSeg = distanciaHaversineKm(datos.puntos[iSeg - 1], datos.puntos[iSeg]);
+    const dtSegRaw = (datos.puntos[iSeg].timestamp - datos.puntos[iSeg - 1].timestamp) / 1000;
+    const kmhSeg = dtSegRaw > 0 ? (distKmSeg / dtSegRaw) * 3600 : Infinity;
+    if (kmhSeg > UMBRAL_DIAGNOSTICO_KMH) segmentosRapidos.push({ indice: iSeg, distKm: distKmSeg, dtSeg: dtSegRaw, kmh: kmhSeg });
+  }
+  segmentosRapidos.sort((a, b) => b.kmh - a.kmh);
+  console.warn(`[vel-max] segmentos crudos (sin filtrar) por sobre ${UMBRAL_DIAGNOSTICO_KMH}km/h: ${segmentosRapidos.length}`);
+  segmentosRapidos.forEach((s) => {
+    console.warn(`[vel-max]   ${s.indice} | ${s.distKm.toFixed(4)}km | ${s.dtSeg.toFixed(2)}s | ${s.kmh.toFixed(1)}km/h`);
+  });
+
   // Cada pin de foto se clava en un punto real del recorrido, repartido POR
   // DISTANCIA (no por índice ni por tiempo -- así se ve repartido en el
   // trazo incluso si el usuario se detuvo mucho rato en un tramo, lo que
