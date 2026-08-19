@@ -4,6 +4,7 @@ import {
   simplificarRutaParaDibujo,
   clasificarTramos,
   type PuntoGps,
+  type ClasificacionTramo,
 } from "./geo";
 import { cargarImagenComoDataUrl } from "./imagenDataUrl";
 
@@ -1016,6 +1017,17 @@ function seleccionarMosaico(
   // Instrumentación temporal (ver el reporte del salto 1->15): solo para
   // loguear cada paso del while de abajo, no afecta ninguna decisión.
   fraccionTotal: number,
+  // Clasificación GPS del tramo que se está atravesando AHORA MISMO (ver
+  // clasificarTramos en geo.ts, calculada una vez en generarVideoRecorridoInterno
+  // y evaluada por dibujarFrame para este frame puntual) -- false cuando ese
+  // tramo es "saltoGps". Mientras no sea confiable, el selector NO avanza
+  // indiceRef (evita el salto irreversible 1->15) NI calcula/aplica
+  // crossfade hacia el siguiente mosaico (evita mezclar basado en una
+  // distancia calculada con un punto GPS malo) -- el mosaico actual se
+  // mantiene al 100% tal cual estaba. En cuanto vuelve un tramo confiable,
+  // este mismo código retoma su comportamiento normal sin ningún estado
+  // especial de "reanudación".
+  tramoConfiable: boolean,
 ): SeleccionMosaico {
   const metas = ventana.metas;
   const gx = lonAPixelX(puntoActual.lon, ZOOM_SEGUIMIENTO);
@@ -1023,7 +1035,7 @@ function seleccionarMosaico(
 
   const indiceAlEntrar = indiceRef.valor;
   let pasosAvanzados = 0;
-  while (indiceRef.valor < metas.length - 1) {
+  while (tramoConfiable && indiceRef.valor < metas.length - 1) {
     const metaActual = metas[indiceRef.valor];
     const distActual = Math.hypot(gx - metaActual.centroPxX, gy - metaActual.centroPxY);
     if (distActual <= metaActual.radioLimitePx) break;
@@ -1062,7 +1074,7 @@ function seleccionarMosaico(
   }
 
   let peso = 0;
-  if (actualUsable && metaActual && metaSiguiente) {
+  if (tramoConfiable && actualUsable && metaActual && metaSiguiente) {
     const distActual = Math.hypot(gx - metaActual.centroPxX, gy - metaActual.centroPxY);
     if (distActual > metaActual.radioZonaSeguraPx) {
       const rango = metaActual.radioLimitePx - metaActual.radioZonaSeguraPx;
@@ -1203,6 +1215,11 @@ interface FrameAnimado {
   duracionSeg: number;
   posicionActual: PuntoGps | null;
   mostrarFin: boolean;
+  // Índice i tal que la interpolación actual cae entre datos.puntos[i] y
+  // datos.puntos[i+1] -- null cuando fraccion>=1 (mostrarFin=true, sin
+  // interpolación). El tramo que se está atravesando AHORA MISMO es
+  // clasificacionTramos[indiceBase+1] (ver clasificarTramos en geo.ts).
+  indiceBase: number | null;
 }
 
 function construirSvg(
@@ -1605,6 +1622,7 @@ function estadoEnFraccion(
       duracionSeg: datos.duracionSeg,
       posicionActual: null,
       mostrarFin: true,
+      indiceBase: null,
     };
   }
 
@@ -1630,6 +1648,7 @@ function estadoEnFraccion(
     duracionSeg: fraccion * datos.duracionSeg,
     posicionActual,
     mostrarFin: false,
+    indiceBase: i,
   };
 }
 
@@ -2345,6 +2364,14 @@ function dibujarCuadroVideo(
   // del cuadro anterior (.valor persiste entre llamadas). null fuera de la
   // prueba -- sin este parámetro, cero cambio de comportamiento/dibujo.
   refDiagnosticoFondo: { valor: string | null } | null = null,
+  // Clasificación GPS por tramo (ver clasificarTramos en geo.ts), calculada
+  // una sola vez en generarVideoRecorridoInterno y compartida con el
+  // selector de mosaicos (misma fuente de verdad, ver seleccionarMosaico) --
+  // el loop de trazo la usa para no dibujar una línea recta sobre un tramo
+  // "saltoGps". clasificacionTramos[k] describe el tramo que TERMINA en
+  // datos.puntos[k], igual que el resto de la app (ver dividirEnTramosParaDibujo
+  // en geo.ts, mismo criterio en el mapa en vivo).
+  clasificacionTramos: ClasificacionTramo[],
 ) {
   const { puntos } = datos;
   const distanciaMostrar = frame.distanciaKm;
@@ -2438,6 +2465,14 @@ function dibujarCuadroVideo(
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   for (let k = 0; k < frame.puntosTrazo.length - 1; k++) {
+    // El segmento k conecta datos.puntos[k] -> datos.puntos[k+1] (el último,
+    // sintético, conecta datos.puntos[k] -> el punto interpolado en vivo,
+    // pero pertenece al MISMO tramo original k+1 -- ver comentario de
+    // indiceBase en FrameAnimado). clasificacionTramos[k+1] es exactamente
+    // ese tramo -- si es "saltoGps", no se dibuja (mismo criterio que
+    // dividirEnTramosParaDibujo en el mapa en vivo: corta el trazo acá,
+    // retoma en el siguiente segmento válido, sin unir con una línea recta).
+    if (clasificacionTramos[k + 1] === "saltoGps") continue;
     const a = frame.puntosTrazo[k];
     const b = frame.puntosTrazo[k + 1];
     const kmh = config.velocidadesKmh[k + 1] ?? 0;
@@ -2746,6 +2781,14 @@ async function generarVideoRecorridoInterno(
     velocidadesKmh.push(dtSeg > 0 ? (distTramoKm / dtSeg) * 3600 : 0);
   }
 
+  // Clasificación GPS por tramo (geo.ts, sin tocar su lógica) -- ÚNICA fuente
+  // de verdad, calculada una vez y compartida por el trazado (corta la línea
+  // en un tramo saltoGps) y el selector de mosaicos (no avanza el índice con
+  // un tramo saltoGps) -- ver dibujarFrame más abajo. datos.puntos no se
+  // toca ni se filtra en ningún punto, esto es solo una clasificación
+  // paralela ya validada en la ronda anterior.
+  const clasificacionTramos = clasificarTramos(datos.puntos);
+
   // Conversión geográfica entre la grilla de ZOOM_SEGUIMIENTO y la del
   // panorámico -- UNA sola fuente de verdad, reutilizada por
   // calcularMosaicosSeguimiento, estadoCamara (escala del seguimiento y del
@@ -2962,6 +3005,11 @@ async function generarVideoRecorridoInterno(
     const frame = estadoEnFraccion(datos, distanciaAcumuladaKm, fraccionTrazo);
     const focoActual = frame.posicionActual ?? datos.puntos[datos.puntos.length - 1];
     const focoTrazandoPx = { x: x(focoActual.lon), y: y(focoActual.lat) };
+    // Tramo GPS que se está atravesando AHORA MISMO (ver indiceBase en
+    // FrameAnimado / clasificarTramos en geo.ts) -- única fuente de verdad
+    // compartida entre el selector de mosaicos y el corte del trazado.
+    const tramoConfiable =
+      frame.indiceBase === null || clasificacionTramos[frame.indiceBase + 1] !== "saltoGps";
 
     const enSeguimiento = fraccionTotal <= FRACCION_TRAZO_COMPLETO;
     let camara: EstadoCamara;
@@ -3009,6 +3057,7 @@ async function generarVideoRecorridoInterno(
           indiceMosaicoRef,
           ultimoMosaicoValidoRef,
           fraccionTotal,
+          tramoConfiable,
         );
         if (indiceMosaicoRef.valor !== indicePrevio) {
           console.log(
@@ -3093,6 +3142,7 @@ async function generarVideoRecorridoInterno(
       seleccionMosaico,
       false,
       refDiagnosticoFondo,
+      clasificacionTramos,
     );
   }
 
@@ -3165,6 +3215,7 @@ async function generarVideoRecorridoInterno(
       seleccion,
       true,
       refDiagnosticoFondo,
+      clasificacionTramos,
     );
   }
 
