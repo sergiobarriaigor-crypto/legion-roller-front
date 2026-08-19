@@ -242,20 +242,79 @@ const TIMEOUT_TILE_MS = 8000;
 // esto se vuelve ruido real, hay que revisarlo antes de escalar el uso del
 // proveedor (ver el comentario "PENDIENTE DE REVISIÓN" sobre la licencia de
 // Esri, más arriba, junto a TILE_SATELITE_URL).
-type MotivoFalloTile = "red" | "http_429" | "http_404" | "http_otro" | "decodificacion";
+type MotivoFalloTile = "red" | "timeout" | "http_429" | "http_404" | "http_otro" | "decodificacion";
 
-function registrarFalloTile(motivo: MotivoFalloTile, url: string, detalle: string): void {
+// Contadores REALES (no estimados) de una sola generación de video -- ver
+// CacheTilesLRU.contadores, y el resumen final impreso por el wrapper
+// generarVideoRecorrido (try/finally). Instrumentación temporal para las
+// pruebas de mosaicos Z17: confirmar con datos de ejecución, no estimaciones,
+// cuánto ayuda el cache y si Esri está devolviendo 429/timeouts en un
+// volumen real de pedidos.
+interface ContadoresTilesSeguimiento {
+  fetchTotal: number;
+  cacheHits: number;
+  cacheMisses: number;
+  exitosos: number;
+  red: number;
+  timeout: number;
+  http429: number;
+  http404: number;
+  httpOtro: number;
+  decodificacion: number;
+  mosaicosOK: number;
+  mosaicosNull: number;
+}
+
+function crearContadoresTilesSeguimiento(): ContadoresTilesSeguimiento {
+  return {
+    fetchTotal: 0,
+    cacheHits: 0,
+    cacheMisses: 0,
+    exitosos: 0,
+    red: 0,
+    timeout: 0,
+    http429: 0,
+    http404: 0,
+    httpOtro: 0,
+    decodificacion: 0,
+    mosaicosOK: 0,
+    mosaicosNull: 0,
+  };
+}
+
+function registrarFalloTile(
+  motivo: MotivoFalloTile,
+  url: string,
+  detalle: string,
+  contadores: ContadoresTilesSeguimiento | null = null,
+): void {
   const mensajes: Record<MotivoFalloTile, string> = {
-    red: `error de red/timeout pidiendo tile (${detalle})`,
+    red: `error de red pidiendo tile (${detalle})`,
+    timeout: `timeout (>${TIMEOUT_TILE_MS}ms) pidiendo tile`,
     http_429: `HTTP 429 -- posible rate limit/throttling del proveedor (Esri)`,
     http_404: `HTTP 404 -- tile inexistente en el proveedor`,
     http_otro: `HTTP ${detalle} -- respuesta no exitosa`,
     decodificacion: `no se pudo leer/decodificar el tile descargado (${detalle})`,
   };
   console.warn(`[tiles] ${mensajes[motivo]}: ${url}`);
+  if (!contadores) return;
+  if (motivo === "red") contadores.red++;
+  else if (motivo === "timeout") contadores.timeout++;
+  else if (motivo === "http_429") contadores.http429++;
+  else if (motivo === "http_404") contadores.http404++;
+  else if (motivo === "http_otro") contadores.httpOtro++;
+  else contadores.decodificacion++;
 }
 
-async function cargarTileComoImagen(url: string): Promise<HTMLImageElement | null> {
+// `contadores` es opcional y solo lo pasan los llamadores que quieren
+// estadísticas reales (ver obtenerTileConCache, exclusivo de los mosaicos de
+// seguimiento) -- la panorámica (generarMapaReal/generarMapaDetallado, capa
+// de etiquetas) sigue llamando esto sin contadores, sin cambio de
+// comportamiento.
+async function cargarTileComoImagen(
+  url: string,
+  contadores: ContadoresTilesSeguimiento | null = null,
+): Promise<HTMLImageElement | null> {
   const controlador = new AbortController();
   const idTimeout = setTimeout(() => controlador.abort(), TIMEOUT_TILE_MS);
   let res: Response;
@@ -266,13 +325,14 @@ async function cargarTileComoImagen(url: string): Promise<HTMLImageElement | nul
       clearTimeout(idTimeout);
     }
   } catch (err) {
-    registrarFalloTile("red", url, err instanceof Error ? err.message : String(err));
+    const esTimeout = err instanceof DOMException && err.name === "AbortError";
+    registrarFalloTile(esTimeout ? "timeout" : "red", url, err instanceof Error ? err.message : String(err), contadores);
     return null;
   }
   if (!res.ok) {
-    if (res.status === 429) registrarFalloTile("http_429", url, String(res.status));
-    else if (res.status === 404) registrarFalloTile("http_404", url, String(res.status));
-    else registrarFalloTile("http_otro", url, String(res.status));
+    if (res.status === 429) registrarFalloTile("http_429", url, String(res.status), contadores);
+    else if (res.status === 404) registrarFalloTile("http_404", url, String(res.status), contadores);
+    else registrarFalloTile("http_otro", url, String(res.status), contadores);
     return null;
   }
   try {
@@ -283,14 +343,16 @@ async function cargarTileComoImagen(url: string): Promise<HTMLImageElement | nul
       lector.onerror = () => reject(new Error("no se pudo leer el tile"));
       lector.readAsDataURL(blob);
     });
-    return await new Promise<HTMLImageElement>((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => resolve(img);
-      img.onerror = () => reject(new Error("no se pudo decodificar el tile"));
-      img.src = dataUrl;
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const imagen = new Image();
+      imagen.onload = () => resolve(imagen);
+      imagen.onerror = () => reject(new Error("no se pudo decodificar el tile"));
+      imagen.src = dataUrl;
     });
+    if (contadores) contadores.exitosos++;
+    return img;
   } catch (err) {
-    registrarFalloTile("decodificacion", url, err instanceof Error ? err.message : String(err));
+    registrarFalloTile("decodificacion", url, err instanceof Error ? err.message : String(err), contadores);
     return null;
   }
 }
@@ -315,10 +377,11 @@ async function cargarTileComoImagen(url: string): Promise<HTMLImageElement | nul
 interface CacheTilesLRU {
   entradas: Map<string, Promise<HTMLImageElement | null>>;
   limite: number;
+  contadores: ContadoresTilesSeguimiento;
 }
 
 function crearCacheTilesLRU(limite: number): CacheTilesLRU {
-  return { entradas: new Map(), limite };
+  return { entradas: new Map(), limite, contadores: crearContadoresTilesSeguimiento() };
 }
 
 // Vacía el cache por completo -- se llama al terminar generarVideoRecorrido
@@ -344,6 +407,7 @@ function obtenerTileConCache(
   const clave = `${zoom}/${x}/${y}`;
   const existente = cache.entradas.get(clave);
   if (existente) {
+    cache.contadores.cacheHits++;
     // Reinsertar al final = "más recientemente usado" (Map conserva orden
     // de inserción, así que el primer par es siempre el menos usado
     // recientemente -- ver la expulsión más abajo).
@@ -351,7 +415,9 @@ function obtenerTileConCache(
     cache.entradas.set(clave, existente);
     return existente;
   }
-  const promesa = cargarTileComoImagen(url);
+  cache.contadores.cacheMisses++;
+  cache.contadores.fetchTotal++;
+  const promesa = cargarTileComoImagen(url, cache.contadores);
   cache.entradas.set(clave, promesa);
   if (cache.entradas.size > cache.limite) {
     const claveMasAntigua = cache.entradas.keys().next().value;
@@ -385,10 +451,25 @@ async function generarMapaEnZoom(
   // panorámica (generarMapaReal/generarMapaDetallado) sigue sin cache,
   // exactamente como antes, al no pasar este argumento.
   cache: CacheTilesLRU | null = null,
+  // Instrumentación temporal (ver asegurarDescarga): si viene una etiqueta
+  // ("indice=N"), loguea inicio/resultado de ESTE mosaico puntual -- la
+  // panorámica no pasa etiqueta, así que sigue muda como antes.
+  etiquetaDiagnostico: string | null = null,
 ): Promise<MapaGenerado | null> {
   try {
     const tiles = calcularTilesNecesarios(centroPxX, centroPxY, zoom, anchoDestino, altoDestino);
-    if (tiles.length === 0 || tiles.length > maxTiles) return null;
+    if (etiquetaDiagnostico) {
+      console.log(`[mosaico] ${etiquetaDiagnostico} descarga iniciada -- tiles calculados=${tiles.length} (maxTiles=${maxTiles})`);
+    }
+    if (tiles.length === 0 || tiles.length > maxTiles) {
+      if (etiquetaDiagnostico) {
+        console.warn(
+          `[mosaico] ${etiquetaDiagnostico} generarMapaEnZoom devolvió null -- tiles calculados=${tiles.length} supera maxTiles=${maxTiles}`,
+        );
+        if (cache) cache.contadores.mosaicosNull++;
+      }
+      return null;
+    }
 
     const [imagenesBase, imagenesEtiquetas] = await Promise.all([
       Promise.all(tiles.map((t) => obtenerTileConCache(cache, TILE_SATELITE_URL, zoom, t.x, t.y))),
@@ -396,13 +477,34 @@ async function generarMapaEnZoom(
         ? Promise.all(tiles.map((t) => cargarTileComoImagen(urlTile(TILE_ETIQUETAS_URL, zoom, t.x, t.y))))
         : Promise.resolve(tiles.map(() => null)),
     ]);
-    if (imagenesBase.every((img) => img === null)) return null;
+    const cargados = imagenesBase.filter((img) => img !== null).length;
+    const fallidos = imagenesBase.length - cargados;
+    if (imagenesBase.every((img) => img === null)) {
+      if (etiquetaDiagnostico) {
+        console.warn(`[mosaico] ${etiquetaDiagnostico} generarMapaEnZoom devolvió null -- los ${tiles.length} tiles fallaron`);
+        if (cache) cache.contadores.mosaicosNull++;
+      }
+      return null;
+    }
 
     // El canvas de composición va al doble de tamaño (ESCALA), para que el
     // mapa se vea nítido en la tarjeta final exportada a resolución retina
     // — los tiles satelitales de Esri no tienen variante "@2x" como Carto,
     // así que acá se estiran al dibujarse (misma nitidez que ya se ve en el
     // mapa satelital dentro de la app).
+    //
+    // OJO -- pregunta explícita del round de instrumentación: si algunos
+    // tiles fallan (parcial, no todos), el mosaico SE GENERA IGUAL con este
+    // fillRect de fondo visible en cada hueco (NO transparente, NO se
+    // devuelve null) -- cada tile fallido deja un rectángulo sólido de este
+    // color exacto (#1a1108, marrón muy oscuro) del tamaño físico de un tile
+    // (TAM_TILE*ESCALA = 512×512 px) en su posición real dentro del mosaico.
+    // Si varios tiles vecinos fallan juntos (ej. una ráfaga de 429 del
+    // proveedor bajo carga real, con Promise.all pidiendo ~112-150 tiles en
+    // paralelo), esos huecos se ven como UN rectángulo sólido más grande,
+    // no puntos sueltos -- candidato serio para explicar el "rectángulo que
+    // no corresponde" reportado, independiente de si el mosaico "existe" o
+    // no (acá SÍ existe, solo tiene huecos).
     const canvas = document.createElement("canvas");
     canvas.width = anchoDestino * ESCALA;
     canvas.height = altoDestino * ESCALA;
@@ -417,8 +519,19 @@ async function generarMapaEnZoom(
       if (etiquetas) ctx.drawImage(etiquetas, t.destX * ESCALA, t.destY * ESCALA, TAM_TILE * ESCALA, TAM_TILE * ESCALA);
     });
 
+    if (etiquetaDiagnostico) {
+      console.log(
+        `[mosaico] ${etiquetaDiagnostico} generado OK -- tiles ${cargados}/${tiles.length} cargados (${fallidos} fallidos), canvas=${canvas.width}x${canvas.height}`,
+      );
+      if (cache) cache.contadores.mosaicosOK++;
+    }
+
     return { dataUrl: canvas.toDataURL("image/png"), zoom, centroPxX, centroPxY };
-  } catch {
+  } catch (err) {
+    if (etiquetaDiagnostico) {
+      console.warn(`[mosaico] ${etiquetaDiagnostico} excepción: ${err instanceof Error ? err.message : String(err)}`);
+      if (cache) cache.contadores.mosaicosNull++;
+    }
     return null;
   }
 }
@@ -778,6 +891,7 @@ async function asegurarDescarga(estado: EstadoVentanaMosaicos, indice: number): 
       false,
       MAX_TILES_MOSAICO_SEGUIMIENTO,
       estado.cache,
+      `indice=${indice}`,
     );
     estado.dataUrls[indice] = generado?.dataUrl ?? null;
   } finally {
@@ -792,6 +906,10 @@ async function asegurarDecodificado(estado: EstadoVentanaMosaicos, indice: numbe
   const url = estado.dataUrls[indice];
   if (!url) return;
   estado.imagenes[indice] = await cargarImagenOpcional(url);
+  const img = estado.imagenes[indice];
+  if (img) {
+    console.log(`[mosaico] indice=${indice} decodificado -- naturalWidth=${img.naturalWidth} naturalHeight=${img.naturalHeight}`);
+  }
 }
 
 // Último mosaico que SÍ llegó a decodificar y mostrarse -- ver
@@ -853,6 +971,11 @@ interface SeleccionMosaico {
   metaSiguiente: MosaicoSeguimientoMeta | null;
   // 0 = solo "actual" a la vista; 1 = ya cruzó del todo al "siguiente".
   peso: number;
+  // Índice REAL de lo que hay en `actual` -- puede diferir de indiceActual
+  // (el índice geométrico según la posición de la cámara) cuando se cayó al
+  // último mosaico válido (ver ultimoValidoRef en seleccionarMosaico), null
+  // si no hay ninguno. Solo para instrumentación/diagnóstico.
+  indiceMostrado: number | null;
 }
 
 // Decide, para la posición actual del patinador, qué mosaico(s) mostrar:
@@ -926,6 +1049,7 @@ function seleccionarMosaico(
     indiceActual,
     actual: actualUsable ? imagenActual : (ultimoValidoRef.valor?.img ?? null),
     metaActual: actualUsable ? metaActual : (ultimoValidoRef.valor?.meta ?? null),
+    indiceMostrado: actualUsable ? indiceActual : (ultimoValidoRef.valor?.indice ?? null),
     siguiente: metaSiguiente ? (ventana.imagenes[indiceActual + 1] ?? null) : null,
     metaSiguiente,
     peso,
@@ -962,6 +1086,13 @@ function seleccionarMosaico(
 // el mosaico entrando en crossfade, es exactamente la transición deliberada
 // y perfectamente alineada (mismo camaraZ17) que se busca. Fuera de esa
 // secuencia (seguimiento real) modoIntro siempre es false.
+// Devuelve un descriptor de texto de QUÉ SE DIBUJÓ REALMENTE -- instrumentación
+// temporal (ver el log change-gated en dibujarCuadroVideo y el overlay de
+// diagnóstico en pantalla) para poder confirmar con evidencia de ejecución,
+// no suposiciones, si el video está usando mosaicos Z17 o cayendo a la
+// panorámica de respaldo, y en qué instante exacto. No cambia ningún
+// resultado visual (mismos 4 casos, mismo orden, mismos drawImage) --
+// únicamente reporta cuál de ellos se ejecutó.
 function dibujarMosaicosSeguimiento(
   ctx: CanvasRenderingContext2D,
   seleccion: SeleccionMosaico,
@@ -969,7 +1100,7 @@ function dibujarMosaicosSeguimiento(
   camaraZ17: { x: number; y: number },
   escalaSeguimiento: number,
   modoIntro = false,
-) {
+): string {
   function intentarDibujar(img: HTMLImageElement, meta: MosaicoSeguimientoMeta, alpha: number): boolean {
     if (alpha <= 0) return false;
     const r = calcularRecorteMosaico(camaraZ17, meta, escalaSeguimiento);
@@ -985,7 +1116,7 @@ function dibujarMosaicosSeguimiento(
     if (seleccion.siguiente && seleccion.metaSiguiente) {
       intentarDibujar(seleccion.siguiente, seleccion.metaSiguiente, seleccion.peso);
     }
-    return;
+    return `INTRO peso=${seleccion.peso.toFixed(2)}`;
   }
 
   const hayCrossfade = seleccion.peso > 0 && !!seleccion.siguiente && !!seleccion.metaSiguiente;
@@ -998,7 +1129,7 @@ function dibujarMosaicosSeguimiento(
   if (actualOk && hayCrossfade) {
     // Caso 1: crossfade normal -- ambos representan la misma ventana real.
     intentarDibujar(seleccion.siguiente as HTMLImageElement, seleccion.metaSiguiente as MosaicoSeguimientoMeta, seleccion.peso);
-    return;
+    return `CROSSFADE ${seleccion.indiceMostrado}→${seleccion.indiceActual + 1} peso=${seleccion.peso.toFixed(2)}`;
   }
 
   if (!actualOk && hayCrossfade) {
@@ -1010,15 +1141,16 @@ function dibujarMosaicosSeguimiento(
       seleccion.metaSiguiente as MosaicoSeguimientoMeta,
       1,
     );
-    if (siguienteOk) return;
+    if (siguienteOk) return `MOSAICO indice=${seleccion.indiceActual + 1} (solo siguiente -- actual invalido/recorteValido=false)`;
   }
 
-  if (actualOk) return; // Caso 3: ya dibujado arriba, nada más que hacer.
+  if (actualOk) return `MOSAICO indice=${seleccion.indiceMostrado}`; // Caso 3: ya dibujado arriba, nada más que hacer.
 
   // Caso 4: ningún mosaico válido -- último recurso.
   if (mapaImgRespaldo) {
     ctx.drawImage(mapaImgRespaldo, 0, 0, ANCHO_VIDEO, ALTO_VIDEO);
   }
+  return `PANORAMICA_FALLBACK (recorteValido=false para actual${hayCrossfade ? " y siguiente" : ""})`;
 }
 
 function iconoDistancia(cx: number, y: number): string {
@@ -2104,6 +2236,34 @@ interface ConfigVideo {
   kmhReferenciaColor: number;
 }
 
+// Texto de diagnóstico TEMPORAL en la esquina inferior derecha del video --
+// eliminar junto con el resto de esta instrumentación (ver refDiagnosticoFondo
+// en dibujarCuadroVideo) una vez confirmado si el seguimiento usa mosaicos
+// Z17 reales o cae a la panorámica de respaldo. Traduce el descriptor técnico
+// (ver dibujarMosaicosSeguimiento) a un texto corto legible mirando el video:
+// "Z17 M3", "Z17 M3→M4" (crossfade), "FALLBACK PANORAMICA".
+function dibujarTextoDiagnosticoFondo(ctx: CanvasRenderingContext2D, descriptor: string): void {
+  let texto = descriptor;
+  const crossfade = descriptor.match(/^CROSSFADE (\S+)→(\d+)/);
+  const mosaico = descriptor.match(/^MOSAICO indice=(\S+)/);
+  if (crossfade) texto = `Z17 M${crossfade[1]}→M${crossfade[2]}`;
+  else if (mosaico) texto = `Z17 M${mosaico[1]}`;
+  else if (descriptor.startsWith("PANORAMICA_FALLBACK")) texto = "FALLBACK PANORAMICA";
+  else if (descriptor.startsWith("PANORAMICA_OUTRO")) texto = "PANORAMICA (outro)";
+  else if (descriptor.startsWith("INTRO")) texto = "Z17 INTRO";
+
+  ctx.save();
+  ctx.font = "700 20px monospace";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  const anchoCaja = ctx.measureText(texto).width + 20;
+  ctx.fillStyle = "rgba(0,0,0,0.65)";
+  ctx.fillRect(ANCHO_VIDEO - anchoCaja - 12, ALTO_VIDEO - 44, anchoCaja, 32);
+  ctx.fillStyle = descriptor.startsWith("PANORAMICA_FALLBACK") ? "#ff4d4d" : "#39ff6a";
+  ctx.fillText(texto, ANCHO_VIDEO - anchoCaja - 2, ALTO_VIDEO - 28);
+  ctx.restore();
+}
+
 // Dibuja cada cuadro del video rediseñado directamente en el canvas (sin
 // pasar por SVG+<img> por cuadro, ver generarVideoRecorrido): mapa a
 // pantalla completa (a diferencia de construirSvg(), que sigue siendo la
@@ -2151,6 +2311,13 @@ function dibujarCuadroVideo(
   // velocidad máxima ni la barra de estadísticas, que todavía no
   // corresponde mostrar antes de que arranque el recorrido de verdad.
   soloFondo = false,
+  // Instrumentación temporal (ver dibujarTextoDiagnosticoFondo más abajo y
+  // el resumen final en generarVideoRecorrido): si viene, dibuja un texto
+  // fijo en pantalla con qué fondo se está usando EN ESTE cuadro (siempre,
+  // no solo al cambiar), y loguea en consola solo cuando cambia respecto
+  // del cuadro anterior (.valor persiste entre llamadas). null fuera de la
+  // prueba -- sin este parámetro, cero cambio de comportamiento/dibujo.
+  refDiagnosticoFondo: { valor: string | null } | null = null,
 ) {
   const { puntos } = datos;
   const distanciaMostrar = frame.distanciaKm;
@@ -2203,10 +2370,23 @@ function dibujarCuadroVideo(
   // transformación IDENTIDAD (antes del translate/scale/translate de más
   // abajo), porque cada uno arma su propio recorte/transformación ya
   // resuelto en coordenadas finales de pantalla.
+  let descriptorFondo: string | null = null;
   if (seleccionMosaico && camaraZ17) {
-    dibujarMosaicosSeguimiento(ctx, seleccionMosaico, mapaImg, camaraZ17, camara.escala, soloFondo);
+    descriptorFondo = dibujarMosaicosSeguimiento(ctx, seleccionMosaico, mapaImg, camaraZ17, camara.escala, soloFondo);
   } else {
     dibujarFondoMapaVideo(ctx, mapaImg, mapaDetalladoImg, factorDetalle, camara, escalaInicioOutro);
+    descriptorFondo = "PANORAMICA_OUTRO";
+  }
+
+  if (refDiagnosticoFondo) {
+    // Log en consola SOLO al cambiar (evita 30 líneas por segundo); el texto
+    // en pantalla, en cambio, se redibuja siempre para poder leerlo en
+    // cualquier instante pausando el video.
+    if (descriptorFondo !== refDiagnosticoFondo.valor) {
+      refDiagnosticoFondo.valor = descriptorFondo;
+      console.log(`[video] fraccionTotal=${fraccionTotal.toFixed(3)} fondo=${descriptorFondo}`);
+    }
+    dibujarTextoDiagnosticoFondo(ctx, descriptorFondo);
   }
 
   ctx.save();
@@ -2446,6 +2626,11 @@ export async function generarVideoRecorrido(
   try {
     return await generarVideoRecorridoInterno(datos, opciones, cacheTiles);
   } finally {
+    // Resumen final REAL de esta generación (no estimado) -- se imprime acá,
+    // en el wrapper, para garantizar que corre exactamente una vez, tanto en
+    // éxito como en error (ver los contadores reales pedidos: total fetch,
+    // cache hits/misses, 429, timeouts, 404, otros fallos, mosaicos OK/null).
+    console.log(`[video] RESUMEN ${JSON.stringify(cacheTiles.contadores)}`);
     limpiarCacheTilesLRU(cacheTiles);
   }
 }
@@ -2476,6 +2661,18 @@ async function generarVideoRecorridoInterno(
   if (datos.puntos.length < 2) {
     throw new Error("El recorrido no tiene suficientes puntos para animar.");
   }
+
+  // Instrumentación temporal -- confirma con el propio runtime, no con
+  // suposiciones, qué build está corriendo de verdad (ver el pedido de
+  // descartar bundle/cache viejo). Si esto no aparece en la consola con
+  // estos valores, el navegador/WebView está ejecutando JS de antes de este
+  // cambio -- no hay ningún service worker con fetch() en la app (revisado:
+  // public/sw.js solo escucha push/notificationclick) que pueda estar
+  // sirviendo un bundle viejo, así que sería cache HTTP normal del
+  // navegador/CDN.
+  console.log(
+    `[video] build activo -- MAX_TILES_MOSAICO_SEGUIMIENTO=${MAX_TILES_MOSAICO_SEGUIMIENTO} LIMITE_CACHE_TILES_SEGUIMIENTO=${LIMITE_CACHE_TILES_SEGUIMIENTO} ZOOM_SEGUIMIENTO=${ZOOM_SEGUIMIENTO} ESCALA_SEGUIMIENTO=${ESCALA_SEGUIMIENTO} FACTOR_COBERTURA_MOSAICO=${FACTOR_COBERTURA_MOSAICO}`,
+  );
 
   const [logoGrandeDataUrl, mapa, avatarDataUrl] = await Promise.all([
     cargarImagenComoDataUrl("/logo-legion-roller.png"),
@@ -2537,7 +2734,12 @@ async function generarVideoRecorridoInterno(
   // mosaicos de más).
   const puntosSimplificadosSeguimiento = simplificarRutaParaDibujo(datos.puntos);
   const mosaicosSeguimiento = mapa ? calcularMosaicosSeguimiento(puntosSimplificadosSeguimiento) : [];
+  console.log(`[video] mosaicos planificados=${mosaicosSeguimiento.length}${mapa ? "" : " (sin panorámica -- mosaicos deshabilitados)"}`);
   const ventanaMosaicos = crearVentanaMosaicos(mosaicosSeguimiento, cacheTiles);
+  // Instrumentación temporal: qué fondo se dibujó REALMENTE en el cuadro
+  // anterior (ver dibujarCuadroVideo/dibujarTextoDiagnosticoFondo) -- para
+  // loguear en consola solo al cambiar, no 30 veces por segundo.
+  const refDiagnosticoFondo: { valor: string | null } = { valor: null };
   const indiceMosaicoRef = { valor: 0 };
   // Último mosaico válido mostrado (ver seleccionarMosaico) -- todavía
   // ninguno al arrancar, se llena solo cuando el mosaico 0 termine de
@@ -2696,6 +2898,9 @@ async function generarVideoRecorridoInterno(
           ultimoMosaicoValidoRef,
         );
         if (indiceMosaicoRef.valor !== indicePrevio) {
+          console.log(
+            `[video] fraccionTotal=${fraccionTotal.toFixed(3)} indice geometrico activo: ${indicePrevio} -> ${indiceMosaicoRef.valor}`,
+          );
           mantenerVentana(ventanaMosaicos, indiceMosaicoRef.valor, ultimoMosaicoValidoRef.valor?.indice ?? null).catch(
             () => {},
           );
@@ -2727,6 +2932,8 @@ async function generarVideoRecorridoInterno(
       pulsoVelMax,
       suavizadoEtiquetas,
       seleccionMosaico,
+      false,
+      refDiagnosticoFondo,
     );
   }
 
@@ -2771,6 +2978,7 @@ async function generarVideoRecorridoInterno(
             indiceActual: 0,
             actual: null,
             metaActual: null,
+            indiceMostrado: null,
             siguiente: ventanaMosaicos.imagenes[0] ?? null,
             metaSiguiente: ventanaMosaicos.metas[0] ?? null,
             peso: pesoMosaico,
@@ -2796,6 +3004,7 @@ async function generarVideoRecorridoInterno(
       suavizadoEtiquetas,
       seleccion,
       true,
+      refDiagnosticoFondo,
     );
   }
 
