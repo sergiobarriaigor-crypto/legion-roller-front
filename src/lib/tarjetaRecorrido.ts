@@ -3119,6 +3119,11 @@ async function generarVideoRecorridoInterno(
   const huecoRef: { valor: EstadoHueco } = {
     valor: { fase: "ninguno", indiceDestino: null, camaraAmplia: null, escalaActual: null },
   };
+  // Diagnóstico temporal (solo para entender por qué el hueco grande no
+  // vuelve a Z17 -- ver [hueco-diag] más abajo). Cuenta cuadros consecutivos
+  // en fase "regresando" para throttlear el log; se resetea cada vez que se
+  // entra de nuevo a "regresando". No participa de ninguna decisión.
+  const diagnosticoRegresandoRef: { valor: number } = { valor: 0 };
 
   function dibujarFrame(fraccionTotal: number, mostrarFotoFinal: boolean, pulsoVelMax = 0) {
     const fraccionTrazo = Math.min(1, fraccionTotal / FRACCION_TRAZO_COMPLETO);
@@ -3201,18 +3206,60 @@ async function generarVideoRecorridoInterno(
               `[hueco] fraccionTotal=${fraccionTotal.toFixed(3)} en_hueco -> regresando (destino=${huecoRef.valor.indiceDestino})`,
             );
             huecoRef.valor = { ...huecoRef.valor, fase: "regresando" };
+            diagnosticoRegresandoRef.valor = 0;
           }
         } else if (huecoRef.valor.fase === "regresando" && huecoRef.valor.indiceDestino !== null) {
           const metaDestino = ventanaMosaicos.metas[huecoRef.valor.indiceDestino];
           const imagenDestino = ventanaMosaicos.imagenes[huecoRef.valor.indiceDestino];
           const camaraZ17Regreso = calcularCamaraZ17(camara, mapa, factorSeguimiento);
           const recorteRegreso = calcularRecorteMosaico(camaraZ17Regreso, metaDestino, camara.escala);
+          const esRecorteValido = recorteValido(recorteRegreso, metaDestino);
+
+          // Diagnóstico temporal -- NO cambia ninguna decisión, solo lee y
+          // registra el estado exacto de convergencia mientras la fase
+          // "regresando" sigue esperando a recorteValido(). Throttled a cada
+          // 5 cuadros (más el primero y todo cuadro donde ya valida) para no
+          // inundar la consola en huecos largos.
+          diagnosticoRegresandoRef.valor++;
+          if (diagnosticoRegresandoRef.valor === 1 || diagnosticoRegresandoRef.valor % 5 === 0 || esRecorteValido) {
+            const distZ17ADestino = Math.hypot(
+              camaraZ17Regreso.x - metaDestino.centroPxX,
+              camaraZ17Regreso.y - metaDestino.centroPxY,
+            );
+            const anchoFisicoDestino = metaDestino.anchoPx * ESCALA;
+            const altoFisicoDestino = metaDestino.altoPx * ESCALA;
+            console.log(
+              `[hueco-diag] fraccionTotal=${fraccionTotal.toFixed(3)} restanteHastaTrazoCompleto=${(FRACCION_TRAZO_COMPLETO - fraccionTotal).toFixed(3)} destino=${huecoRef.valor.indiceDestino} ` +
+                `camara.cx=${camara.cx.toFixed(1)} camara.cy=${camara.cy.toFixed(1)} camara.escala=${camara.escala.toFixed(4)} escalaActual=${huecoRef.valor.escalaActual?.toFixed(4)} ` +
+                `camaraZ17=(${camaraZ17Regreso.x.toFixed(1)},${camaraZ17Regreso.y.toFixed(1)}) distZ17ADestino=${distZ17ADestino.toFixed(1)} radioLimitePx=${metaDestino.radioLimitePx.toFixed(1)} ` +
+                `recorte sx=${recorteRegreso.sx.toFixed(1)} sy=${recorteRegreso.sy.toFixed(1)} sWidth=${recorteRegreso.sWidth.toFixed(1)} sHeight=${recorteRegreso.sHeight.toFixed(1)} ` +
+                `limiteFisico anchoPx=${anchoFisicoDestino.toFixed(1)} altoPx=${altoFisicoDestino.toFixed(1)} ` +
+                `imagenDestinoLista=${imagenDestino !== null} recorteValido=${esRecorteValido}`,
+            );
+            if (!esRecorteValido) {
+              const motivos: string[] = [];
+              if (recorteRegreso.sx < 0) motivos.push(`sx<0 (sx=${recorteRegreso.sx.toFixed(1)})`);
+              if (recorteRegreso.sy < 0) motivos.push(`sy<0 (sy=${recorteRegreso.sy.toFixed(1)})`);
+              if (recorteRegreso.sx + recorteRegreso.sWidth > anchoFisicoDestino) {
+                motivos.push(
+                  `sx+sWidth>anchoPx (${(recorteRegreso.sx + recorteRegreso.sWidth).toFixed(1)} > ${anchoFisicoDestino.toFixed(1)}, excede=${(recorteRegreso.sx + recorteRegreso.sWidth - anchoFisicoDestino).toFixed(1)})`,
+                );
+              }
+              if (recorteRegreso.sy + recorteRegreso.sHeight > altoFisicoDestino) {
+                motivos.push(
+                  `sy+sHeight>altoPx (${(recorteRegreso.sy + recorteRegreso.sHeight).toFixed(1)} > ${altoFisicoDestino.toFixed(1)}, excede=${(recorteRegreso.sy + recorteRegreso.sHeight - altoFisicoDestino).toFixed(1)})`,
+                );
+              }
+              console.log(`[hueco-diag] recorteValido=false -- motivo(s): ${motivos.join(", ")}`);
+            }
+          }
+
           // Única condición para reactivar Z17: el crop del mosaico destino
           // YA es geométricamente válido con la cámara actual (misma cámara
           // que se está usando para la panorámica este frame) Y la imagen
           // ya terminó de decodificar. Sin umbral de escala/posición
           // arbitrario -- recorteValido() ya combina las dos cosas.
-          if (imagenDestino && recorteValido(recorteRegreso, metaDestino)) {
+          if (imagenDestino && esRecorteValido) {
             console.log(
               `[hueco] fraccionTotal=${fraccionTotal.toFixed(3)} regresando -> ninguno (Z17 reactivado en indice=${huecoRef.valor.indiceDestino})`,
             );
