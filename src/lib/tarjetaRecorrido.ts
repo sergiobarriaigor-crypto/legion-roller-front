@@ -798,17 +798,36 @@ function seleccionarMosaico(
 // son directamente 0,0,ANCHO_VIDEO,ALTO_VIDEO, sin necesitar ninguna
 // transformación anidada.
 //
-// Doble red de seguridad, nunca deja un cuadro en blanco: si el recorte del
-// mosaico "actual" (ya sustituido por el último válido dentro de
-// seleccionarMosaico si hacía falta) igual sale fuera del PNG físico
-// (recorteValido), se cae a la panorámica -- mismo criterio que ya existía
-// para "todavía no decodificó ninguno".
+// La panorámica es el ÚLTIMO recurso, nunca una capa más de un crossfade de
+// seguimiento -- mezclar "panorámica completa" (toda la ruta) con "un
+// mosaico al 45% de opacidad" (un sector angosto de calles) son dos escalas
+// geográficas completamente distintas superpuestas, y eso es justo lo que
+// se veía como "rectángulos que no corresponden". Cuatro casos, en orden:
+//   1. actual válido + siguiente válido -> crossfade normal (A×(1-peso)+B×peso).
+//   2. actual inválido + siguiente válido -> siguiente SOLO, al 100% (nunca
+//      mezclado parcialmente con la panorámica).
+//   3. actual válido + siguiente inválido (o sin crossfade en curso) ->
+//      actual solo, al 100%.
+//   4. ningún mosaico válido -> panorámica completa, sola.
+// "Válido" acá es recorteValido() -- `seleccion.actual` ya viene
+// pre-validado por seleccionarMosaico (sustituido por el último válido si
+// hacía falta), así que en la práctica casi siempre pasa; `seleccion.siguiente`
+// recién se valida acá, es la primera vez que se intenta dibujar.
+//
+// `modoIntro` es la ÚNICA excepción sancionada a "nunca panorámica + mosaico
+// parcial": la secuencia de acercamiento (ver dibujarFondoIntro en
+// generarVideoRecorrido) arma a propósito una selección con actual=null,
+// siguiente=mosaico 0 -- ahí SÍ corresponde mezclar panorámica de base con
+// el mosaico entrando en crossfade, es exactamente la transición deliberada
+// y perfectamente alineada (mismo camaraZ17) que se busca. Fuera de esa
+// secuencia (seguimiento real) modoIntro siempre es false.
 function dibujarMosaicosSeguimiento(
   ctx: CanvasRenderingContext2D,
   seleccion: SeleccionMosaico,
   mapaImgRespaldo: HTMLImageElement | null,
   camaraZ17: { x: number; y: number },
   escalaSeguimiento: number,
+  modoIntro = false,
 ) {
   function intentarDibujar(img: HTMLImageElement, meta: MosaicoSeguimientoMeta, alpha: number): boolean {
     if (alpha <= 0) return false;
@@ -820,15 +839,44 @@ function dibujarMosaicosSeguimiento(
     return true;
   }
 
-  let actualDibujado = false;
+  if (modoIntro) {
+    if (mapaImgRespaldo) ctx.drawImage(mapaImgRespaldo, 0, 0, ANCHO_VIDEO, ALTO_VIDEO);
+    if (seleccion.siguiente && seleccion.metaSiguiente) {
+      intentarDibujar(seleccion.siguiente, seleccion.metaSiguiente, seleccion.peso);
+    }
+    return;
+  }
+
+  const hayCrossfade = seleccion.peso > 0 && !!seleccion.siguiente && !!seleccion.metaSiguiente;
+
+  let actualOk = false;
   if (seleccion.actual && seleccion.metaActual) {
-    actualDibujado = intentarDibujar(seleccion.actual, seleccion.metaActual, 1);
+    actualOk = intentarDibujar(seleccion.actual, seleccion.metaActual, 1);
   }
-  if (!actualDibujado && mapaImgRespaldo) {
+
+  if (actualOk && hayCrossfade) {
+    // Caso 1: crossfade normal -- ambos representan la misma ventana real.
+    intentarDibujar(seleccion.siguiente as HTMLImageElement, seleccion.metaSiguiente as MosaicoSeguimientoMeta, seleccion.peso);
+    return;
+  }
+
+  if (!actualOk && hayCrossfade) {
+    // Caso 2: "actual" no es válido -- se usa "siguiente" al 100%, no al peso
+    // parcial (eso sería exactamente la mezcla panorámica+parcial que no
+    // queremos).
+    const siguienteOk = intentarDibujar(
+      seleccion.siguiente as HTMLImageElement,
+      seleccion.metaSiguiente as MosaicoSeguimientoMeta,
+      1,
+    );
+    if (siguienteOk) return;
+  }
+
+  if (actualOk) return; // Caso 3: ya dibujado arriba, nada más que hacer.
+
+  // Caso 4: ningún mosaico válido -- último recurso.
+  if (mapaImgRespaldo) {
     ctx.drawImage(mapaImgRespaldo, 0, 0, ANCHO_VIDEO, ALTO_VIDEO);
-  }
-  if (seleccion.peso > 0 && seleccion.siguiente && seleccion.metaSiguiente) {
-    intentarDibujar(seleccion.siguiente, seleccion.metaSiguiente, seleccion.peso);
   }
 }
 
@@ -1379,6 +1427,16 @@ interface ResultadoAnticipacion {
 // rumbo en una curva la mueva gradual, nunca de golpe. `direccionAnterior`
 // es de solo lectura acá -- el llamador decide si persiste el resultado
 // (ver dibujarFrame/generarVideoRecorrido), función pura sin estado propio.
+//
+// DESPLAZAMIENTO_ANTICIPACION_PX/MAX_DESPLAZAMIENTO_ANTICIPACION_PX son
+// conceptualmente píxeles de PANTALLA (70/90px visibles) -- igual que
+// RADIO_TOLERANCIA_PX en suavizarCamara, acá se trabaja sobre focoActualPx
+// (canvas-base), así que hay que convertir dividiendo por la escala
+// vigente de este cuadro (`escalaSeguimiento` -- durante el tramo de
+// seguimiento es exactamente factor×ESCALA_SEGUIMIENTO, el mismo valor que
+// va a terminar siendo camara.escala; se recibe ya calculado en vez de
+// recibir estadoCamara completo porque esta función corre ANTES de
+// llamarlo -- ver dibujarFrame).
 function calcularFocoConAnticipacion(
   focoActualPx: { x: number; y: number },
   datos: DatosTarjetaRecorrido,
@@ -1387,6 +1445,7 @@ function calcularFocoConAnticipacion(
   x: (lon: number) => number,
   y: (lat: number) => number,
   direccionAnterior: DireccionAnticipacion | null,
+  escalaSeguimiento: number,
 ): ResultadoAnticipacion {
   const distanciaActualKm = fraccionTrazo * datos.distanciaKm;
   const puntoAdelante = puntoADistanciaKm(datos.puntos, distanciaAcumuladaKm, distanciaActualKm + DISTANCIA_ANTICIPACION_KM);
@@ -1414,7 +1473,7 @@ function calcularFocoConAnticipacion(
     }
   }
 
-  const desplazamiento = Math.min(DESPLAZAMIENTO_ANTICIPACION_PX, MAX_DESPLAZAMIENTO_ANTICIPACION_PX);
+  const desplazamiento = Math.min(DESPLAZAMIENTO_ANTICIPACION_PX, MAX_DESPLAZAMIENTO_ANTICIPACION_PX) / escalaSeguimiento;
   return {
     foco: {
       x: focoActualPx.x + direccion.dx * desplazamiento,
@@ -1431,12 +1490,23 @@ interface CamaraSuavizada {
 
 // Cámara con "zona muerta": mientras el objetivo crudo (ya calculado por
 // estadoCamara, con su propio clamp a los bordes del mapa) quede a menos de
-// RADIO_TOLERANCIA_PX de la posición actual de la cámara, la cámara no se
-// mueve -- el patinador puede moverse dentro de esa zona sin que la cámara
-// reaccione a cada micro-variación del GPS. Al salir de la zona, la cámara
-// avanza hacia el punto que deja al objetivo justo en el borde (no de vuelta
-// al centro exacto), con una interpolación suave (FACTOR_SUAVIZADO_CAMARA)
-// en vez de un salto instantáneo al borde.
+// RADIO_TOLERANCIA_PX (en PANTALLA, ver conversión de unidades más abajo) de
+// la posición actual de la cámara, la cámara no se mueve -- el patinador
+// puede moverse dentro de esa zona sin que la cámara reaccione a cada
+// micro-variación del GPS. Al salir de la zona, la cámara avanza hacia el
+// punto que deja al objetivo justo en el borde (no de vuelta al centro
+// exacto), con una interpolación suave (FACTOR_SUAVIZADO_CAMARA) en vez de
+// un salto instantáneo al borde.
+//
+// RADIO_TOLERANCIA_PX es conceptualmente una distancia en PANTALLA (72px
+// visibles), pero acá se trabaja en canvas-base (objetivo.cx/cy) -- esos dos
+// espacios solo coinciden cuando escala=1. Ahora que la escala del
+// seguimiento es factor×ESCALA_SEGUIMIENTO (no 1), hay que convertir:
+// distanciaPantalla = distanciaCanvasBase × escala, así que
+// distanciaCanvasBase = distanciaPantalla / escala -- de ahí `radioBase`.
+// Usa `objetivo.escala` (la escala YA resuelta para este cuadro por
+// estadoCamara, la misma que va a usar la transformación de cámara real)
+// en vez de recalcular nada aparte.
 //
 // `anterior === null` pasa exactamente una vez, en el primer cuadro del
 // seguimiento (ya sea el último del intro o, si no hubo intro, el primero
@@ -1463,13 +1533,14 @@ function suavizarCamara(objetivo: EstadoCamara, anterior: CamaraSuavizada | null
     };
   }
 
+  const radioBase = RADIO_TOLERANCIA_PX / objetivo.escala;
   const dx = objetivo.cx - anterior.cx;
   const dy = objetivo.cy - anterior.cy;
   const dist = Math.hypot(dx, dy);
-  if (dist <= RADIO_TOLERANCIA_PX) {
+  if (dist <= radioBase) {
     return { cx: anterior.cx, cy: anterior.cy, escala: objetivo.escala };
   }
-  const excedente = dist - RADIO_TOLERANCIA_PX;
+  const excedente = dist - radioBase;
   const objetivoEfectivoX = anterior.cx + (dx / dist) * excedente;
   const objetivoEfectivoY = anterior.cy + (dy / dist) * excedente;
   return {
@@ -1992,7 +2063,7 @@ function dibujarCuadroVideo(
   // abajo), porque cada uno arma su propio recorte/transformación ya
   // resuelto en coordenadas finales de pantalla.
   if (seleccionMosaico && camaraZ17) {
-    dibujarMosaicosSeguimiento(ctx, seleccionMosaico, mapaImg, camaraZ17, camara.escala);
+    dibujarMosaicosSeguimiento(ctx, seleccionMosaico, mapaImg, camaraZ17, camara.escala, soloFondo);
   } else {
     dibujarFondoMapaVideo(ctx, mapaImg, mapaDetalladoImg, factorDetalle, camara, escalaInicioOutro);
   }
@@ -2436,6 +2507,7 @@ export async function generarVideoRecorrido(
         x,
         y,
         direccionAnticipacionRef.valor,
+        factorSeguimiento * ESCALA_SEGUIMIENTO,
       );
       direccionAnticipacionRef.valor = anticipacion.direccion;
       const objetivoCrudo = estadoCamara(fraccionTotal, anticipacion.foco, focoCentroPx, factorSeguimiento);
@@ -2520,6 +2592,7 @@ export async function generarVideoRecorrido(
     x,
     y,
     null,
+    factorSeguimiento * ESCALA_SEGUIMIENTO,
   );
   const camaraPanoramicaIntro: EstadoCamara = { cx: focoCentroPx.x, cy: focoCentroPx.y, escala: 1 };
   // Misma fórmula, mismos datos que el PRIMER cuadro real del seguimiento
