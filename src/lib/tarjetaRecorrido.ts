@@ -1,4 +1,9 @@
-import { distanciaHaversineKm, velocidadMaximaConPunto, type PuntoGps } from "./geo";
+import {
+  distanciaHaversineKm,
+  velocidadMaximaConPunto,
+  simplificarRutaParaDibujo,
+  type PuntoGps,
+} from "./geo";
 import { cargarImagenComoDataUrl } from "./imagenDataUrl";
 
 export interface DatosTarjetaRecorrido {
@@ -369,6 +374,328 @@ async function generarMapaDetallado(
     // (si falla, dibujarFondoMapaVideo cae de vuelta al panorámico solo).
     160,
   );
+}
+
+// --- Video 2D: cámara de seguimiento con múltiples mosaicos ---
+//
+// Reemplaza, SOLO durante el tramo de seguimiento (fraccionTotal <=
+// FRACCION_TRAZO_COMPLETO), el esquema anterior de "una panorámica +
+// un detalle digital sobre la misma ventana" -- ese esquema no podía dar
+// sensación de cámara cercana en rutas urbanas largas porque la panorámica
+// (elegirZoom) se calcula para que ENTRE TODA la ruta, así que ya arranca
+// lejos antes de cualquier acercamiento óptico. Acá en cambio se piden
+// varios mosaicos reales, cada uno centrado en un tramo distinto de la
+// ruta, todos al MISMO zoom fijo (ZOOM_SEGUIMIENTO) -- así la escala visual
+// no depende de cuán larga sea la ruta completa, solo cambia cuántos
+// mosaicos hacen falta para cubrirla. La panorámica (mapaImg/elegirZoom)
+// sigue existiendo tal cual, pero queda reservada exclusivamente para el
+// tramo final (alejamiento + resumen), donde sí corresponde ver la ruta
+// completa.
+
+// Zoom real fijo para TODOS los mosaicos de seguimiento -- nunca se aleja
+// por más larga que sea la ruta (a diferencia de elegirZoom). Mismo orden
+// que ZOOM_CENTRADO_AUTOMATICO en MapaView.tsx (16, ya validado ahí como
+// "cómodo para ver tu cuadra" al centrar el mapa en vivo) -- un paso más
+// cerca porque acá el encuadre es una franja vertical angosta, no el mapa
+// completo. Sujeto a ajuste visual.
+const ZOOM_SEGUIMIENTO = 17;
+
+// Cuánto lienzo se pide por mosaico, en "anchos/altos de video" -- más
+// grande que el viewport final. Dentro de ese margen extra viven la zona
+// segura, la banda de transición hacia el siguiente mosaico, y el semi-largo
+// de la propia diagonal del viewport (para que la cámara nunca llegue a ver
+// el borde real de la imagen cargada, sin importar hacia qué lado se mueva).
+const FACTOR_COBERTURA_MOSAICO = 2.6;
+// Del semirradio útil del mosaico (mitad del lado más chico del lienzo, en
+// píxeles de ZOOM_SEGUIMIENTO), qué fracción es "zona segura" (un solo
+// mosaico, sin crossfade) y cuánto más se extiende la banda de transición
+// antes de forzar el cambio al siguiente. Sujeto a ajuste visual.
+const FRACCION_ZONA_SEGURA = 0.55;
+const FRACCION_BANDA_TRANSICION = 0.15;
+// Tope de tiles por mosaico de seguimiento -- mismo criterio "mejor
+// esfuerzo" que generarMapaDetallado: si un mosaico puntual falla o pide
+// demasiados tiles, se salta sin romper el video (ver seleccionarMosaico).
+const MAX_TILES_MOSAICO_SEGUIMIENTO = 64;
+
+// Ventanas de memoria acotadas, independientes de cuántos mosaicos tenga la
+// ruta completa (ver comentario largo en EstadoVentanaMosaicos): cuántos
+// mosaicos por delante del actual se mantienen DESCARGADOS (dataURL, sin
+// decodificar -- liviano, solo para no depender de la red justo en el
+// instante del cambio) vs. DECODIFICADOS (Image real en memoria, listos
+// para dibujar de inmediato).
+const VENTANA_DESCARGA_ADELANTE = 3;
+const VENTANA_DESCARGA_ATRAS = 1;
+const VENTANA_DECODIFICADA_ADELANTE = 1;
+
+interface MosaicoSeguimientoMeta {
+  centroPxX: number; // en ZOOM_SEGUIMIENTO
+  centroPxY: number;
+  anchoPx: number;
+  altoPx: number;
+  // Radios (px, en ZOOM_SEGUIMIENTO) de la zona segura y del límite de la
+  // banda de transición -- la cámara se queda sola en este mosaico mientras
+  // esté a menos de radioZonaSeguraPx de su centro; entre ese radio y
+  // radioLimitePx hace crossfade con el siguiente (ver seleccionarMosaico).
+  radioZonaSeguraPx: number;
+  radioLimitePx: number;
+  // Posición/escala precalculadas UNA sola vez para dibujar este mosaico en
+  // el mismo espacio de "canvas base" que ya usan x()/y() y camara.cx/cy
+  // (el de la panorámica, a mapa.zoom) -- ver dibujarMosaicosSeguimiento.
+  // Así, aunque cada mosaico esté centrado en un punto distinto de la ruta
+  // y a un zoom distinto del panorámico, todos quedan geográficamente
+  // alineados bajo la misma transformación de cámara: dos mosaicos
+  // consecutivos dibujados con estos valores caen exactamente en el mismo
+  // lugar de pantalla para un mismo punto real (calle, costa, manzana), sin
+  // salto perceptible en el crossfade.
+  origenCanvasBaseX: number;
+  origenCanvasBaseY: number;
+  escalaEnCanvasBase: number;
+}
+
+// Recorre la ruta (ya simplificada con Douglas-Peucker) por DESPLAZAMIENTO
+// REAL EN PÍXELES de la grilla Web Mercator a ZOOM_SEGUIMIENTO -- no por
+// distancia en km -- para decidir dónde arranca cada mosaico nuevo. Con
+// distancia en km, una curva cerrada o un zigzag puede desplazar la cámara
+// dentro de la imagen mucho más de lo que esa distancia "en línea de ruta"
+// sugiere; con píxeles reales, el criterio es siempre "¿la cámara sigue
+// viendo terreno cargado?", sin importar la forma de la ruta, la latitud
+// (que distorsiona km/píxel) ni si la ruta vuelve cerca de un tramo
+// anterior (acá simplemente se arma un mosaico nuevo en la cadena, nunca se
+// intenta reutilizar uno geográficamente cercano de más atrás).
+function calcularMosaicosSeguimiento(
+  puntosSimplificados: PuntoGps[],
+  mapaBase: MapaGenerado,
+): MosaicoSeguimientoMeta[] {
+  const factor = 2 ** (ZOOM_SEGUIMIENTO - mapaBase.zoom);
+  const anchoPx = Math.round(ANCHO_VIDEO * FACTOR_COBERTURA_MOSAICO);
+  const altoPx = Math.round(ALTO_VIDEO * FACTOR_COBERTURA_MOSAICO);
+  const semiradioUtilPx = Math.min(anchoPx, altoPx) / 2;
+  const radioZonaSeguraPx = semiradioUtilPx * FRACCION_ZONA_SEGURA;
+  const radioLimitePx = semiradioUtilPx * (FRACCION_ZONA_SEGURA + FRACCION_BANDA_TRANSICION);
+
+  function metaEnPunto(punto: PuntoGps): MosaicoSeguimientoMeta {
+    const centroPxX = lonAPixelX(punto.lon, ZOOM_SEGUIMIENTO);
+    const centroPxY = latAPixelY(punto.lat, ZOOM_SEGUIMIENTO);
+    return {
+      centroPxX,
+      centroPxY,
+      anchoPx,
+      altoPx,
+      radioZonaSeguraPx,
+      radioLimitePx,
+      origenCanvasBaseX: (centroPxX - anchoPx / 2) / factor - mapaBase.centroPxX + ANCHO_VIDEO / 2,
+      origenCanvasBaseY: (centroPxY - altoPx / 2) / factor - mapaBase.centroPxY + ALTO_VIDEO / 2,
+      escalaEnCanvasBase: 1 / factor,
+    };
+  }
+
+  const mosaicos = [metaEnPunto(puntosSimplificados[0])];
+  let ultimoCentro = { x: mosaicos[0].centroPxX, y: mosaicos[0].centroPxY };
+
+  for (let i = 1; i < puntosSimplificados.length; i++) {
+    const gx = lonAPixelX(puntosSimplificados[i].lon, ZOOM_SEGUIMIENTO);
+    const gy = latAPixelY(puntosSimplificados[i].lat, ZOOM_SEGUIMIENTO);
+    if (Math.hypot(gx - ultimoCentro.x, gy - ultimoCentro.y) > radioZonaSeguraPx) {
+      mosaicos.push(metaEnPunto(puntosSimplificados[i]));
+      ultimoCentro = { x: gx, y: gy };
+    }
+  }
+
+  return mosaicos;
+}
+
+// Estado vivo de los mosaicos de seguimiento durante la generación: separa
+// a propósito "descargado" (dataURL ya resuelto, liviano, comprimido) de
+// "decodificado" (Image real, lista para dibujar, pesada en RAM sin
+// comprimir) -- son dos ventanas de tamaño fijo, independientes de cuántos
+// mosaicos tenga la ruta completa, así una ruta de 70 km no consume más
+// memoria en ningún momento dado que una de 5 km, solo tarda más en total
+// (más mosaicos en la cadena, no más memoria simultánea).
+interface EstadoVentanaMosaicos {
+  metas: MosaicoSeguimientoMeta[];
+  dataUrls: (string | null)[];
+  imagenes: (HTMLImageElement | null)[];
+  descargando: Set<number>;
+}
+
+function crearVentanaMosaicos(metas: MosaicoSeguimientoMeta[]): EstadoVentanaMosaicos {
+  return {
+    metas,
+    dataUrls: metas.map(() => null),
+    imagenes: metas.map(() => null),
+    descargando: new Set(),
+  };
+}
+
+// "Descargar" acá es pedir los tiles y componer el mosaico (reutilizando
+// generarMapaEnZoom tal cual, solo con el centro/zoom de este mosaico en vez
+// del de toda la ruta) -- el resultado es un dataURL, todavía sin decodificar
+// a Image. `descargando` evita pedir el mismo índice dos veces en paralelo
+// si dos llamadas a mantenerVentana se superponen.
+async function asegurarDescarga(estado: EstadoVentanaMosaicos, indice: number): Promise<void> {
+  if (indice < 0 || indice >= estado.metas.length) return;
+  if (estado.dataUrls[indice] !== null || estado.descargando.has(indice)) return;
+  estado.descargando.add(indice);
+  try {
+    const meta = estado.metas[indice];
+    const generado = await generarMapaEnZoom(
+      meta.centroPxX,
+      meta.centroPxY,
+      ZOOM_SEGUIMIENTO,
+      meta.anchoPx,
+      meta.altoPx,
+      false,
+      MAX_TILES_MOSAICO_SEGUIMIENTO,
+    );
+    estado.dataUrls[indice] = generado?.dataUrl ?? null;
+  } finally {
+    estado.descargando.delete(indice);
+  }
+}
+
+async function asegurarDecodificado(estado: EstadoVentanaMosaicos, indice: number): Promise<void> {
+  if (indice < 0 || indice >= estado.metas.length) return;
+  if (estado.imagenes[indice] !== null) return;
+  await asegurarDescarga(estado, indice);
+  const url = estado.dataUrls[indice];
+  if (!url) return;
+  estado.imagenes[indice] = await cargarImagenOpcional(url);
+}
+
+// Libera lo que quedó fuera de la ventana (imágenes decodificadas primero,
+// que son lo más pesado; dataURLs con un margen un poco mayor hacia atrás,
+// por si un mosaico recién superado hiciera falta de nuevo por algún
+// reordenamiento -- en la práctica el índice solo avanza, nunca retrocede).
+function liberarFueraDeVentana(estado: EstadoVentanaMosaicos, indiceActual: number): void {
+  for (let i = 0; i < estado.metas.length; i++) {
+    if (i < indiceActual - VENTANA_DECODIFICADA_ADELANTE || i > indiceActual + VENTANA_DECODIFICADA_ADELANTE + 1) {
+      estado.imagenes[i] = null;
+    }
+    if (i < indiceActual - VENTANA_DESCARGA_ATRAS || i > indiceActual + VENTANA_DESCARGA_ADELANTE) {
+      estado.dataUrls[i] = null;
+    }
+  }
+}
+
+// Mantiene la ventana alrededor de indiceActual: dispara descargas (rango
+// más amplio, por delante) y decodificaciones (rango más angosto, lo justo
+// para dibujar ya mismo y el próximo cambio) en paralelo, y libera lo que
+// quedó atrás. Se llama tanto antes de arrancar MediaRecorder (con await,
+// para no empezar a grabar sin lo mínimo listo) como en segundo plano
+// durante la grabación (sin await, ver generarVideoRecorrido) cada vez que
+// el índice activo avanza.
+async function mantenerVentana(estado: EstadoVentanaMosaicos, indiceActual: number): Promise<void> {
+  liberarFueraDeVentana(estado, indiceActual);
+  const tareas: Promise<void>[] = [];
+  const finDescarga = Math.min(estado.metas.length - 1, indiceActual + VENTANA_DESCARGA_ADELANTE);
+  for (let i = indiceActual; i <= finDescarga; i++) tareas.push(asegurarDescarga(estado, i));
+  const finDecodificado = Math.min(estado.metas.length - 1, indiceActual + VENTANA_DECODIFICADA_ADELANTE);
+  for (let i = indiceActual; i <= finDecodificado; i++) tareas.push(asegurarDecodificado(estado, i));
+  await Promise.all(tareas);
+}
+
+interface SeleccionMosaico {
+  indiceActual: number;
+  actual: HTMLImageElement | null;
+  metaActual: MosaicoSeguimientoMeta | null;
+  siguiente: HTMLImageElement | null;
+  metaSiguiente: MosaicoSeguimientoMeta | null;
+  // 0 = solo "actual" a la vista; 1 = ya cruzó del todo al "siguiente".
+  peso: number;
+}
+
+// Decide, para la posición actual del patinador, qué mosaico(s) mostrar:
+// mientras esté dentro de radioZonaSeguraPx del mosaico activo, ese solo
+// (peso 0); al entrar en la banda de transición hacia radioLimitePx, cruza
+// en crossfade con el siguiente; al superar radioLimitePx (caso límite, con
+// el prefetch bien adelantado no debería notarse) fuerza el avance para no
+// quedarse mostrando un mosaico ya fuera de cobertura. `indiceRef` es
+// mutable y persiste entre cuadros -- el índice SOLO avanza, nunca
+// retrocede (la cámara nunca "vuelve" a un mosaico anterior aunque la ruta
+// geográficamente pase cerca de un tramo ya recorrido).
+function seleccionarMosaico(
+  puntoActual: PuntoGps,
+  ventana: EstadoVentanaMosaicos,
+  indiceRef: { valor: number },
+): SeleccionMosaico {
+  const metas = ventana.metas;
+  const gx = lonAPixelX(puntoActual.lon, ZOOM_SEGUIMIENTO);
+  const gy = latAPixelY(puntoActual.lat, ZOOM_SEGUIMIENTO);
+
+  while (indiceRef.valor < metas.length - 1) {
+    const metaActual = metas[indiceRef.valor];
+    const distActual = Math.hypot(gx - metaActual.centroPxX, gy - metaActual.centroPxY);
+    if (distActual <= metaActual.radioLimitePx) break;
+    // Ya superó incluso la banda de transición del mosaico actual -- avanza
+    // sin más (caso límite de red muy lenta o mosaicos mal calibrados).
+    indiceRef.valor++;
+  }
+
+  const indiceActual = indiceRef.valor;
+  const metaActual = metas[indiceActual] ?? null;
+  const metaSiguiente = metas[indiceActual + 1] ?? null;
+
+  let peso = 0;
+  if (metaActual && metaSiguiente) {
+    const distActual = Math.hypot(gx - metaActual.centroPxX, gy - metaActual.centroPxY);
+    if (distActual > metaActual.radioZonaSeguraPx) {
+      const rango = metaActual.radioLimitePx - metaActual.radioZonaSeguraPx;
+      peso = rango > 0 ? clamp((distActual - metaActual.radioZonaSeguraPx) / rango, 0, 1) : 1;
+      if (peso >= 1) indiceRef.valor++; // terminó de cruzar: el próximo cuadro ya arranca en el nuevo índice
+    }
+  }
+
+  return {
+    indiceActual,
+    actual: ventana.imagenes[indiceActual] ?? null,
+    metaActual,
+    siguiente: metaSiguiente ? (ventana.imagenes[indiceActual + 1] ?? null) : null,
+    metaSiguiente,
+    peso,
+  };
+}
+
+// Dibuja el fondo del tramo de seguimiento -- se llama DENTRO del mismo
+// bloque ya transformado por la cámara (translate/scale/translate) que usa
+// el trazo/pines/etiquetas, así que cada mosaico se dibuja directo con
+// drawImage() en su origen/escala ya precalculados (ver
+// MosaicoSeguimientoMeta) -- sin transformaciones anidadas propias, a
+// diferencia de dibujarFondoMapaVideo (que sí necesita las suyas porque el
+// panorámico y el detalle comparten centro pero no escala). Si todavía no
+// hay ninguna imagen decodificada (arranque en mala conexión), cae de
+// vuelta al panorámico ya cargado -- nunca deja un cuadro en blanco.
+function dibujarMosaicosSeguimiento(
+  ctx: CanvasRenderingContext2D,
+  seleccion: SeleccionMosaico,
+  mapaImgRespaldo: HTMLImageElement | null,
+) {
+  function dibujarUno(img: HTMLImageElement, meta: MosaicoSeguimientoMeta, alpha: number) {
+    if (alpha <= 0) return;
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(
+      img,
+      meta.origenCanvasBaseX,
+      meta.origenCanvasBaseY,
+      meta.anchoPx * meta.escalaEnCanvasBase,
+      meta.altoPx * meta.escalaEnCanvasBase,
+    );
+    ctx.globalAlpha = 1;
+  }
+
+  if (!seleccion.actual && !seleccion.siguiente) {
+    if (mapaImgRespaldo) ctx.drawImage(mapaImgRespaldo, 0, 0, ANCHO_VIDEO, ALTO_VIDEO);
+    return;
+  }
+  if (seleccion.actual && seleccion.metaActual) {
+    dibujarUno(seleccion.actual, seleccion.metaActual, 1);
+  } else if (mapaImgRespaldo) {
+    // El mosaico "actual" todavía no decodificó (red lenta) -- mejor mostrar
+    // el panorámico de fondo que un hueco, mientras se resuelve.
+    ctx.drawImage(mapaImgRespaldo, 0, 0, ANCHO_VIDEO, ALTO_VIDEO);
+  }
+  if (seleccion.peso > 0 && seleccion.siguiente && seleccion.metaSiguiente) {
+    dibujarUno(seleccion.siguiente, seleccion.metaSiguiente, seleccion.peso);
+  }
 }
 
 function iconoDistancia(cx: number, y: number): string {
@@ -1240,6 +1567,10 @@ function dibujarCuadroVideo(
   mostrarFotoFinal: boolean,
   pulsoVelMax = 0,
   suavizadoEtiquetas: Map<number, { x: number; y: number }> = new Map(),
+  // Solo se pasa (no-null) durante el tramo de seguimiento -- ver
+  // generarVideoRecorrido. En el tramo final (panorámica + resumen) va
+  // null y el fondo sigue siendo dibujarFondoMapaVideo, sin cambios.
+  seleccionMosaico: SeleccionMosaico | null = null,
 ) {
   const { puntos } = datos;
   const distanciaMostrar = frame.distanciaKm;
@@ -1289,12 +1620,23 @@ function dibujarCuadroVideo(
   ctx.rect(0, 0, ANCHO_VIDEO, ALTO_VIDEO);
   ctx.clip();
 
-  dibujarFondoMapaVideo(ctx, mapaImg, mapaDetalladoImg, factorDetalle, camara);
+  if (!seleccionMosaico) {
+    dibujarFondoMapaVideo(ctx, mapaImg, mapaDetalladoImg, factorDetalle, camara);
+  }
 
   ctx.save();
   ctx.translate(ANCHO_VIDEO / 2, ALTO_VIDEO / 2);
   ctx.scale(camara.escala, camara.escala);
   ctx.translate(-camara.cx, -camara.cy);
+
+  // Fondo del tramo de seguimiento: se dibuja ACÁ (ya dentro de la
+  // transformación de cámara), a diferencia de dibujarFondoMapaVideo (que
+  // arma la suya propia antes de este bloque) -- ver comentario en
+  // dibujarMosaicosSeguimiento sobre por qué no hace falta una
+  // transformación anidada extra para esto.
+  if (seleccionMosaico) {
+    dibujarMosaicosSeguimiento(ctx, seleccionMosaico, mapaImg);
+  }
 
   // El trazo se dibuja tramo a tramo (no una sola polyline) para poder
   // colorear cada segmento según la velocidad real ahí -- más dorado/claro
@@ -1574,6 +1916,25 @@ export async function generarVideoRecorrido(
     velocidadesKmh.push(dtSeg > 0 ? (distTramoKm / dtSeg) * 3600 : 0);
   }
 
+  // Mosaicos de la cámara de seguimiento (ver comentario largo antes de
+  // calcularMosaicosSeguimiento): se calculan sobre la ruta simplificada
+  // (mismo criterio que ya usa dividirEnTramosParaDibujo/simplificarRutaParaDibujo
+  // en el mapa en vivo, acá para que el jitter normal del GPS no arme
+  // mosaicos de más) y requieren `mapa` (el panorámico) como referencia de
+  // "canvas base" -- si ese mapa no cargó (sin conexión), el video entero ya
+  // cae al respaldo vectorial existente y no hay mosaicos que preparar.
+  const puntosSimplificadosSeguimiento = simplificarRutaParaDibujo(datos.puntos);
+  const mosaicosSeguimiento = mapa ? calcularMosaicosSeguimiento(puntosSimplificadosSeguimiento, mapa) : [];
+  const ventanaMosaicos = crearVentanaMosaicos(mosaicosSeguimiento);
+  const indiceMosaicoRef = { valor: 0 };
+  if (mosaicosSeguimiento.length > 0) {
+    // Antes de dibujar el primer cuadro (y bastante antes de arrancar
+    // MediaRecorder, ver más abajo): deja el primer mosaico decodificado y
+    // unos cuantos más ya descargados -- sin esto, la cámara arrancaría el
+    // seguimiento con el mosaico 0 todavía en blanco.
+    await mantenerVentana(ventanaMosaicos, 0);
+  }
+
   const { punto: puntoVelMax, indice: indiceVelMax, kmh: kmhVelMax } = velocidadMaximaConPunto(datos.puntos);
 
   // Cada pin de foto se clava en un punto real del recorrido, repartido POR
@@ -1663,6 +2024,25 @@ export async function generarVideoRecorrido(
   function dibujarFrame(fraccionTotal: number, mostrarFotoFinal: boolean, pulsoVelMax = 0) {
     const fraccionTrazo = Math.min(1, fraccionTotal / FRACCION_TRAZO_COMPLETO);
     const frame = estadoEnFraccion(datos, distanciaAcumuladaKm, fraccionTrazo);
+
+    // Cámara de mosaicos: solo aplica durante el trazo (nunca en el tramo
+    // final, que sigue usando la panorámica de siempre). El índice de
+    // mosaico activo (indiceMosaicoRef) es mutable y persiste entre
+    // llamadas -- seleccionarMosaico lo avanza cuando corresponde. Si el
+    // índice avanzó respecto del cuadro anterior, se dispara (sin await,
+    // sigue en paralelo mientras la grabación continúa en tiempo real) el
+    // mantenimiento de la ventana de descarga/decodificación para el nuevo
+    // entorno -- ver mantenerVentana.
+    let seleccionMosaico: SeleccionMosaico | null = null;
+    if (mosaicosSeguimiento.length > 0 && fraccionTotal <= FRACCION_TRAZO_COMPLETO) {
+      const indicePrevio = indiceMosaicoRef.valor;
+      const focoActualMosaico = frame.posicionActual ?? datos.puntos[datos.puntos.length - 1];
+      seleccionMosaico = seleccionarMosaico(focoActualMosaico, ventanaMosaicos, indiceMosaicoRef);
+      if (indiceMosaicoRef.valor !== indicePrevio) {
+        mantenerVentana(ventanaMosaicos, indiceMosaicoRef.valor).catch(() => {});
+      }
+    }
+
     dibujarCuadroVideo(
       ctx!,
       datos,
@@ -1678,6 +2058,7 @@ export async function generarVideoRecorrido(
       mostrarFotoFinal,
       pulsoVelMax,
       suavizadoEtiquetas,
+      seleccionMosaico,
     );
   }
 
