@@ -406,6 +406,12 @@ const ZOOM_SEGUIMIENTO = 17;
 // de la propia diagonal del viewport (para que la cámara nunca llegue a ver
 // el borde real de la imagen cargada, sin importar hacia qué lado se mueva).
 const FACTOR_COBERTURA_MOSAICO = 2.6;
+// Escala FIJA (independiente de la ruta) con la que se dibuja cada mosaico
+// -- ver ESCALA_MOSAICO_FIJA (definida más abajo, junto a
+// ESCALA_CAMARA_CERCANA, de la que depende su valor inicial) y el
+// comentario largo en MosaicoSeguimientoMeta sobre por qué esto ya no
+// puede ser 1/factor.
+
 // Del semirradio útil del mosaico (mitad del lado más chico del lienzo, en
 // píxeles de ZOOM_SEGUIMIENTO), qué fracción es "zona segura" (un solo
 // mosaico, sin crossfade) y cuánto más se extiende la banda de transición
@@ -476,6 +482,22 @@ function calcularMosaicosSeguimiento(
   function metaEnPunto(punto: PuntoGps): MosaicoSeguimientoMeta {
     const centroPxX = lonAPixelX(punto.lon, ZOOM_SEGUIMIENTO);
     const centroPxY = latAPixelY(punto.lat, ZOOM_SEGUIMIENTO);
+    // `factor` convierte una posición GEOGRÁFICA de la grilla de
+    // ZOOM_SEGUIMIENTO a la misma grilla que usa mapaBase (x()/y(), el
+    // trazo, el marcador) -- es la única cuenta correcta para saber DÓNDE
+    // cae el centro real del mosaico en el espacio de canvas base, y por
+    // eso sigue usándose acá tal cual.
+    const centroEnCanvasBaseX = centroPxX / factor - mapaBase.centroPxX + ANCHO_VIDEO / 2;
+    const centroEnCanvasBaseY = centroPxY / factor - mapaBase.centroPxY + ALTO_VIDEO / 2;
+    // El TAMAÑO con que se dibuja, en cambio, ya NO usa `factor` (esa era
+    // la causa real de que se viera panorámico sin importar la ruta -- ver
+    // comentario largo en MosaicoSeguimientoMeta) -- usa la escala FIJA
+    // ESCALA_MOSAICO_FIJA, igual para cualquier ruta. El origen se centra
+    // en el punto geográfico correcto (centroEnCanvasBaseX/Y de arriba)
+    // usando ESE tamaño fijo, así el centro real del mosaico sigue cayendo
+    // exactamente donde corresponde -- el trazo/marcador no se desalinean.
+    const anchoDibujado = anchoPx * ESCALA_MOSAICO_FIJA;
+    const altoDibujado = altoPx * ESCALA_MOSAICO_FIJA;
     return {
       centroPxX,
       centroPxY,
@@ -483,9 +505,9 @@ function calcularMosaicosSeguimiento(
       altoPx,
       radioZonaSeguraPx,
       radioLimitePx,
-      origenCanvasBaseX: (centroPxX - anchoPx / 2) / factor - mapaBase.centroPxX + ANCHO_VIDEO / 2,
-      origenCanvasBaseY: (centroPxY - altoPx / 2) / factor - mapaBase.centroPxY + ALTO_VIDEO / 2,
-      escalaEnCanvasBase: 1 / factor,
+      origenCanvasBaseX: centroEnCanvasBaseX - anchoDibujado / 2,
+      origenCanvasBaseY: centroEnCanvasBaseY - altoDibujado / 2,
+      escalaEnCanvasBase: ESCALA_MOSAICO_FIJA,
     };
   }
 
@@ -1087,6 +1109,19 @@ const DURACION_ACERCAMIENTO_INTRO_SEG = 1.6;
 // por cuadro) -- barato de calcular, aunque pierde algo de nitidez cuanto
 // más cerca, aceptable para un video comprimido.
 const ESCALA_CAMARA_CERCANA = 1.35;
+
+// Escala FIJA (independiente de la ruta) con la que se dibuja cada mosaico
+// de seguimiento -- ver el comentario largo en MosaicoSeguimientoMeta sobre
+// por qué esto NO puede depender de mapaBase.zoom/factor (route-dependiente,
+// esa era la causa real de "se ve demasiado panorámico" sin importar
+// ZOOM_SEGUIMIENTO). 1/ESCALA_CAMARA_CERCANA deja el mosaico dibujado a su
+// resolución lógica NATIVA de ZOOM_SEGUIMIENTO (ni estirado ni reducido) una
+// vez que camara.escala se le aplica encima -- VALOR INICIAL sujeto a
+// ajuste visual, no asumir que este número final quede así: subirlo acerca
+// más el seguimiento (recorta una ventana más chica del mosaico), bajarlo
+// lo aleja -- todo sin pedir mosaicos distintos ni tocar ZOOM_SEGUIMIENTO.
+const ESCALA_MOSAICO_FIJA = 1 / ESCALA_CAMARA_CERCANA;
+
 // Fracción de duracionAnimSeg en la que el trazo ya terminó de dibujarse y
 // arranca el alejamiento final -- el resto (hasta 1) es pura transición de
 // cámara, sin más avance de distancia/tiempo.
