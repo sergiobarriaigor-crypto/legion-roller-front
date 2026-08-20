@@ -810,7 +810,7 @@ const ZOOM_SEGUIMIENTO = 17;
 // usa escalaCropSeguimiento (=ESCALA_SEGUIMIENTO en régimen normal), NUNCA
 // factorSeguimiento×ESCALA_SEGUIMIENTO, para no reintroducir accidentalmente
 // una ampliación digital del tile.
-const ESCALA_SEGUIMIENTO = 1;
+const ESCALA_SEGUIMIENTO = 0.6;
 
 // El pipeline de tiles Z17 (prepararTilesZ17 más abajo) ya no pasa por
 // CacheTilesLRU/obtenerTileConCache -- el Set de construirCorredorTilesZ17
@@ -844,8 +844,15 @@ const LIMITE_CACHE_TILES_SEGUIMIENTO = 300;
 // hay ningún problema de orden de declaración.
 function construirCorredorTilesZ17(puntos: PuntoGps[], clasificacionTramos: ClasificacionTramo[]): Set<string> {
   const margenExcursionPx = RADIO_TOLERANCIA_PX + MAX_DESPLAZAMIENTO_ANTICIPACION_PX;
-  const mitadAnchoPx = ANCHO_VIDEO / 2 + margenExcursionPx;
-  const mitadAltoPx = ALTO_VIDEO / 2 + margenExcursionPx;
+  // ANCHO_VIDEO/2 y ALTO_VIDEO/2 son la mitad del viewport en píxeles de
+  // VIDEO -- para expresarlos en píxeles Z17 (la unidad en la que vive todo
+  // lo demás acá) hay que dividir por ESCALA_SEGUIMIENTO (misma conversión
+  // que ya usa rangoTilesVisibles: anchoVentanaZ17 = ANCHO_VIDEO/escalaCrop).
+  // Sin esto, con ESCALA_SEGUIMIENTO<1 el corredor quedaría angosto para el
+  // viewport real más ancho y Fase B encontraría tiles faltantes en los
+  // bordes.
+  const mitadAnchoPx = ANCHO_VIDEO / 2 / ESCALA_SEGUIMIENTO + margenExcursionPx;
+  const mitadAltoPx = ALTO_VIDEO / 2 / ESCALA_SEGUIMIENTO + margenExcursionPx;
   // Paso máximo entre muestras a lo largo de un tramo confiable -- la
   // mitad más chica del margen de cobertura, para garantizar que dos
   // muestras consecutivas siempre tengan zonas de cobertura solapadas. Sin
@@ -1457,7 +1464,6 @@ export interface OpcionesVideoRecorrido {
   musicaInicioSeg?: number;
 }
 
-const DURACION_ANIM_SEG_DEFECTO = 11;
 const DURACION_FINAL_SEG_DEFECTO = 3;
 const DURACION_INTRO_SEG_DEFECTO = 1.8;
 // Cuánto tarda la portada en desvanecerse hacia el cuadro animado -- sin
@@ -1541,7 +1547,7 @@ const FACTOR_SUAVIZADO_ANTICIPACION = 0.08;
 // generarVideoRecorrido). Se suman como tiempo REAL extra al video, no
 // consumen nada del eje fraccionTotal existente.
 const DURACION_PAUSA_INTRO_SEG = 0.8;
-const DURACION_ACERCAMIENTO_INTRO_SEG = 1.6;
+const DURACION_ACERCAMIENTO_INTRO_SEG = 2.8;
 
 // La cámara "persigue" el punto actual durante el dibujado del trazo
 // (estilo Relive), y en el último tramo de la animación se aleja hasta
@@ -1557,6 +1563,27 @@ const DURACION_ACERCAMIENTO_INTRO_SEG = 1.6;
 // arranca el alejamiento final -- el resto (hasta 1) es pura transición de
 // cámara, sin más avance de distancia/tiempo.
 const FRACCION_TRAZO_COMPLETO = 0.82;
+
+// Duración del trazo (segundos de video) proporcional a la distancia real
+// del recorrido -- reemplaza el viejo criterio de duracionAnimSeg fijo
+// (11s siempre, sin importar si la ruta eran 2km o 20km), que hacía que la
+// cámara recorriera rutas largas mucho más rápido que rutas cortas. Se usa
+// SOLO cuando quien llama a generarVideoRecorrido no pasa duracionAnimSeg
+// explícito (ver su resolución de opciones) -- no toca datos.puntos, GPS
+// ni la distancia real, solo cuánto tiempo de video se le dedica a
+// recorrerla.
+const SEGUNDOS_POR_KM_SEGUIMIENTO = 1.8;
+const DURACION_TRAZO_MIN_SEG = 7;
+const DURACION_TRAZO_MAX_SEG = 20;
+
+function calcularDuracionAnimSeg(distanciaKm: number): number {
+  const duracionTrazoSeg = clamp(
+    distanciaKm * SEGUNDOS_POR_KM_SEGUIMIENTO,
+    DURACION_TRAZO_MIN_SEG,
+    DURACION_TRAZO_MAX_SEG,
+  );
+  return duracionTrazoSeg / FRACCION_TRAZO_COMPLETO;
+}
 
 function suavizar(t: number): number {
   const c = Math.min(1, Math.max(0, t));
@@ -2883,7 +2910,7 @@ async function generarVideoRecorridoInterno(
   cacheTiles: CacheTilesLRU,
 ): Promise<Blob> {
   const {
-    duracionAnimSeg = DURACION_ANIM_SEG_DEFECTO,
+    duracionAnimSeg: duracionAnimSegOpcion,
     duracionFinalSeg = DURACION_FINAL_SEG_DEFECTO,
     duracionIntroSeg = DURACION_INTRO_SEG_DEFECTO,
     duracionCierreSeg = DURACION_CIERRE_SEG_DEFECTO,
@@ -2896,6 +2923,14 @@ async function generarVideoRecorridoInterno(
     musicaUrl,
     musicaInicioSeg = 0,
   } = opciones;
+  // Sin duracionAnimSeg explícito (el caso normal -- CompartirRecorridoModal
+  // no lo pasa), se calcula a partir de datos.distanciaKm (ver
+  // calcularDuracionAnimSeg) en vez de usar un fijo -- ver diseño aprobado.
+  const duracionAnimSeg = duracionAnimSegOpcion ?? calcularDuracionAnimSeg(datos.distanciaKm);
+  console.log(
+    `[video] duracionAnimSeg=${duracionAnimSeg.toFixed(2)} (distanciaKm=${datos.distanciaKm.toFixed(2)}, ` +
+      `duracionTrazoSeg=${(duracionAnimSeg * FRACCION_TRAZO_COMPLETO).toFixed(2)})`,
+  );
 
   if (typeof MediaRecorder === "undefined") {
     throw new Error("Este navegador no puede generar video.");
