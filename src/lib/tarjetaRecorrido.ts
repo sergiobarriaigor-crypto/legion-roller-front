@@ -965,7 +965,30 @@ interface EstadoHueco {
   // objetivo.escala directo). Sin esto, el alejamiento/acercamiento de
   // escala se vería como un salto instantáneo en vez de una curva suave.
   escalaActual: number | null;
+  // Cuántos cuadros lleva en fase "convergiendo" desde que recorteValido()
+  // pasó a true (ver la transición regresando->convergiendo más abajo) --
+  // null mientras no se disparó esa transición todavía. Uso EXCLUSIVO: el
+  // peso del crossfade visual PANORAMICA_HUECO->Z17 (ver
+  // CROSSFADE_HUECO_Z17_FRAMES) -- no participa de ninguna decisión
+  // geométrica ni de la máquina de estados en sí (la continuidad
+  // geométrica en ese instante ya está probada algebraicamente: mismo
+  // centro, misma escala entre ambas fuentes -- ver diseño aprobado). Se
+  // resetea a null cada vez que se detecta un hueco nuevo.
+  cuadrosDesdeConvergencia: number | null;
 }
+
+// Duración (en cuadros) del crossfade visual al reactivarse Z17 después de
+// un hueco: durante estos cuadros se dibuja PANORAMICA_HUECO opaca debajo y
+// el mosaico Z17 encima con un peso creciente (ver dibujarCuadroVideo) --
+// sin esto, la reactivación es un corte duro de una fuente satelital a
+// otra en un solo cuadro (confirmado en corridas reales). Geométricamente
+// ambas fuentes ya coinciden exactamente en centro y escala durante toda
+// la fase "convergiendo" (ver demostración algebraica en el diseño
+// aprobado), así que este crossfade solo suaviza la diferencia de
+// resolución/tono entre imágenes satelitales, nunca esconde un salto de
+// cámara. Valor inicial sujeto a ajuste visual, igual criterio que
+// ESCALA_SEGUIMIENTO/FRACCION_ZONA_SEGURA más arriba.
+const CROSSFADE_HUECO_Z17_FRAMES = 8;
 
 // Encuadre amplio que contiene origen y destino de un hueco, con el mismo
 // criterio de margen que ya usa elegirZoom() para encuadrar un recuadro
@@ -1424,12 +1447,20 @@ function dibujarMosaicosSeguimiento(
   camaraZ17: { x: number; y: number },
   escalaSeguimiento: number,
   modoIntro = false,
+  // Multiplicador aplicado a CUALQUIER alpha que este dibujo use (crossfade
+  // interno actual/siguiente incluido) -- exclusivo del crossfade
+  // PANORAMICA_HUECO->Z17 (ver dibujarCuadroVideo y CROSSFADE_HUECO_Z17_FRAMES):
+  // con alphaGlobal<1, el llamador ya dibujó PANORAMICA_HUECO opaca debajo,
+  // así que el mosaico se compone encima como un cross-dissolve estándar
+  // sobre fondo opaco -- sin canvas intermedio. 1 (por defecto) = sin
+  // cambio de comportamiento respecto a antes de este parámetro.
+  alphaGlobal = 1,
 ): string {
   function intentarDibujar(img: ImageBitmap, meta: MosaicoSeguimientoMeta, alpha: number): boolean {
     if (alpha <= 0) return false;
     const r = calcularRecorteMosaico(camaraZ17, meta, escalaSeguimiento);
     if (!recorteValido(r, meta)) return false;
-    ctx.globalAlpha = alpha;
+    ctx.globalAlpha = alpha * alphaGlobal;
     ctx.drawImage(img, r.sx, r.sy, r.sWidth, r.sHeight, 0, 0, ANCHO_VIDEO, ALTO_VIDEO);
     ctx.globalAlpha = 1;
     return true;
@@ -2619,9 +2650,12 @@ interface ConfigVideo {
 function dibujarTextoDiagnosticoFondo(ctx: CanvasRenderingContext2D, descriptor: string): void {
   let texto = descriptor;
   const crossfade = descriptor.match(/^CROSSFADE (\S+)→(\d+)/);
+  const crossfadeHueco = descriptor.match(/^CROSSFADE_HUECO_Z17 indice=(\S+) peso=(\S+)/);
   const mosaico = descriptor.match(/^MOSAICO indice=(\S+)/);
   if (crossfade) texto = `Z17 M${crossfade[1]}→M${crossfade[2]}`;
+  else if (crossfadeHueco) texto = `Z17 HUECO→M${crossfadeHueco[1]} (${crossfadeHueco[2]})`;
   else if (mosaico) texto = `Z17 M${mosaico[1]}`;
+  else if (descriptor.startsWith("PANORAMICA_HUECO")) texto = "PANORAMICA (hueco)";
   else if (descriptor.startsWith("PANORAMICA_FALLBACK")) texto = "FALLBACK PANORAMICA";
   else if (descriptor.startsWith("PANORAMICA_OUTRO")) texto = "PANORAMICA (outro)";
   else if (descriptor.startsWith("INTRO")) texto = "Z17 INTRO";
@@ -2694,6 +2728,20 @@ function dibujarCuadroVideo(
   // Deliberadamente NO es camara.escala directo -- esa se sigue usando tal
   // cual para el translate/scale del trazo/marcador/etiquetas, sin cambios.
   escalaCropSeguimiento: number,
+  // true durante fase "en_hueco"/"regresando" (ver dibujarFrame) -- activa
+  // el camino PANORAMICA_HUECO. PANORAMICA_OUTRO queda exclusivo del
+  // cierre real (fraccionTotal > FRACCION_TRAZO_COMPLETO), sin este flag
+  // ambas situaciones caían en el mismo `else` (ver diseño aprobado).
+  modoHuecoActivo = false,
+  // Cuántos cuadros lleva la fase "convergiendo" desde que Z17 se
+  // reactivó (ver EstadoHueco.cuadrosDesdeConvergencia) -- null fuera de
+  // esa ventana. Mientras sea < CROSSFADE_HUECO_Z17_FRAMES, el bloque de
+  // fondo de abajo dibuja PANORAMICA_HUECO opaca debajo del mosaico Z17
+  // con un peso creciente -- la continuidad geométrica entre ambas
+  // fuentes en este tramo ya está demostrada algebraicamente (mismo
+  // centro, misma escala), así que esto solo suaviza la diferencia de
+  // imagen satelital, no un salto de cámara.
+  cuadrosDesdeConvergencia: number | null = null,
   pulsoVelMax = 0,
   suavizadoEtiquetas: Map<number, { x: number; y: number }> = new Map(),
   // Solo se pasa (no-null) durante el tramo de seguimiento -- ver
@@ -2784,7 +2832,30 @@ function dibujarCuadroVideo(
   // resuelto en coordenadas finales de pantalla.
   let descriptorFondo: string | null = null;
   if (seleccionMosaico && camaraZ17) {
-    descriptorFondo = dibujarMosaicosSeguimiento(ctx, seleccionMosaico, mapaImg, camaraZ17, escalaCropSeguimiento, soloFondo);
+    const enCrossfadeHuecoZ17 = cuadrosDesdeConvergencia !== null && cuadrosDesdeConvergencia < CROSSFADE_HUECO_Z17_FRAMES;
+    if (enCrossfadeHuecoZ17) {
+      // PANORAMICA_HUECO opaca debajo, Z17 encima con peso creciente --
+      // cross-dissolve estándar sobre fondo opaco, sin canvas intermedio
+      // (ver alphaGlobal en dibujarMosaicosSeguimiento). null en vez de
+      // mapaDetalladoImg y 1 en vez de escalaInicioOutro: PANORAMICA_HUECO
+      // usa exclusivamente mapaImg (ver diseño aprobado -- a la escala
+      // ancha de un hueco, el detalle extra de mapaDetalladoImg no aporta
+      // nada perceptible, y evita inventar una fórmula de crossfade nueva).
+      dibujarFondoMapaVideo(ctx, mapaImg, null, factorDetalle, camara, 1);
+      const pesoZ17 = clamp((cuadrosDesdeConvergencia as number) / CROSSFADE_HUECO_Z17_FRAMES, 0, 1);
+      dibujarMosaicosSeguimiento(ctx, seleccionMosaico, mapaImg, camaraZ17, escalaCropSeguimiento, soloFondo, pesoZ17);
+      descriptorFondo = `CROSSFADE_HUECO_Z17 indice=${seleccionMosaico.indiceActual} peso=${pesoZ17.toFixed(2)}`;
+    } else {
+      descriptorFondo = dibujarMosaicosSeguimiento(ctx, seleccionMosaico, mapaImg, camaraZ17, escalaCropSeguimiento, soloFondo);
+    }
+  } else if (modoHuecoActivo) {
+    // Camino independiente de PANORAMICA_OUTRO (ver diseño aprobado) --
+    // exclusivamente mapaImg, sin mapaDetalladoImg ni escalaInicioOutro:
+    // el `if (!mapaDetalladoImg) return;` de dibujarFondoMapaVideo corta
+    // antes de tocar el 5to argumento, así que el `1` de abajo nunca se
+    // usa.
+    dibujarFondoMapaVideo(ctx, mapaImg, null, factorDetalle, camara, 1);
+    descriptorFondo = "PANORAMICA_HUECO";
   } else {
     dibujarFondoMapaVideo(ctx, mapaImg, mapaDetalladoImg, factorDetalle, camara, escalaInicioOutro);
     descriptorFondo = "PANORAMICA_OUTRO";
@@ -3383,7 +3454,7 @@ async function generarVideoRecorridoInterno(
   // Opción 5 -- estado del hueco de cobertura en curso, si hay uno (ver
   // EstadoHueco/calcularCamaraHueco). "ninguno" el resto del video.
   const huecoRef: { valor: EstadoHueco } = {
-    valor: { fase: "ninguno", indiceDestino: null, camaraAmplia: null, escalaActual: null },
+    valor: { fase: "ninguno", indiceDestino: null, camaraAmplia: null, escalaActual: null, cuadrosDesdeConvergencia: null },
   };
   // Diagnóstico temporal (solo para entender por qué el hueco grande no
   // vuelve a Z17 -- ver [hueco-diag] más abajo). Cuenta cuadros consecutivos
@@ -3468,6 +3539,15 @@ async function generarVideoRecorridoInterno(
       // ventanaMosaicos.imagenes completo de antemano, así que este bloque
       // (Fase B) solo lee de ahí, nunca escribe.
       if (mosaicosSeguimiento.length > 0 && mapa) {
+        // Cuenta cuadros de "convergiendo" para el crossfade visual
+        // PANORAMICA_HUECO->Z17 (ver CROSSFADE_HUECO_Z17_FRAMES) -- se
+        // incrementa acá, ANTES de que el bloque de "regresando" de abajo
+        // pueda recién ahora poner cuadrosDesdeConvergencia en 0 en este
+        // mismo frame (la transición regresando->convergiendo), así el
+        // primer cuadro dibujado con Z17 reactivado usa exactamente 0, no 1.
+        if (huecoRef.valor.fase === "convergiendo" && huecoRef.valor.cuadrosDesdeConvergencia !== null) {
+          huecoRef.valor = { ...huecoRef.valor, cuadrosDesdeConvergencia: huecoRef.valor.cuadrosDesdeConvergencia + 1 };
+        }
         // Transiciones de fase de la Opción 5, evaluadas con la cámara YA
         // calculada este mismo frame (ver diseño aprobado: mismo `camara`
         // para panorámica y para el chequeo de si Z17 ya puede reactivarse).
@@ -3555,7 +3635,7 @@ async function generarVideoRecorridoInterno(
               `[hueco] fraccionTotal=${fraccionTotal.toFixed(3)} regresando -> convergiendo (Z17 reactivado en indice=${huecoRef.valor.indiceDestino}, escalaCropTransicion=${escalaCropTransicion.toFixed(4)})`,
             );
             indiceMosaicoRef.valor = huecoRef.valor.indiceDestino;
-            huecoRef.valor = { ...huecoRef.valor, fase: "convergiendo" };
+            huecoRef.valor = { ...huecoRef.valor, fase: "convergiendo", cuadrosDesdeConvergencia: 0 };
           }
         }
 
@@ -3608,6 +3688,7 @@ async function generarVideoRecorridoInterno(
               indiceDestino: resultado.huecoDetectado,
               camaraAmplia,
               escalaActual: camara.escala,
+              cuadrosDesdeConvergencia: null,
             };
             console.log(
               `[hueco] fraccionTotal=${fraccionTotal.toFixed(3)} detectado -- origen=${indiceMosaicoRef.valor} destino=${resultado.huecoDetectado} camaraAmplia.escala=${camaraAmplia.escala.toFixed(3)}`,
@@ -3673,9 +3754,12 @@ async function generarVideoRecorridoInterno(
         }
         // Si huecoRef.valor.fase es "en_hueco" o "regresando":
         // seleccionMosaico/camaraZ17 quedan null (declarados arriba) --
-        // dibujarCuadroVideo cae a dibujarFondoMapaVideo (panorámica), con
-        // la MISMA `camara` de este frame. "convergiendo" NO cae acá -- ya
-        // quedó cubierta arriba junto con "ninguno".
+        // dibujarCuadroVideo recibe modoHuecoActivo=true (ver su llamada
+        // más abajo) y dibuja PANORAMICA_HUECO (mapaImg solo, camino
+        // independiente de PANORAMICA_OUTRO), con la MISMA `camara` de
+        // este frame. "convergiendo" NO cae acá -- ya quedó cubierta
+        // arriba junto con "ninguno", con su propio crossfade hacia Z17
+        // mientras cuadrosDesdeConvergencia < CROSSFADE_HUECO_Z17_FRAMES.
       }
     } else {
       // Outro: SIN anticipación ni suavizado, misma llamada de siempre
@@ -3701,6 +3785,8 @@ async function generarVideoRecorridoInterno(
       factorSeguimiento * ESCALA_SEGUIMIENTO,
       camaraZ17,
       escalaCropSeguimiento,
+      huecoRef.valor.fase === "en_hueco" || huecoRef.valor.fase === "regresando",
+      huecoRef.valor.fase === "convergiendo" ? huecoRef.valor.cuadrosDesdeConvergencia : null,
       pulsoVelMax,
       suavizadoEtiquetas,
       seleccionMosaico,
@@ -3780,6 +3866,9 @@ async function generarVideoRecorridoInterno(
       // corrección -- se preserva camara.escala tal cual, comportamiento
       // idéntico al de antes de esta ronda, sin tocar.
       camara.escala,
+      // Sin huecos posibles antes de que arranque el trazo real.
+      false,
+      null,
       0,
       suavizadoEtiquetas,
       seleccion,
