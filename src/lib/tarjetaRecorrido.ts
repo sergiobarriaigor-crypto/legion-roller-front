@@ -822,7 +822,21 @@ function z17ACanvasBase(
 // inventada, y al acercarse geográficamente al destino la cámara vuelve
 // sola al seguimiento cercano -- ver el chequeo de recorteValido en
 // dibujarFrame, no un umbral de escala arbitrario.
-type FaseHueco = "ninguno" | "en_hueco" | "regresando";
+// "convergiendo": la fuente Z17 YA está activa (indiceMosaicoRef ya apunta
+// al destino, seleccionarMosaico/dibujarMosaicosSeguimiento corren normal,
+// incluida la detección de un hueco nuevo) pero camara.escala todavía viene
+// convergiendo desde el encuadre amplio de la panorámica -- se desacopla a
+// propósito de "regresando -> ninguno" (que antes activaba la fuente Y daba
+// por terminada la convergencia en el mismo instante, forzando un salto de
+// escalaCropSeguimiento de golpe a ESCALA_SEGUIMIENTO). No tiene condición
+// de salida explícita hacia "ninguno": para todo propósito de dibujo/
+// detección se trata igual que "ninguno" (ver los dos gates que aceptan
+// ambas), y escalaCropSeguimiento converge sola hacia ESCALA_SEGUIMIENTO a
+// medida que camara.escala converge hacia su régimen estable (ver
+// verificar_continuidad_hueco.ts) -- si aparece un hueco nuevo mientras
+// seguimos acá, se pasa directo a "en_hueco" como siempre, sin pasar por
+// "ninguno" en el medio.
+type FaseHueco = "ninguno" | "en_hueco" | "regresando" | "convergiendo";
 
 interface EstadoHueco {
   fase: FaseHueco;
@@ -2523,9 +2537,16 @@ function dibujarCuadroVideo(
   escalaInicioOutro: number,
   // Posición de cámara en píxeles globales de ZOOM_SEGUIMIENTO (ver
   // calcularCamaraZ17) -- null fuera del tramo de seguimiento. Junto con
-  // camara.escala, define el recorte real de cada mosaico (ver
+  // escalaCropSeguimiento, define el recorte real de cada mosaico (ver
   // dibujarMosaicosSeguimiento/calcularRecorteMosaico).
   camaraZ17: { x: number; y: number } | null,
+  // Escala para calcularRecorteMosaico, YA resuelta por el llamador (ver
+  // dibujarFrame): ESCALA_SEGUIMIENTO en seguimiento normal, o
+  // camara.escala/factorSeguimiento mientras la cámara sigue convergiendo
+  // tras reactivarse un mosaico Z17 (fase "convergiendo" -- ver FaseHueco).
+  // Deliberadamente NO es camara.escala directo -- esa se sigue usando tal
+  // cual para el translate/scale del trazo/marcador/etiquetas, sin cambios.
+  escalaCropSeguimiento: number,
   pulsoVelMax = 0,
   suavizadoEtiquetas: Map<number, { x: number; y: number }> = new Map(),
   // Solo se pasa (no-null) durante el tramo de seguimiento -- ver
@@ -2607,7 +2628,7 @@ function dibujarCuadroVideo(
   // resuelto en coordenadas finales de pantalla.
   let descriptorFondo: string | null = null;
   if (seleccionMosaico && camaraZ17) {
-    descriptorFondo = dibujarMosaicosSeguimiento(ctx, seleccionMosaico, mapaImg, camaraZ17, camara.escala, soloFondo);
+    descriptorFondo = dibujarMosaicosSeguimiento(ctx, seleccionMosaico, mapaImg, camaraZ17, escalaCropSeguimiento, soloFondo);
   } else {
     dibujarFondoMapaVideo(ctx, mapaImg, mapaDetalladoImg, factorDetalle, camara, escalaInicioOutro);
     descriptorFondo = "PANORAMICA_OUTRO";
@@ -3210,6 +3231,12 @@ async function generarVideoRecorridoInterno(
     let camara: EstadoCamara;
     let seleccionMosaico: SeleccionMosaico | null = null;
     let camaraZ17: { x: number; y: number } | null = null;
+    // Escala para calcularRecorteMosaico (sites 1207/1283) -- ESCALA_SEGUIMIENTO
+    // en seguimiento normal ("ninguno"), o camara.escala/factorSeguimiento
+    // mientras la cámara sigue convergiendo tras un hueco ("convergiendo",
+    // ver más abajo). Sin efecto fuera del tramo de seguimiento (outro),
+    // donde seleccionMosaico/camaraZ17 quedan null y este valor no se usa.
+    let escalaCropSeguimiento = ESCALA_SEGUIMIENTO;
 
     if (enSeguimiento) {
       // Punto de mira desplazado hacia adelante en la ruta (ver
@@ -3243,7 +3270,10 @@ async function generarVideoRecorridoInterno(
         const escalaActual = huecoRef.valor.escalaActual + (camaraAmplia.escala - huecoRef.valor.escalaActual) * FACTOR_SUAVIZADO_CAMARA;
         huecoRef.valor = { ...huecoRef.valor, escalaActual };
         objetivoCrudo = { cx: camaraAmplia.cx, cy: camaraAmplia.cy, escala: escalaActual };
-      } else if (huecoRef.valor.fase === "regresando" && huecoRef.valor.escalaActual !== null) {
+      } else if (
+        (huecoRef.valor.fase === "regresando" || huecoRef.valor.fase === "convergiendo") &&
+        huecoRef.valor.escalaActual !== null
+      ) {
         const escalaActual =
           huecoRef.valor.escalaActual + (objetivoCercanoNormal.escala - huecoRef.valor.escalaActual) * FACTOR_SUAVIZADO_CAMARA;
         huecoRef.valor = { ...huecoRef.valor, escalaActual };
@@ -3282,7 +3312,16 @@ async function generarVideoRecorridoInterno(
           const metaDestino = ventanaMosaicos.metas[huecoRef.valor.indiceDestino];
           const imagenDestino = ventanaMosaicos.imagenes[huecoRef.valor.indiceDestino];
           const camaraZ17Regreso = calcularCamaraZ17(camara, mapa, factorSeguimiento);
-          const recorteRegreso = calcularRecorteMosaico(camaraZ17Regreso, metaDestino, camara.escala);
+          // escalaCropTransicion = camara.escala/factorSeguimiento -- la
+          // misma escala que la panorámica de este frame representa en
+          // espacio Z17 (ver verificar_continuidad_hueco.ts: con ella el
+          // recorte Z17 muestra exactamente la misma ventana geográfica que
+          // la panorámica en cualquier valor de camara.escala; con
+          // camara.escala puro había un salto ×factorSeguimiento). Converge
+          // sola a ESCALA_SEGUIMIENTO cuando camara.escala llega a su
+          // régimen estable -- sin umbral nuevo.
+          const escalaCropTransicion = camara.escala / factorSeguimiento;
+          const recorteRegreso = calcularRecorteMosaico(camaraZ17Regreso, metaDestino, escalaCropTransicion);
           const esRecorteValido = recorteValido(recorteRegreso, metaDestino);
 
           // Diagnóstico temporal -- NO cambia ninguna decisión, solo lee y
@@ -3300,7 +3339,7 @@ async function generarVideoRecorridoInterno(
             const altoFisicoDestino = metaDestino.altoPx * ESCALA;
             console.log(
               `[hueco-diag] fraccionTotal=${fraccionTotal.toFixed(3)} restanteHastaTrazoCompleto=${(FRACCION_TRAZO_COMPLETO - fraccionTotal).toFixed(3)} destino=${huecoRef.valor.indiceDestino} ` +
-                `camara.cx=${camara.cx.toFixed(1)} camara.cy=${camara.cy.toFixed(1)} camara.escala=${camara.escala.toFixed(4)} escalaActual=${huecoRef.valor.escalaActual?.toFixed(4)} ` +
+                `camara.cx=${camara.cx.toFixed(1)} camara.cy=${camara.cy.toFixed(1)} camara.escala=${camara.escala.toFixed(4)} escalaCropTransicion=${escalaCropTransicion.toFixed(4)} escalaActual=${huecoRef.valor.escalaActual?.toFixed(4)} ` +
                 `camaraZ17=(${camaraZ17Regreso.x.toFixed(1)},${camaraZ17Regreso.y.toFixed(1)}) distZ17ADestino=${distZ17ADestino.toFixed(1)} radioLimitePx=${metaDestino.radioLimitePx.toFixed(1)} ` +
                 `recorte sx=${recorteRegreso.sx.toFixed(1)} sy=${recorteRegreso.sy.toFixed(1)} sWidth=${recorteRegreso.sWidth.toFixed(1)} sHeight=${recorteRegreso.sHeight.toFixed(1)} ` +
                 `limiteFisico anchoPx=${anchoFisicoDestino.toFixed(1)} altoPx=${altoFisicoDestino.toFixed(1)} ` +
@@ -3329,13 +3368,20 @@ async function generarVideoRecorridoInterno(
           // que se está usando para la panorámica este frame) Y la imagen
           // ya terminó de decodificar. Sin umbral de escala/posición
           // arbitrario -- recorteValido() ya combina las dos cosas.
+          //
+          // Pasa a "convergiendo", NO a "ninguno": la fuente Z17 ya puede
+          // activarse (esto), pero camara.escala todavía puede seguir
+          // convergiendo -- ver EstadoHueco/FaseHueco. indiceDestino/
+          // camaraAmplia/escalaActual se conservan (no se limpian) porque
+          // "convergiendo" sigue necesitando escalaActual en la selección de
+          // objetivoCrudo, arriba.
           if (imagenDestino && esRecorteValido) {
             console.log(
-              `[hueco] fraccionTotal=${fraccionTotal.toFixed(3)} regresando -> ninguno (Z17 reactivado en indice=${huecoRef.valor.indiceDestino})`,
+              `[hueco] fraccionTotal=${fraccionTotal.toFixed(3)} regresando -> convergiendo (Z17 reactivado en indice=${huecoRef.valor.indiceDestino}, escalaCropTransicion=${escalaCropTransicion.toFixed(4)})`,
             );
             const indicePrevioHueco = indiceMosaicoRef.valor;
             indiceMosaicoRef.valor = huecoRef.valor.indiceDestino;
-            huecoRef.valor = { fase: "ninguno", indiceDestino: null, camaraAmplia: null, escalaActual: null };
+            huecoRef.valor = { ...huecoRef.valor, fase: "convergiendo" };
             if (indiceMosaicoRef.valor !== indicePrevioHueco) {
               mantenerVentana(ventanaMosaicos, indiceMosaicoRef.valor, ultimoMosaicoValidoRef.valor?.indice ?? null).catch(
                 () => {},
@@ -3344,13 +3390,27 @@ async function generarVideoRecorridoInterno(
           }
         }
 
-        if (huecoRef.valor.fase === "ninguno") {
+        // "convergiendo" se trata igual que "ninguno" para todo propósito de
+        // dibujo/detección (selección de mosaico, avance de índice,
+        // detección de un hueco nuevo) -- la única diferencia entre ambas
+        // fases está arriba, en qué escala usa objetivoCrudo. Acá solo
+        // cambia qué escala le pasamos a calcularRecorteMosaico: la misma
+        // escalaCropTransicion mientras seguimos "convergiendo" (para no
+        // saltar de golpe a ESCALA_SEGUIMIENTO en el mismo frame en que se
+        // reactivó la fuente), o ESCALA_SEGUIMIENTO puro una vez que ya
+        // estamos en seguimiento normal ("ninguno"). Sin condición de salida
+        // explícita "convergiendo" -> "ninguno": esta expresión converge
+        // sola a ESCALA_SEGUIMIENTO a medida que camara.escala converge a su
+        // régimen estable (factorSeguimiento×ESCALA_SEGUIMIENTO).
+        if (huecoRef.valor.fase === "ninguno" || huecoRef.valor.fase === "convergiendo") {
           camaraZ17 = calcularCamaraZ17(camara, mapa, factorSeguimiento);
+          escalaCropSeguimiento =
+            huecoRef.valor.fase === "convergiendo" ? camara.escala / factorSeguimiento : ESCALA_SEGUIMIENTO;
           const indicePrevio = indiceMosaicoRef.valor;
           const resultado = seleccionarMosaico(
             focoActual,
             camaraZ17,
-            camara.escala,
+            escalaCropSeguimiento,
             ventanaMosaicos,
             indiceMosaicoRef,
             ultimoMosaicoValidoRef,
@@ -3383,6 +3443,19 @@ async function generarVideoRecorridoInterno(
             console.log(
               `[hueco] fraccionTotal=${fraccionTotal.toFixed(3)} detectado -- origen=${indiceMosaicoRef.valor} destino=${resultado.huecoDetectado} camaraAmplia.escala=${camaraAmplia.escala.toFixed(3)}`,
             );
+            // PENDIENTE (optimización de memoria/red, no bloqueante): este
+            // mantenerVentana centra su ventana en el DESTINO del hueco, lejos
+            // del índice origen -- su liberarFueraDeVentana() puede vaciar
+            // dataUrls/imagenes del origen (p.ej. el mosaico que se está por
+            // volver "geométrico activo" este mismo frame, ver más abajo),
+            // forzando un segundo fetch real de un mosaico que ya se había
+            // descargado y decodificado. No es la carrera de asegurarDescarga/
+            // asegurarDecodificado (esa ya está resuelta, ver el Map en
+            // EstadoVentanaMosaicos.descargando) -- es la política de ventanas
+            // en sí, que no protege al índice de origen del hueco además del
+            // `indiceProtegido` que ya recibe. Confirmado en prueba real:
+            // "[mosaico] indice=7 descarga iniciada" dos veces en la misma
+            // generación. Sin corregir a propósito por ahora.
             mantenerVentana(ventanaMosaicos, resultado.huecoDetectado, ultimoMosaicoValidoRef.valor?.indice ?? null).catch(
               () => {},
             );
@@ -3443,10 +3516,11 @@ async function generarVideoRecorridoInterno(
             );
           }
         }
-        // Si huecoRef.valor.fase !== "ninguno": seleccionMosaico/camaraZ17
-        // quedan null (declarados arriba) -- dibujarCuadroVideo cae a
-        // dibujarFondoMapaVideo (panorámica), con la MISMA `camara` de este
-        // frame.
+        // Si huecoRef.valor.fase es "en_hueco" o "regresando":
+        // seleccionMosaico/camaraZ17 quedan null (declarados arriba) --
+        // dibujarCuadroVideo cae a dibujarFondoMapaVideo (panorámica), con
+        // la MISMA `camara` de este frame. "convergiendo" NO cae acá -- ya
+        // quedó cubierta arriba junto con "ninguno".
       }
     } else {
       // Outro: SIN anticipación ni suavizado, misma llamada de siempre
@@ -3471,6 +3545,7 @@ async function generarVideoRecorridoInterno(
       camara,
       factorSeguimiento * ESCALA_SEGUIMIENTO,
       camaraZ17,
+      escalaCropSeguimiento,
       pulsoVelMax,
       suavizadoEtiquetas,
       seleccionMosaico,
@@ -3545,6 +3620,10 @@ async function generarVideoRecorridoInterno(
       camara,
       factorSeguimiento * ESCALA_SEGUIMIENTO,
       camaraZ17,
+      // Intro (acercamiento panorámica -> Z17): fuera del alcance de esta
+      // corrección -- se preserva camara.escala tal cual, comportamiento
+      // idéntico al de antes de esta ronda, sin tocar.
+      camara.escala,
       0,
       suavizadoEtiquetas,
       seleccion,
