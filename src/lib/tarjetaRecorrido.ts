@@ -458,6 +458,15 @@ async function generarMapaEnZoom(
   // panorámica no pasa etiqueta, así que sigue muda como antes.
   etiquetaDiagnostico: string | null = null,
 ): Promise<MapaGenerado | null> {
+  // Diagnóstico temporal (investigación de por qué un video a 30fps termina
+  // con ~80% de cuadros duplicados): separa descarga/red, drawImage de
+  // tiles y toDataURL en tres mediciones independientes, cada una con
+  // performance.now() ABSOLUTO (no relativo al loop de render) para poder
+  // cruzarlas directo contra los [render-diag] *** STALL *** del loop
+  // principal, que usa el mismo reloj. tEtiqueta ya trae "indice=N" (ver
+  // asegurarDescarga) para los mosaicos de seguimiento; "sin-etiqueta" para
+  // la panorámica/detallado, que no lo pasan.
+  const tEtiqueta = etiquetaDiagnostico ?? "sin-etiqueta";
   try {
     const tiles = calcularTilesNecesarios(centroPxX, centroPxY, zoom, anchoDestino, altoDestino);
     if (etiquetaDiagnostico) {
@@ -473,12 +482,18 @@ async function generarMapaEnZoom(
       return null;
     }
 
+    console.log(`[render-diag] inicio generación mosaico ${tEtiqueta} tiles=${tiles.length} tAbsMs=${performance.now().toFixed(0)}`);
+    const tRedInicio = performance.now();
     const [imagenesBase, imagenesEtiquetas] = await Promise.all([
       Promise.all(tiles.map((t) => obtenerTileConCache(cache, TILE_SATELITE_URL, zoom, t.x, t.y))),
       incluirEtiquetas
         ? Promise.all(tiles.map((t) => cargarTileComoImagen(urlTile(TILE_ETIQUETAS_URL, zoom, t.x, t.y))))
         : Promise.resolve(tiles.map(() => null)),
     ]);
+    const tRedMs = performance.now() - tRedInicio;
+    (tRedMs > 50 ? console.warn : console.log)(
+      `[render-diag] ${tEtiqueta} descarga/red (${tiles.length} tiles) = ${tRedMs.toFixed(1)}ms tAbsMs=${performance.now().toFixed(0)}`,
+    );
     const cargados = imagenesBase.filter((img) => img !== null).length;
     const fallidos = imagenesBase.length - cargados;
     if (imagenesBase.every((img) => img === null)) {
@@ -514,12 +529,24 @@ async function generarMapaEnZoom(
     if (!ctx) return null;
     ctx.fillStyle = "#1a1108";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+    // tiles.forEach y canvas.toDataURL() son SÍNCRONOS y corren en el mismo
+    // hilo que el loop de dibujarFrame -- aunque asegurarDescarga/
+    // mantenerVentana se disparan sin await desde dibujarFrame, el trabajo
+    // síncrono de acá adentro igual bloquea ese mismo hilo mientras se
+    // ejecuta (JS es de un solo hilo). Se mide cada paso por separado para
+    // saber cuál pesa más -- warn (en vez de log) cuando supera 50ms, para
+    // que salte a la vista en medio de un log largo.
+    const tDibujoInicio = performance.now();
     tiles.forEach((t, i) => {
       const base = imagenesBase[i];
       if (base) ctx.drawImage(base, t.destX * ESCALA, t.destY * ESCALA, TAM_TILE * ESCALA, TAM_TILE * ESCALA);
       const etiquetas = imagenesEtiquetas[i];
       if (etiquetas) ctx.drawImage(etiquetas, t.destX * ESCALA, t.destY * ESCALA, TAM_TILE * ESCALA, TAM_TILE * ESCALA);
     });
+    const tDibujoMs = performance.now() - tDibujoInicio;
+    (tDibujoMs > 50 ? console.warn : console.log)(
+      `[render-diag] ${tEtiqueta} drawImage de tiles (x${tiles.length}) = ${tDibujoMs.toFixed(1)}ms tAbsMs=${performance.now().toFixed(0)}`,
+    );
 
     if (etiquetaDiagnostico) {
       console.log(
@@ -528,7 +555,14 @@ async function generarMapaEnZoom(
       if (cache) cache.contadores.mosaicosOK++;
     }
 
-    return { dataUrl: canvas.toDataURL("image/png"), zoom, centroPxX, centroPxY };
+    const tDataUrlInicio = performance.now();
+    const dataUrl = canvas.toDataURL("image/png");
+    const tDataUrlMs = performance.now() - tDataUrlInicio;
+    (tDataUrlMs > 50 ? console.warn : console.log)(
+      `[render-diag] ${tEtiqueta} toDataURL (${canvas.width}x${canvas.height}) = ${tDataUrlMs.toFixed(1)}ms tAbsMs=${performance.now().toFixed(0)}`,
+    );
+
+    return { dataUrl, zoom, centroPxX, centroPxY };
   } catch (err) {
     if (etiquetaDiagnostico) {
       console.warn(`[mosaico] ${etiquetaDiagnostico} excepción: ${err instanceof Error ? err.message : String(err)}`);
@@ -953,6 +987,14 @@ interface EstadoVentanaMosaicos {
   // CacheTilesLRU) -- vive acá para que asegurarDescarga lo tenga a mano sin
   // pasarlo como parámetro suelto por todos lados.
   cache: CacheTilesLRU;
+  // Diagnóstico temporal (investigación de congelamientos, ver [render-diag]):
+  // qué índices tienen ahora mismo una generación REAL en curso (mutado por
+  // asegurarDescarga alrededor de su llamada a generarMapaEnZoom) -- el loop
+  // principal de generarVideoRecorrido lo lee al detectar un *** STALL ***
+  // para reportar "cuando sea posible" qué mosaico se estaba generando en
+  // ese instante. Set (no un solo número) porque puede haber más de una
+  // generación real en paralelo dentro de un mismo mantenerVentana().
+  mosaicosEnGeneracion: Set<number>;
 }
 
 function crearVentanaMosaicos(metas: MosaicoSeguimientoMeta[], cache: CacheTilesLRU): EstadoVentanaMosaicos {
@@ -962,6 +1004,7 @@ function crearVentanaMosaicos(metas: MosaicoSeguimientoMeta[], cache: CacheTiles
     imagenes: metas.map(() => null),
     descargando: new Map(),
     cache,
+    mosaicosEnGeneracion: new Set(),
   };
 }
 
@@ -991,6 +1034,7 @@ async function asegurarDescarga(estado: EstadoVentanaMosaicos, indice: number): 
   // concurrente que entre en el mismo tick puede colarse a iniciar una
   // segunda descarga real para el mismo índice.
   const promesa = (async () => {
+    estado.mosaicosEnGeneracion.add(indice);
     try {
       const meta = estado.metas[indice];
       const generado = await generarMapaEnZoom(
@@ -1007,6 +1051,7 @@ async function asegurarDescarga(estado: EstadoVentanaMosaicos, indice: number): 
       estado.dataUrls[indice] = generado?.dataUrl ?? null;
     } finally {
       estado.descargando.delete(indice);
+      estado.mosaicosEnGeneracion.delete(indice);
     }
   })();
   estado.descargando.set(indice, promesa);
@@ -1019,7 +1064,16 @@ async function asegurarDecodificado(estado: EstadoVentanaMosaicos, indice: numbe
   await asegurarDescarga(estado, indice);
   const url = estado.dataUrls[indice];
   if (!url) return;
+  // Diagnóstico temporal (investigación de congelamientos, ver [render-diag]):
+  // new Image() + onload es async, pero si el navegador decodifica de forma
+  // eager/síncrona un data URL de varios MB esto puede seguir bloqueando el
+  // hilo principal un rato -- se mide igual que el resto de la cadena.
+  const tDecodeInicio = performance.now();
   estado.imagenes[indice] = await cargarImagenOpcional(url);
+  const tDecodeMs = performance.now() - tDecodeInicio;
+  (tDecodeMs > 50 ? console.warn : console.log)(
+    `[render-diag] indice=${indice} decode de Image (onload) = ${tDecodeMs.toFixed(1)}ms tAbsMs=${performance.now().toFixed(0)}`,
+  );
   const img = estado.imagenes[indice];
   if (img) {
     console.log(`[mosaico] indice=${indice} decodificado -- naturalWidth=${img.naturalWidth} naturalHeight=${img.naturalHeight}`);
@@ -1074,7 +1128,17 @@ async function mantenerVentana(estado: EstadoVentanaMosaicos, indiceActual: numb
   for (let i = indiceActual; i <= finDescarga; i++) tareas.push(asegurarDescarga(estado, i));
   const finDecodificado = Math.min(estado.metas.length - 1, indiceActual + VENTANA_DECODIFICADA_ADELANTE);
   for (let i = indiceActual; i <= finDecodificado; i++) tareas.push(asegurarDecodificado(estado, i));
+  // Diagnóstico temporal (investigación de congelamientos, ver [render-diag]):
+  // esto mide espera TOTAL (red real + trabajo síncrono), no solo bloqueo de
+  // hilo -- útil para correlacionar con los cortes observados, pero un valor
+  // alto acá no prueba por sí solo que el hilo principal estuvo bloqueado
+  // (ver los logs de tiles.forEach/toDataURL/decodificado para esa parte).
+  const tVentanaInicio = performance.now();
   await Promise.all(tareas);
+  const tVentanaMs = performance.now() - tVentanaInicio;
+  (tVentanaMs > 50 ? console.warn : console.log)(
+    `[render-diag] mantenerVentana(indiceActual=${indiceActual}, ${tareas.length} tareas) = ${tVentanaMs.toFixed(1)}ms en total (red + trabajo síncrono) tAbsMs=${performance.now().toFixed(0)}`,
+  );
 }
 
 interface SeleccionMosaico {
@@ -2505,6 +2569,20 @@ function dibujarTextoDiagnosticoFondo(ctx: CanvasRenderingContext2D, descriptor:
   ctx.restore();
 }
 
+// Diagnóstico temporal (investigación de congelamientos, ver [render-diag]
+// en el loop principal de generarVideoRecorrido) -- snapshot de lo que
+// dibujarCuadroVideo resolvió internamente este cuadro puntual, para que el
+// loop de afuera lo pueda loguear junto con su propio timing de reloj real.
+interface DiagnosticoFrame {
+  camaraCx: number;
+  camaraCy: number;
+  camaraEscala: number;
+  descriptorFondo: string;
+  indiceBase: number | null;
+  lat: number | null;
+  lon: number | null;
+}
+
 // Dibuja cada cuadro del video rediseñado directamente en el canvas (sin
 // pasar por SVG+<img> por cuadro, ver generarVideoRecorrido): mapa a
 // pantalla completa (a diferencia de construirSvg(), que sigue siendo la
@@ -2566,6 +2644,15 @@ function dibujarCuadroVideo(
   // del cuadro anterior (.valor persiste entre llamadas). null fuera de la
   // prueba -- sin este parámetro, cero cambio de comportamiento/dibujo.
   refDiagnosticoFondo: { valor: string | null } | null = null,
+  // Diagnóstico temporal (investigación de congelamientos del video, ver
+  // [render-diag] en el loop principal de generarVideoRecorrido): expone,
+  // cuadro a cuadro, el estado interno que el loop no puede ver desde
+  // afuera (camara/descriptorFondo/indiceBase son locales acá adentro). Se
+  // sobreescribe SIEMPRE (no solo al cambiar, a diferencia de
+  // refDiagnosticoFondo) -- el throttling de cada cuánto loguear lo decide
+  // el loop, no esta función. null fuera de la prueba -- sin este
+  // parámetro, cero cambio de comportamiento/dibujo.
+  refDiagnosticoFrame: { valor: DiagnosticoFrame | null } | null = null,
   // Clasificación GPS por tramo (ver clasificarTramos en geo.ts), calculada
   // una sola vez en generarVideoRecorridoInterno y compartida con el
   // selector de mosaicos (misma fuente de verdad, ver seleccionarMosaico) --
@@ -2643,6 +2730,18 @@ function dibujarCuadroVideo(
       console.log(`[video] fraccionTotal=${fraccionTotal.toFixed(3)} fondo=${descriptorFondo}`);
     }
     dibujarTextoDiagnosticoFondo(ctx, descriptorFondo);
+  }
+
+  if (refDiagnosticoFrame) {
+    refDiagnosticoFrame.valor = {
+      camaraCx: camara.cx,
+      camaraCy: camara.cy,
+      camaraEscala: camara.escala,
+      descriptorFondo,
+      indiceBase: frame.indiceBase,
+      lat: frame.posicionActual?.lat ?? null,
+      lon: frame.posicionActual?.lon ?? null,
+    };
   }
 
   ctx.save();
@@ -3016,6 +3115,10 @@ async function generarVideoRecorridoInterno(
   // anterior (ver dibujarCuadroVideo/dibujarTextoDiagnosticoFondo) -- para
   // loguear en consola solo al cambiar, no 30 veces por segundo.
   const refDiagnosticoFondo: { valor: string | null } = { valor: null };
+  // Diagnóstico temporal (investigación de congelamientos, ver [render-diag]
+  // en el loop principal más abajo) -- snapshot mutado por dibujarCuadroVideo
+  // en CADA cuadro (no solo al cambiar).
+  const refDiagnosticoFrame: { valor: DiagnosticoFrame | null } = { valor: null };
   const indiceMosaicoRef = { valor: 0 };
   // Último mosaico válido mostrado (ver seleccionarMosaico) -- todavía
   // ninguno al arrancar, se llena solo cuando el mosaico 0 termine de
@@ -3551,6 +3654,7 @@ async function generarVideoRecorridoInterno(
       seleccionMosaico,
       false,
       refDiagnosticoFondo,
+      refDiagnosticoFrame,
       clasificacionTramos,
     );
   }
@@ -3629,6 +3733,7 @@ async function generarVideoRecorridoInterno(
       seleccion,
       true,
       refDiagnosticoFondo,
+      refDiagnosticoFrame,
       clasificacionTramos,
     );
   }
@@ -3741,10 +3846,47 @@ async function generarVideoRecorridoInterno(
 
   const totalFrames = Math.round(duracionAnimSeg * fps);
   let pausaVelMaxHecha = false;
+  // Diagnóstico temporal (investigación de por qué un video a 30fps termina
+  // con ~80% de cuadros duplicados, ver PROGRESS.md/sesión de diagnóstico):
+  // mide, con reloj real (performance.now(), no fraccionTotal), cuánto
+  // tarda CADA vuelta del loop -- si tarda bien por encima de intervaloMs
+  // (=1000/fps), esta iteración concreta bloqueó el hilo principal (o
+  // esperó algo) más de lo que el video "cree" que pasó, mientras
+  // canvas.captureStream(fps) sigue muestreando el canvas a reloj real por
+  // su cuenta -- exactamente el mecanismo que produciría cuadros
+  // duplicados sin que fraccionTotal lo refleje. tiempoInicioLoopMs es el
+  // reloj real desde que arranca ESTE loop (no toda la generación), así
+  // tiempoVideoMs se puede comparar directo contra duracionAnimSeg*1000.
+  const tiempoInicioLoopMs = performance.now();
+  let tiempoFrameAnteriorMs = tiempoInicioLoopMs;
+  const INTERVALO_LOG_RENDER_DIAG_FRAMES = 15; // ~2 veces por segundo a 30fps
+  const UMBRAL_STALL_MS = intervaloMs + 50;
   for (let f = 0; f <= totalFrames; f++) {
     const fraccionTotal = f / totalFrames;
+    const tiempoAntesMs = performance.now();
+    const deltaDesdeAnteriorMs = tiempoAntesMs - tiempoFrameAnteriorMs;
+    const esStall = deltaDesdeAnteriorMs > UMBRAL_STALL_MS;
     dibujarFrame(fraccionTotal, false);
     onProgreso?.(fraccionTotal);
+    if (f % INTERVALO_LOG_RENDER_DIAG_FRAMES === 0 || esStall) {
+      const diag = refDiagnosticoFrame.valor;
+      // "cuando sea posible": mosaicosEnGeneracion refleja qué índice(s)
+      // tenían una generación REAL en curso en ventanaMosaicos en el
+      // instante de este log -- si un STALL coincide con un índice acá, es
+      // la correlación directa pedida (cruzar contra los [render-diag] de
+      // generarMapaEnZoom para ESE mismo índice, mismo tAbsMs).
+      const mosaicosEnGeneracion =
+        ventanaMosaicos.mosaicosEnGeneracion.size > 0 ? [...ventanaMosaicos.mosaicosEnGeneracion].join(",") : "ninguno";
+      (esStall ? console.warn : console.log)(
+        `${esStall ? "[render-diag] *** STALL, la iteración anterior tardó más de lo esperado ***" : "[render-diag]"} ` +
+          `frame=${f}/${totalFrames} tiempoVideoMs=${(tiempoAntesMs - tiempoInicioLoopMs).toFixed(0)} tAbsMs=${tiempoAntesMs.toFixed(0)} fraccionTotal=${fraccionTotal.toFixed(4)} ` +
+          `deltaDesdeAnteriorMs=${deltaDesdeAnteriorMs.toFixed(1)} (esperado=${intervaloMs.toFixed(1)}) mosaicosEnGeneracion=${mosaicosEnGeneracion} ` +
+          `indiceBase=${diag?.indiceBase ?? "?"} lat=${diag?.lat?.toFixed(6) ?? "?"} lon=${diag?.lon?.toFixed(6) ?? "?"} ` +
+          `camara.cx=${diag?.camaraCx?.toFixed(1) ?? "?"} camara.cy=${diag?.camaraCy?.toFixed(1) ?? "?"} camara.escala=${diag?.camaraEscala?.toFixed(4) ?? "?"} ` +
+          `fondo=${diag?.descriptorFondo ?? "?"}`,
+      );
+    }
+    tiempoFrameAnteriorMs = tiempoAntesMs;
     await new Promise((r) => setTimeout(r, intervaloMs));
 
     // Al llegar al punto de velocidad máxima, en vez de solo pausar se
