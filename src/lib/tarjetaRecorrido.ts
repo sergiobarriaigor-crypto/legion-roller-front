@@ -1060,7 +1060,7 @@ const CONCURRENCIA_PREPARACION_TILES_Z17 = 6;
 // pedido explícito -- no continuar automáticamente por ahora, sin haber
 // validado primero esta arquitectura con una estrategia de ventana para
 // rutas grandes.
-const LIMITE_REFERENCIA_MEMORIA_TILES_MB = 150;
+const LIMITE_REFERENCIA_MEMORIA_TILES_MB = 250;
 
 // Fase A del video de seguimiento: descarga y decodifica TODOS los tiles
 // del corredor (ver construirCorredorTilesZ17 -- ya calculado de antemano,
