@@ -267,7 +267,8 @@ export function CompartirRecorridoModal({
       videoBlobUrlRef.current = url;
       setVideoBlob(nuevoBlob);
       setVideoUrl(url);
-    } catch {
+    } catch (err) {
+      console.error("[video-error]", err);
       setErrorVideo("No se pudo generar el video en este navegador. Probá desde el celular.");
     } finally {
       setGenerandoVideo(false);
