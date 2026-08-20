@@ -2000,6 +2000,17 @@ interface EstadoCamara {
 // mismo valor dinámico (en vez del viejo fijo) para no saltar en el corte
 // -- el resto de la coreografía (aleja con curva suave hasta escala 1,
 // centrada en el recorrido completo) no cambia en nada.
+// Progreso (0..1, ya pasado por suavizar()) de la curva de alejamiento del
+// outro -- extraído de estadoCamara (mismo cálculo, mismo resultado, sin
+// cambiar su comportamiento) para poder reutilizarlo en dibujarFrame al
+// calcular focoOutro (ver diseño aprobado de continuidad
+// seguimiento->outro): la interpolación de la anticipación hacia
+// focoTrazandoPx tiene que usar EXACTAMENTE esta misma `t`, no una curva
+// separada, para que la demostración algebraica de continuidad valga.
+function progresoAlejamientoOutro(fraccionTotal: number): number {
+  return suavizar((fraccionTotal - FRACCION_TRAZO_COMPLETO) / (1 - FRACCION_TRAZO_COMPLETO));
+}
+
 function estadoCamara(
   fraccionTotal: number,
   focoTrazando: { x: number; y: number },
@@ -2016,7 +2027,7 @@ function estadoCamara(
   if (fraccionTotal <= FRACCION_TRAZO_COMPLETO) {
     return { cx: focoCercano.x, cy: focoCercano.y, escala: escalaSeguimiento };
   }
-  const t = suavizar((fraccionTotal - FRACCION_TRAZO_COMPLETO) / (1 - FRACCION_TRAZO_COMPLETO));
+  const t = progresoAlejamientoOutro(fraccionTotal);
   return {
     cx: focoCercano.x + (focoCentro.x - focoCercano.x) * t,
     cy: focoCercano.y + (focoCentro.y - focoCercano.y) * t,
@@ -3445,10 +3456,12 @@ async function generarVideoRecorridoInterno(
   // Posición suavizada de cada etiqueta (por índice), persistida ENTRE
   // cuadros -- ver dibujarEtiquetaSector.
   const suavizadoEtiquetas = new Map<number, { x: number; y: number }>();
-  // Estado de cámara persistido entre cuadros (ver suavizarCamara) y de la
-  // dirección de anticipación (ver calcularFocoConAnticipacion) -- ninguno
-  // de los dos se toca en el outro (fraccionTotal > FRACCION_TRAZO_COMPLETO),
-  // que sigue llamando a estadoCamara exactamente igual que siempre.
+  // Estado de cámara persistido entre cuadros (ver suavizarCamara) --
+  // exclusivo del seguimiento, suavizarCamara no se toca en el outro (ver
+  // diseño aprobado: la continuidad ahí se logra con estadoCamara solo,
+  // sin una segunda suavización). direccionAnticipacionRef en cambio SÍ se
+  // sigue leyendo (y actualizando, de forma idempotente) en el outro -- ver
+  // el bloque `else` de dibujarFrame más abajo.
   const camaraSuavizadaRef: { valor: CamaraSuavizada | null } = { valor: null };
   const direccionAnticipacionRef: { valor: DireccionAnticipacion | null } = { valor: null };
   // Opción 5 -- estado del hueco de cobertura en curso, si hay uno (ver
@@ -3461,6 +3474,15 @@ async function generarVideoRecorridoInterno(
   // en fase "regresando" para throttlear el log; se resetea cada vez que se
   // entra de nuevo a "regresando". No participa de ninguna decisión.
   const diagnosticoRegresandoRef: { valor: number } = { valor: 0 };
+  // Diagnóstico temporal (investigación de la transición MOSAICO->OUTRO,
+  // ver [outro-diag] más abajo): última cámara real del seguimiento (se
+  // actualiza cada cuadro mientras enSeguimiento) y si ya se logueó la
+  // comparación del primer cuadro del outro contra ese valor -- ninguno de
+  // los dos participa en ninguna decisión geométrica.
+  const ultimaCamaraSeguimientoRef: { valor: EstadoCamara | null } = { valor: null };
+  const transicionOutroLogueadaRef: { valor: boolean } = { valor: false };
+  const cuadrosOutroRef: { valor: number } = { valor: 0 };
+  const INTERVALO_LOG_OUTRO_DIAG_FRAMES = 10;
 
   function dibujarFrame(fraccionTotal: number, mostrarFotoFinal: boolean, pulsoVelMax = 0) {
     const fraccionTrazo = Math.min(1, fraccionTotal / FRACCION_TRAZO_COMPLETO);
@@ -3761,11 +3783,70 @@ async function generarVideoRecorridoInterno(
         // arriba junto con "ninguno", con su propio crossfade hacia Z17
         // mientras cuadrosDesdeConvergencia < CROSSFADE_HUECO_Z17_FRAMES.
       }
+      // Diagnóstico temporal (ver [outro-diag] más abajo): última cámara
+      // real del seguimiento, para comparar contra el primer cuadro del
+      // outro. No participa de ninguna decisión.
+      ultimaCamaraSeguimientoRef.valor = camara;
     } else {
-      // Outro: SIN anticipación ni suavizado, misma llamada de siempre
-      // (solo cambia que estadoCamara ahora necesita factorSeguimiento para
-      // saber desde qué escala dinámica arrancar su interpolación).
-      camara = estadoCamara(fraccionTotal, focoTrazandoPx, focoCentroPx, factorSeguimiento);
+      // Outro (ver diseño aprobado de continuidad seguimiento->outro): el
+      // primer cuadro arranca con el MISMO foco anticipado con el que
+      // terminó el seguimiento, desvaneciéndose hacia focoTrazandoPx (sin
+      // anticipación) con la misma curva `t` que ya gobierna el
+      // alejamiento -- ni un temporizador nuevo ni una segunda
+      // suavización (suavizarCamara sigue completamente fuera de acá).
+      //
+      // calcularFocoConAnticipacion NO se modifica -- con fraccionTrazo=1
+      // (el mismo valor que ya usa fraccionTrazo arriba en este outro) cae
+      // en su propia rama "sin punto adelante confiable" (dist=0 exacto,
+      // ver su comentario) y devuelve la MISMA dirección congelada que ya
+      // tenía direccionAnticipacionRef -- sin estado nuevo para conservar
+      // la anticipación.
+      const anticipacionOutro = calcularFocoConAnticipacion(
+        focoTrazandoPx,
+        datos,
+        distanciaAcumuladaKm,
+        1,
+        x,
+        y,
+        direccionAnticipacionRef.valor,
+        factorSeguimiento * ESCALA_SEGUIMIENTO,
+      );
+      direccionAnticipacionRef.valor = anticipacionOutro.direccion;
+      const tAlejamiento = progresoAlejamientoOutro(fraccionTotal);
+      const focoOutro = {
+        x: focoTrazandoPx.x + (anticipacionOutro.foco.x - focoTrazandoPx.x) * (1 - tAlejamiento),
+        y: focoTrazandoPx.y + (anticipacionOutro.foco.y - focoTrazandoPx.y) * (1 - tAlejamiento),
+      };
+      camara = estadoCamara(fraccionTotal, focoOutro, focoCentroPx, factorSeguimiento);
+
+      // Diagnóstico temporal -- confirma en consola que el salto
+      // estructural de ~70px desapareció (ver diseño aprobado) y que el
+      // residual de anticipación decae a 0 hacia t=1.
+      if (!transicionOutroLogueadaRef.valor && ultimaCamaraSeguimientoRef.valor) {
+        transicionOutroLogueadaRef.valor = true;
+        const antes = ultimaCamaraSeguimientoRef.valor;
+        const deltaCentroBasePx = Math.hypot(camara.cx - antes.cx, camara.cy - antes.cy);
+        const deltaCentroPantallaPx = Math.hypot((camara.cx - antes.cx) * camara.escala, (camara.cy - antes.cy) * camara.escala);
+        console.log(
+          `[outro-diag] transición seguimiento->outro -- ` +
+            `deltaCentroBasePx=${deltaCentroBasePx.toFixed(2)} deltaCentroPantallaPx=${deltaCentroPantallaPx.toFixed(2)} ` +
+            `escalaAntes=${antes.escala.toFixed(4)} escalaDespues=${camara.escala.toFixed(4)} deltaEscala=${(camara.escala - antes.escala).toFixed(4)}`,
+        );
+      }
+      if (cuadrosOutroRef.valor < INTERVALO_LOG_OUTRO_DIAG_FRAMES) {
+        cuadrosOutroRef.valor++;
+        const residual = {
+          x: (anticipacionOutro.foco.x - focoTrazandoPx.x) * (1 - tAlejamiento),
+          y: (anticipacionOutro.foco.y - focoTrazandoPx.y) * (1 - tAlejamiento),
+        };
+        const residualAnticipacionPantallaPx = Math.hypot(residual.x, residual.y) * camara.escala;
+        console.log(
+          `[outro-diag] t=${tAlejamiento.toFixed(4)} residualAnticipacionPantallaPx=${residualAnticipacionPantallaPx.toFixed(2)} ` +
+            `focoBase=(${focoTrazandoPx.x.toFixed(2)},${focoTrazandoPx.y.toFixed(2)}) ` +
+            `focoAnticipado=(${anticipacionOutro.foco.x.toFixed(2)},${anticipacionOutro.foco.y.toFixed(2)}) ` +
+            `focoOutro=(${focoOutro.x.toFixed(2)},${focoOutro.y.toFixed(2)})`,
+        );
+      }
     }
 
     dibujarCuadroVideo(
