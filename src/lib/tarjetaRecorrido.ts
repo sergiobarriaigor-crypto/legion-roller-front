@@ -359,7 +359,7 @@ async function cargarTileComoImagen(
 }
 
 // Variante EXCLUSIVA de la grilla Z17 de seguimiento (ver
-// prepararTilesZ17/construirCorredorTilesZ17 más abajo) -- mismo fetch/
+// prepararSegmentoTilesZ17/construirCorredorTilesZ17 más abajo) -- mismo fetch/
 // manejo de error/timeout que cargarTileComoImagen, pero decodifica
 // directo `fetch → blob → createImageBitmap(blob)`, sin el rodeo por
 // FileReader/dataURL/`new Image()` (puro desperdicio de CPU para un tile
@@ -776,7 +776,7 @@ async function generarMapaDetallado(
 // compone ningún canvas grande: la cámara viaja sobre la misma grilla
 // nativa de tiles Web Mercator (256x256, ZOOM_SEGUIMIENTO fijo) que ya usa
 // la panorámica, dibujando directamente los tiles que caen dentro del
-// viewport cada cuadro (ver construirCorredorTilesZ17/prepararTilesZ17/
+// viewport cada cuadro (ver construirCorredorTilesZ17/prepararSegmentoTilesZ17/
 // dibujarTilesZ17 más abajo). Sin "mosaico actual/siguiente", sin
 // crossfade entre tiles, sin radioZonaSegura/radioLimite -- los tiles
 // vecinos son la MISMA grilla, aparecen/desaparecen solo al entrar/salir
@@ -812,7 +812,7 @@ const ZOOM_SEGUIMIENTO = 17;
 // una ampliación digital del tile.
 const ESCALA_SEGUIMIENTO = 0.6;
 
-// El pipeline de tiles Z17 (prepararTilesZ17 más abajo) ya no pasa por
+// El pipeline de tiles Z17 (prepararSegmentoTilesZ17 más abajo) ya no pasa por
 // CacheTilesLRU/obtenerTileConCache -- el Set de construirCorredorTilesZ17
 // ya viene deduplicado, así que no hace falta una segunda capa de dedup en
 // vuelo. Este límite queda solo para generarVideoRecorrido (wrapper, sin
@@ -890,6 +890,141 @@ function construirCorredorTilesZ17(puntos: PuntoGps[], clasificacionTramos: Clas
     anterior = { x: gx, y: gy };
   }
   return tiles;
+}
+
+// Divide el corredor de tiles en segmentos consecutivos con solape (ver
+// diseño de render por segmentos aprobado). construirCorredorTilesZ17 (de
+// arriba) NO se toca -- sigue dando el corredor COMPLETO, usado tal cual
+// por coberturaCompletaZ17 para la detección de huecos (esa pregunta es
+// "¿esta franja de ruta tiene tiles planeados en absoluto?", independiente
+// de cuáles estén residentes en memoria ahora mismo). Esta función es
+// puramente para decidir qué se descarga/libera y cuándo, en función de un
+// objetivo de memoria por segmento -- nunca decide si Z17 puede dibujarse.
+//
+// margenExcursionPx/mitadAnchoPx/mitadAltoPx se referencian acá ADENTRO de
+// la función por el mismo motivo que en construirCorredorTilesZ17 (cuerpo
+// de función, no se evalúa hasta la generación real, módulo ya
+// inicializado) -- ver ese comentario más arriba.
+interface SegmentoTilesZ17 {
+  tiles: Set<string>;
+  // Distancia acumulada (km) donde termina la porción NUEVA de este
+  // segmento -- el resto de `tiles` hacia atrás/adelante de esa distancia
+  // es la franja de solape con el segmento vecino. Se usa para mapear cada
+  // corte a un índice de frame concreto en el loop de render.
+  distanciaCorteKm: number;
+}
+
+function construirSegmentosTilesZ17(
+  puntos: PuntoGps[],
+  clasificacionTramos: ClasificacionTramo[],
+  distanciaAcumuladaKm: number[],
+): SegmentoTilesZ17[] {
+  const margenExcursionPx = RADIO_TOLERANCIA_PX + MAX_DESPLAZAMIENTO_ANTICIPACION_PX;
+  const mitadAnchoPx = ANCHO_VIDEO / 2 / ESCALA_SEGUIMIENTO + margenExcursionPx;
+  const mitadAltoPx = ALTO_VIDEO / 2 / ESCALA_SEGUIMIENTO + margenExcursionPx;
+  const pasoMuestreoPx = Math.min(mitadAnchoPx, mitadAltoPx);
+  const margenSolapeKm = calcularMargenSolapeSegmentosKm();
+  const bytesPorTile = TAM_TILE * TAM_TILE * 4;
+  const tilesObjetivoPorSegmento = Math.floor((MEMORIA_OBJETIVO_POR_SEGMENTO_MB * 1_048_576) / bytesPorTile);
+
+  function agregarCobertura(tiles: Set<string>, gx: number, gy: number): void {
+    const tileXMin = Math.floor((gx - mitadAnchoPx) / TAM_TILE);
+    const tileXMax = Math.floor((gx + mitadAnchoPx) / TAM_TILE);
+    const tileYMin = Math.floor((gy - mitadAltoPx) / TAM_TILE);
+    const tileYMax = Math.floor((gy + mitadAltoPx) / TAM_TILE);
+    for (let ty = tileYMin; ty <= tileYMax; ty++) {
+      for (let tx = tileXMin; tx <= tileXMax; tx++) tiles.add(`${tx}/${ty}`);
+    }
+  }
+
+  // Barre puntos [desde, hasta] (índices de datos.puntos, ambos inclusive)
+  // con la MISMA interpolación por distancia que construirCorredorTilesZ17
+  // -- reutilizada acá para que cada segmento (incluida su franja de
+  // solape) tenga exactamente la misma cobertura sin huecos que tendría el
+  // corredor de una sola pieza en ese mismo tramo.
+  function barrerRango(desde: number, hasta: number): Set<string> {
+    const tiles = new Set<string>();
+    let anterior: { x: number; y: number } | null = null;
+    for (let i = desde; i <= hasta; i++) {
+      const gx = lonAPixelX(puntos[i].lon, ZOOM_SEGUIMIENTO);
+      const gy = latAPixelY(puntos[i].lat, ZOOM_SEGUIMIENTO);
+      const segmentoConfiable = i > desde && clasificacionTramos[i] !== "saltoGps";
+      if (segmentoConfiable && anterior) {
+        const dist = Math.hypot(gx - anterior.x, gy - anterior.y);
+        const pasos = Math.max(1, Math.ceil(dist / pasoMuestreoPx));
+        for (let p = 1; p <= pasos; p++) {
+          const t = p / pasos;
+          agregarCobertura(tiles, anterior.x + (gx - anterior.x) * t, anterior.y + (gy - anterior.y) * t);
+        }
+      } else {
+        agregarCobertura(tiles, gx, gy);
+      }
+      anterior = { x: gx, y: gy };
+    }
+    return tiles;
+  }
+
+  // Primera pasada (barrido único, sin solape): determina en qué índice de
+  // datos.puntos conviene cortar cada segmento, acumulando tiles hasta
+  // cruzar tilesObjetivoPorSegmento.
+  const indicesCorte: number[] = [];
+  {
+    let acumulado = new Set<string>();
+    let anterior: { x: number; y: number } | null = null;
+    for (let i = 0; i < puntos.length; i++) {
+      const gx = lonAPixelX(puntos[i].lon, ZOOM_SEGUIMIENTO);
+      const gy = latAPixelY(puntos[i].lat, ZOOM_SEGUIMIENTO);
+      const segmentoConfiable = i > 0 && clasificacionTramos[i] !== "saltoGps";
+      if (segmentoConfiable && anterior) {
+        const dist = Math.hypot(gx - anterior.x, gy - anterior.y);
+        const pasos = Math.max(1, Math.ceil(dist / pasoMuestreoPx));
+        for (let p = 1; p <= pasos; p++) {
+          const t = p / pasos;
+          agregarCobertura(acumulado, anterior.x + (gx - anterior.x) * t, anterior.y + (gy - anterior.y) * t);
+        }
+      } else {
+        agregarCobertura(acumulado, gx, gy);
+      }
+      anterior = { x: gx, y: gy };
+      if (i < puntos.length - 1 && acumulado.size >= tilesObjetivoPorSegmento) {
+        indicesCorte.push(i);
+        acumulado = new Set<string>();
+      }
+    }
+  }
+
+  // Segunda pasada: cada segmento se vuelve a barrer por separado,
+  // extendido hacia atrás/adelante lo necesario (en distancia real) para
+  // garantizar el solape calculado alrededor de cada corte -- así el
+  // pause()/resume() del render por segmentos siempre cae dentro de una
+  // franja cubierta por AMBOS segmentos vecinos.
+  const nSegmentos = indicesCorte.length + 1;
+  const segmentos: SegmentoTilesZ17[] = [];
+  for (let s = 0; s < nSegmentos; s++) {
+    const inicioNominal = s === 0 ? 0 : indicesCorte[s - 1] + 1;
+    const finNominal = s === nSegmentos - 1 ? puntos.length - 1 : indicesCorte[s];
+
+    let inicioReal = inicioNominal;
+    if (s > 0) {
+      const distFinNominalAnterior = distanciaAcumuladaKm[inicioNominal];
+      while (inicioReal > 0 && distFinNominalAnterior - distanciaAcumuladaKm[inicioReal - 1] < margenSolapeKm) {
+        inicioReal--;
+      }
+    }
+    let finReal = finNominal;
+    if (s < nSegmentos - 1) {
+      const distInicioNominal = distanciaAcumuladaKm[finNominal];
+      while (finReal < puntos.length - 1 && distanciaAcumuladaKm[finReal + 1] - distInicioNominal < margenSolapeKm) {
+        finReal++;
+      }
+    }
+
+    segmentos.push({
+      tiles: barrerRango(inicioReal, finReal),
+      distanciaCorteKm: distanciaAcumuladaKm[finNominal],
+    });
+  }
+  return segmentos;
 }
 
 // Posición de la cámara (canvas-base) expresada en píxeles GLOBALES de
@@ -1061,53 +1196,65 @@ function coberturaCompletaZ17(
 // con datos reales de esta primera prueba.
 const CONCURRENCIA_PREPARACION_TILES_Z17 = 6;
 
-// Límite (MB) de memoria cruda estimada para los tiles del corredor -- a
-// diferencia del límite de referencia del viejo esquema de mosaicos (solo
-// dejaba un warning), este SÍ corta la generación (ver prepararTilesZ17):
-// pedido explícito -- no continuar automáticamente por ahora, sin haber
-// validado primero esta arquitectura con una estrategia de ventana para
-// rutas grandes.
+// Límite (MB) de memoria cruda estimada -- ya no se aplica al corredor
+// completo (ver diseño de render por segmentos aprobado): cada segmento
+// (construirSegmentosTilesZ17) se valida por separado contra este mismo
+// límite antes de arrancar la generación. Sigue siendo un corte duro, no
+// un warning -- no se sube automáticamente si algún segmento lo supera.
 const LIMITE_REFERENCIA_MEMORIA_TILES_MB = 250;
 
-// Fase A del video de seguimiento: descarga y decodifica TODOS los tiles
-// del corredor (ver construirCorredorTilesZ17 -- ya calculado de antemano,
-// no depende de tiempo real ni de la cámara) como ImageBitmap directamente
-// dibujables, con concurrencia acotada, ANTES de que el llamador arranque
-// canvas.captureStream()/MediaRecorder (ver generarVideoRecorridoInterno).
-// Reemplaza por completo al esquema de mosaicos grandes pre-compuestos
-// (prepararTodosLosMosaicosSeguimiento, eliminada) -- acá no hay ninguna
-// composición de canvas en absoluto, cada tile se decodifica directo del
-// blob de red (ver cargarTileComoImageBitmap). Si falta un tile durante
-// Fase B, eso es un error de preparación (tile ausente del Map
-// `residentes`) -- Fase B nunca reintenta la descarga.
-async function prepararTilesZ17(
-  corredorPlaneado: Set<string>,
-  contadores: ContadoresTilesSeguimiento,
-): Promise<Map<string, ImageBitmap>> {
-  const claves = [...corredorPlaneado];
-  const n = claves.length;
-  console.log(`[tile-z17] tilesNecesarios=${n}`);
+// Objetivo de memoria residente POR SEGMENTO (ver diseño de render por
+// segmentos aprobado): construirSegmentosTilesZ17 corta un segmento nuevo
+// apenas su acumulado de tiles cruza este techo. Deliberadamente bien por
+// debajo de LIMITE_REFERENCIA_MEMORIA_TILES_MB -- dejando aire para que el
+// solape entre segmentos vecinos (ver calcularMargenSolapeSegmentosKm) no
+// empuje el tamaño real de un segmento por encima del límite duro.
+const MEMORIA_OBJETIVO_POR_SEGMENTO_MB = 120;
 
+// Fase A por segmento (ver diseño de render por segmentos aprobado):
+// descarga y decodifica los tiles de UN segmento (los que ya no estén
+// residentes de un segmento anterior, ver tilesCompartidos) como
+// ImageBitmap directamente dibujables, con concurrencia acotada. Para el
+// segmento 0 corre ANTES de canvas.captureStream()/MediaRecorder (igual
+// que la vieja Fase A de corredor completo); para los siguientes corre
+// mientras el MediaRecorder está en pause() (ver generarVideoRecorridoInterno
+// -- el llamador es responsable de pausar antes y reanudar después, esta
+// función no sabe nada de MediaRecorder). Nunca se llama de nuevo por un
+// tile que ya esté en `residentes` -- así los tiles compartidos entre
+// segmentos vecinos (solape) no se vuelven a descargar. Si falta un tile
+// durante Fase B, eso es un error de preparación (tile ausente del Map
+// `residentes`) -- Fase B nunca reintenta la descarga.
+async function prepararSegmentoTilesZ17(
+  segmento: Set<string>,
+  residentes: Map<string, ImageBitmap>,
+  contadores: ContadoresTilesSeguimiento,
+  indiceSegmento: number,
+): Promise<void> {
   const bytesPorTile = TAM_TILE * TAM_TILE * 4; // RGBA sin comprimir
-  const mbEstimado = (bytesPorTile * n) / 1_048_576;
-  console.log(`[tile-z17] memoriaEstimadaMB=${mbEstimado.toFixed(1)}`);
+  const mbEstimado = (bytesPorTile * segmento.size) / 1_048_576;
   if (mbEstimado > LIMITE_REFERENCIA_MEMORIA_TILES_MB) {
     throw new Error(
-      `[tile-z17] la memoria estimada para los tiles Z17 de esta ruta (${mbEstimado.toFixed(1)}MB, ${n} tiles) ` +
-        `supera el límite de referencia (${LIMITE_REFERENCIA_MEMORIA_TILES_MB}MB) para esta primera implementación. ` +
-        `No se continúa automáticamente -- hace falta diseñar una estrategia de ventana/liberación antes de generar ` +
-        `el video para una ruta de este tamaño (ver diseño aprobado).`,
+      `[segment-z17] el segmento ${indiceSegmento} de esta ruta (${segmento.size} tiles, ${mbEstimado.toFixed(1)}MB) ` +
+        `supera el límite de referencia (${LIMITE_REFERENCIA_MEMORIA_TILES_MB}MB). No se continúa automáticamente -- ` +
+        `ajustar MEMORIA_OBJETIVO_POR_SEGMENTO_MB o el margen de solape antes de generar el video para una ruta de ` +
+        `este tamaño (ver diseño aprobado).`,
     );
   }
 
-  const residentes = new Map<string, ImageBitmap>();
+  const nuevos = [...segmento].filter((clave) => !residentes.has(clave));
+  const compartidos = segmento.size - nuevos.length;
+  console.log(
+    `[segment-z17] segmento=${indiceSegmento} tilesNecesarios=${segmento.size} tilesNuevos=${nuevos.length} tilesCompartidos=${compartidos} memoriaEstimadaMB=${mbEstimado.toFixed(1)}`,
+  );
+  if (nuevos.length === 0) return;
+
   let siguiente = 0;
   let fallidos = 0;
-  const tFaseAInicio = performance.now();
+  const tInicio = performance.now();
 
   async function trabajador(): Promise<void> {
-    while (siguiente < n) {
-      const clave = claves[siguiente++];
+    while (siguiente < nuevos.length) {
+      const clave = nuevos[siguiente++];
       const [tx, ty] = clave.split("/").map(Number);
       const url = urlTile(TILE_SATELITE_URL, ZOOM_SEGUIMIENTO, tx, ty);
       const bitmap = await cargarTileComoImageBitmap(url, contadores);
@@ -1116,14 +1263,16 @@ async function prepararTilesZ17(
     }
   }
 
-  const trabajadores = Array.from({ length: Math.min(CONCURRENCIA_PREPARACION_TILES_Z17, Math.max(n, 1)) }, () => trabajador());
+  const trabajadores = Array.from(
+    { length: Math.min(CONCURRENCIA_PREPARACION_TILES_Z17, Math.max(nuevos.length, 1)) },
+    () => trabajador(),
+  );
   await Promise.all(trabajadores);
 
-  const tFaseAMs = performance.now() - tFaseAInicio;
-  console.log(`[tile-z17] tilesPreparados=${residentes.size}`);
-  console.log(`[tile-z17] tilesFallidos=${fallidos}`);
-  console.log(`[tile-z17] preparación completa -- tiempoTotalMs=${tFaseAMs.toFixed(1)}`);
-  return residentes;
+  const tMs = performance.now() - tInicio;
+  console.log(
+    `[segment-z17] segmento=${indiceSegmento} preparación fin tilesPreparados=${nuevos.length - fallidos} tilesFallidos=${fallidos} tiempoMs=${tMs.toFixed(1)} memoriaResidenteMB=${((residentes.size * bytesPorTile) / 1_048_576).toFixed(1)}`,
+  );
 }
 
 // Dibuja los tiles Z17 visibles del viewport actual, directo desde la
@@ -1541,6 +1690,44 @@ const MAX_DESPLAZAMIENTO_ANTICIPACION_PX = 90;
 // geo-flyover.util.ts, aplicado acá a un vector 2D de pantalla en vez de un
 // ángulo (no hace falta manejar wrap-around de 360°).
 const FACTOR_SUAVIZADO_ANTICIPACION = 0.08;
+
+// --- Render por segmentos de tiles Z17: solape entre segmentos ---
+// (no es cámara -- vive acá solo porque necesita leer las constantes de
+// arriba para derivar el margen geométrico real, ver diseño aprobado. No
+// modifica ninguna de las constantes de cámara/anticipación de esta
+// sección.)
+//
+// Solape mínimo (km de ruta) que debe compartirse entre dos segmentos
+// vecinos para que el pause()/resume() del render por segmentos caiga
+// siempre dentro de una franja cubierta por AMBOS -- derivado de la
+// geometría real en vez de una constante arbitraria:
+//   1. la mitad del viewport (ANCHO_VIDEO/ALTO_VIDEO a ESCALA_SEGUIMIENTO)
+//      más el margen de excursión de cámara (RADIO_TOLERANCIA_PX +
+//      MAX_DESPLAZAMIENTO_ANTICIPACION_PX) -- el mismo margen por punto
+//      que ya usa construirCorredorTilesZ17/construirSegmentosTilesZ17,
+//      convertido de píxeles Z17 a km reales;
+//   2. más DISTANCIA_ANTICIPACION_KM (cuánto más adelante en la ruta puede
+//      apuntar la cámara por la anticipación de dirección).
+// La conversión píxeles Z17 -> metros usa la constante de Web Mercator al
+// ECUADOR (misma proyección que ya usan lonAPixelX/latAPixelY -- 360° de
+// longitud equivalen a TAM_TILE×2^zoom píxeles) -- una cota SUPERIOR
+// deliberada: a cualquier otra latitud, metros/píxel es MENOR (cos(lat)<=1),
+// así que este cálculo nunca subestima la distancia real cubierta por un
+// margen en píxeles, en cualquier ciudad donde se use la app.
+const RADIO_TIERRA_ECUATORIAL_M = 6378137;
+const METROS_POR_PIXEL_Z17_ECUADOR = (2 * Math.PI * RADIO_TIERRA_ECUATORIAL_M) / (TAM_TILE * 2 ** ZOOM_SEGUIMIENTO);
+// Piso de seguridad -- si el cálculo geométrico diera un valor menor a
+// esto (rutas con ESCALA_SEGUIMIENTO/ZOOM_SEGUIMIENTO muy distintos a los
+// actuales), igual no se baja de acá.
+const MARGEN_SOLAPE_SEGMENTOS_KM_PISO = 0.4;
+
+function calcularMargenSolapeSegmentosKm(): number {
+  const margenExcursionPx = RADIO_TOLERANCIA_PX + MAX_DESPLAZAMIENTO_ANTICIPACION_PX;
+  const mitadAnchoPx = ANCHO_VIDEO / 2 / ESCALA_SEGUIMIENTO + margenExcursionPx;
+  const mitadAltoPx = ALTO_VIDEO / 2 / ESCALA_SEGUIMIENTO + margenExcursionPx;
+  const margenViewportKm = (Math.max(mitadAnchoPx, mitadAltoPx) * METROS_POR_PIXEL_Z17_ECUADOR) / 1000;
+  return Math.max(MARGEN_SOLAPE_SEGMENTOS_KM_PISO, margenViewportKm + DISTANCIA_ANTICIPACION_KM);
+}
 
 // Intro: pausa panorámica quieta + acercamiento suave hasta la posición y
 // escala exactas del arranque del seguimiento (ver el bloque de intro en
@@ -2481,8 +2668,10 @@ function dibujarCuadroVideo(
   pesoZ17: number | null = null,
   pulsoVelMax = 0,
   suavizadoEtiquetas: Map<number, { x: number; y: number }> = new Map(),
-  // Tiles Z17 residentes (ver prepararTilesZ17) -- Map vacío fuera del
-  // tramo de seguimiento (outro), sin efecto ahí porque camaraZ17/pesoZ17
+  // Tiles Z17 residentes (ver prepararSegmentoTilesZ17 -- solo el segmento
+  // activo + su solape, no el corredor completo, ver diseño de render por
+  // segmentos aprobado) -- Map vacío fuera del tramo de seguimiento
+  // (outro), sin efecto ahí porque camaraZ17/pesoZ17
   // ya son null.
   tilesZ17: Map<string, ImageBitmap> = new Map(),
   // Solo true durante el intro (panorámica/pausa/acercamiento, ver
@@ -3027,14 +3216,24 @@ async function generarVideoRecorridoInterno(
   // en el loop principal más abajo) -- snapshot mutado por dibujarCuadroVideo
   // en CADA cuadro (no solo al cambiar).
   const refDiagnosticoFrame: { valor: DiagnosticoFrame | null } = { valor: null };
-  let tilesZ17Residentes: Map<string, ImageBitmap> = new Map();
-  if (corredorTilesZ17.size > 0) {
-    // Fase A (ver diseño aprobado): descarga y decodifica TODOS los tiles
-    // del corredor -- no solo los primeros -- antes de dibujar el primer
-    // cuadro y bien antes de arrancar MediaRecorder (ver más abajo). Nunca
-    // se descarga ni decodifica un tile durante Fase B (ver dibujarFrame):
-    // si falta uno ahí, es un error de preparación, no un fetch pendiente.
-    tilesZ17Residentes = await prepararTilesZ17(corredorTilesZ17, cacheTiles.contadores);
+
+  // Render por segmentos (ver diseño aprobado): corredorTilesZ17 (arriba)
+  // sigue siendo el corredor COMPLETO, sin cambios, usado por
+  // coberturaCompletaZ17 para la detección de huecos. segmentosTilesZ17 es
+  // la partición de ESE MISMO corredor en trozos con solape, para decidir
+  // qué se descarga/libera y cuándo -- nunca decide si Z17 puede dibujarse.
+  const segmentosTilesZ17 = mapa ? construirSegmentosTilesZ17(datos.puntos, clasificacionTramos, distanciaAcumuladaKm) : [];
+  const tilesZ17Residentes: Map<string, ImageBitmap> = new Map();
+  if (segmentosTilesZ17.length > 0) {
+    console.log(`[segment-z17] segmentosPlanificados=${segmentosTilesZ17.length}`);
+    // Fase A del segmento 0 (ver diseño aprobado): descarga y decodifica
+    // solo los tiles del primer segmento -- no todo el corredor -- antes de
+    // dibujar el primer cuadro y bien antes de arrancar MediaRecorder (ver
+    // más abajo). El resto de los segmentos se preparan más adelante,
+    // durante el loop principal, con el MediaRecorder en pause(). Nunca se
+    // descarga ni decodifica un tile durante Fase B (ver dibujarFrame): si
+    // falta uno ahí, es un error de preparación, no un fetch pendiente.
+    await prepararSegmentoTilesZ17(segmentosTilesZ17[0].tiles, tilesZ17Residentes, cacheTiles.contadores, 0);
   }
 
   const { punto: puntoVelMax, indice: indiceVelMax, kmh: kmhVelMax } = velocidadMaximaConPunto(datos.puntos);
@@ -3299,12 +3498,16 @@ async function generarVideoRecorridoInterno(
       // tramo final, que sigue usando la panorámica de siempre). A
       // diferencia del esquema de mosaicos, acá NO hay ningún "índice
       // activo" que avanzar -- la pregunta en cada frame es simplemente
-      // "¿están preparados todos los tiles del viewport en esta posición
-      // de cámara?" (coberturaCompletaZ17, contra el corredor planeado en
-      // Fase A). Si la respuesta es sí, se dibuja Z17; si no, se cae a la
-      // panorámica de hueco. Fase A (prepararTilesZ17) ya dejó
-      // tilesZ17Residentes completo de antemano, así que este bloque
-      // (Fase B) solo lee de ahí, nunca escribe.
+      // "¿están planeados todos los tiles del viewport en esta posición de
+      // cámara?" (coberturaCompletaZ17, contra corredorTilesZ17 -- el
+      // corredor COMPLETO, no el segmento activo -- ver diseño de render
+      // por segmentos aprobado). Si la respuesta es sí, se dibuja Z17; si
+      // no, se cae a la panorámica de hueco. Que un tile esté "planeado"
+      // (corredorTilesZ17) no significa que esté residente ahora mismo
+      // (tilesZ17Residentes, solo el segmento activo + su solape) -- el
+      // margen de solape entre segmentos garantiza que ambas cosas
+      // coincidan en la práctica; este bloque (Fase B) solo lee de
+      // tilesZ17Residentes, nunca escribe ni descarga.
       if (corredorTilesZ17.size > 0 && mapa) {
         // Cuenta cuadros de "convergiendo" para el crossfade visual
         // PANORAMICA_HUECO->Z17 (ver CROSSFADE_HUECO_Z17_FRAMES) -- se
@@ -3458,9 +3661,11 @@ async function generarVideoRecorridoInterno(
             console.log(
               `[hueco] fraccionTotal=${fraccionTotal.toFixed(3)} detectado -- origen=${indiceOrigen} destino=${indiceDestino} camaraAmplia.escala=${camaraAmplia.escala.toFixed(3)}`,
             );
-            // Con Fase A, todos los tiles del corredor ya están preparados
-            // de antemano (ver prepararTilesZ17) -- no hace falta disparar
-            // ningún fetch/prefetch acá.
+            // Con el render por segmentos, el segmento que corresponda a
+            // este destino se prepara solo cuando el loop principal llegue
+            // a su corte (ver prepararSegmentoTilesZ17) -- acá no hace
+            // falta disparar ningún fetch/prefetch, esta detección de hueco
+            // no cambia.
           }
         }
         // Si huecoRef.valor.fase es "en_hueco" o "regresando": camaraZ17
@@ -3752,6 +3957,21 @@ async function generarVideoRecorridoInterno(
   }
 
   const totalFrames = Math.round(duracionAnimSeg * fps);
+
+  // Render por segmentos (ver diseño aprobado): traduce el corte de cada
+  // segmento (distanciaCorteKm, ver construirSegmentosTilesZ17) a un índice
+  // de frame concreto de ESTE loop -- misma conversión distancia->fracción
+  // que usa el resto del archivo (fraccionTrazo = distancia/distanciaKm,
+  // fraccionTotal = fraccionTrazo×FRACCION_TRAZO_COMPLETO). Solo hay corte
+  // para los primeros N-1 segmentos -- el último llega hasta el final del
+  // trazo (y de ahí sigue derecho al outro, que no necesita tiles).
+  const frameCorteSegmento = segmentosTilesZ17
+    .slice(0, -1)
+    .map((seg) => Math.round((seg.distanciaCorteKm / datos.distanciaKm) * FRACCION_TRAZO_COMPLETO * totalFrames));
+  let segmentoActivo = 0;
+  let frameInicioSegmentoActivo = 0;
+  let fSiguienteCorteIdx = 0;
+
   let pausaVelMaxHecha = false;
   // Diagnóstico temporal (investigación de por qué un video a 30fps termina
   // con ~80% de cuadros duplicados, ver PROGRESS.md/sesión de diagnóstico):
@@ -3828,6 +4048,54 @@ async function generarVideoRecorridoInterno(
         }
       }
     }
+
+    // Corte de segmento (ver diseño de render por segmentos aprobado): el
+    // frame que acabamos de dibujar es el último del segmento activo --
+    // pausar el MediaRecorder (no se pierde nada del archivo final, ver
+    // prueba aislada /debug-segment-test), liberar los tiles que el
+    // siguiente segmento no comparte, prepararlo, y reanudar antes de
+    // seguir con el próximo frame. GPS/cámara/anticipación/huecos/
+    // estadísticas no se tocan acá -- esto solo decide qué tiles viven en
+    // tilesZ17Residentes en cada momento.
+    if (fSiguienteCorteIdx < frameCorteSegmento.length && f === frameCorteSegmento[fSiguienteCorteIdx]) {
+      console.log(
+        `[segment-z17] segmento=${segmentoActivo} frameInicio=${frameInicioSegmentoActivo} frameFin=${f} ` +
+          `fraccionInicio=${(frameInicioSegmentoActivo / totalFrames).toFixed(4)} fraccionFin=${(f / totalFrames).toFixed(4)}`,
+      );
+
+      mediaRecorder.pause();
+      console.log(`[segment-z17] segmento=${segmentoActivo} pause() confirmado state=${mediaRecorder.state}`);
+
+      const indiceSiguiente = segmentoActivo + 1;
+      const tilesSiguiente = segmentosTilesZ17[indiceSiguiente].tiles;
+      for (const [clave, bitmap] of tilesZ17Residentes) {
+        if (!tilesSiguiente.has(clave)) {
+          bitmap.close();
+          tilesZ17Residentes.delete(clave);
+        }
+      }
+
+      if (mediaRecorder.state !== "paused") {
+        console.error(
+          `[segment-z17] *** ALERTA *** a punto de descargar/decodificar tiles del segmento ${indiceSiguiente} con recorder.state=${mediaRecorder.state} (debería ser "paused")`,
+        );
+      }
+      await prepararSegmentoTilesZ17(tilesSiguiente, tilesZ17Residentes, cacheTiles.contadores, indiceSiguiente);
+
+      mediaRecorder.resume();
+      console.log(`[segment-z17] segmento=${indiceSiguiente} resume() confirmado state=${mediaRecorder.state}`);
+
+      segmentoActivo = indiceSiguiente;
+      frameInicioSegmentoActivo = f + 1;
+      fSiguienteCorteIdx++;
+    }
+  }
+
+  if (segmentosTilesZ17.length > 0) {
+    console.log(
+      `[segment-z17] segmento=${segmentoActivo} frameInicio=${frameInicioSegmentoActivo} frameFin=${totalFrames} ` +
+        `fraccionInicio=${(frameInicioSegmentoActivo / totalFrames).toFixed(4)} fraccionFin=${(totalFrames / totalFrames).toFixed(4)}`,
+    );
   }
 
   // Instrumentación (ver criterio de éxito #3 del diseño Fase A/Fase B
