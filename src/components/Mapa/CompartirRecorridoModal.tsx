@@ -269,7 +269,11 @@ export function CompartirRecorridoModal({
       setVideoUrl(url);
     } catch (err) {
       console.error("[video-error]", err);
-      setErrorVideo("No se pudo generar el video en este navegador. Probá desde el celular.");
+      // DIAGNÓSTICO TEMPORAL: muestra el error real en pantalla porque en el
+      // celular no hay forma de ver la consola -- reemplazar por un mensaje
+      // amigable apenas se identifique la causa real.
+      const detalle = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+      setErrorVideo(`Error al generar video: ${detalle}`);
     } finally {
       setGenerandoVideo(false);
     }
