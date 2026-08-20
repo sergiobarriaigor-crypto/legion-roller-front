@@ -2242,23 +2242,31 @@ function dibujarEtiquetaSector(
       }
     : { x: cx, y: cy };
 
+  // Transformación inversa localizada: la posición (nuevo.x/nuevo.y, y todo
+  // el cálculo de clamping de arriba) queda EXACTAMENTE igual que antes --
+  // solo el dibujo de acá para abajo pasa a un origen local (0,0) escalado
+  // por 1/escalaAmbiente, para que la caja/fuente/borde/sombra mantengan un
+  // tamaño físico constante en pantalla sin importar camara.escala.
+  const escalaAmbiente = Math.hypot(t.a, t.b);
   ctx.save();
+  ctx.translate(nuevo.x, nuevo.y);
+  ctx.scale(1 / escalaAmbiente, 1 / escalaAmbiente);
   ctx.globalAlpha = alpha;
   ctx.shadowColor = "rgba(0,0,0,0.6)";
   ctx.shadowBlur = 8;
   ctx.fillStyle = "rgba(13,10,6,0.8)";
-  trazarRectRedondeado(ctx, nuevo.x - anchoCaja / 2, nuevo.y - altoCaja / 2, anchoCaja, altoCaja, altoCaja / 2);
+  trazarRectRedondeado(ctx, -anchoCaja / 2, -altoCaja / 2, anchoCaja, altoCaja, altoCaja / 2);
   ctx.fill();
   ctx.shadowColor = "transparent";
   ctx.shadowBlur = 0;
 
-  trazarRectRedondeado(ctx, nuevo.x - anchoCaja / 2, nuevo.y - altoCaja / 2, anchoCaja, altoCaja, altoCaja / 2);
+  trazarRectRedondeado(ctx, -anchoCaja / 2, -altoCaja / 2, anchoCaja, altoCaja, altoCaja / 2);
   ctx.strokeStyle = DORADO_BORDE;
   ctx.lineWidth = 1.2;
   ctx.stroke();
 
   ctx.fillStyle = DORADO;
-  ctx.fillText(texto, nuevo.x, nuevo.y + 1);
+  ctx.fillText(texto, 0, 1);
   ctx.restore();
 
   return nuevo;
@@ -2278,19 +2286,30 @@ function colorPorVelocidad(kmh: number, kmhReferencia: number): string {
 }
 
 function dibujarPunto(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, color: string, resplandor = false) {
+  // Transformación inversa localizada (ver dibujarEtiquetaSector): cx/cy
+  // siguen siendo la posición geográfica real; todo lo que se dibuja abajo
+  // queda relativo a un origen local (0,0) escalado por 1/escalaAmbiente,
+  // así el radio/borde/resplandor mantienen tamaño físico constante en
+  // pantalla sin importar camara.escala.
+  const t = ctx.getTransform();
+  const escalaAmbiente = Math.hypot(t.a, t.b);
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(1 / escalaAmbiente, 1 / escalaAmbiente);
   if (resplandor) {
     ctx.save();
     ctx.shadowColor = color;
     ctx.shadowBlur = 8;
   }
   ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
   ctx.fillStyle = color;
   ctx.fill();
   ctx.lineWidth = 3;
   ctx.strokeStyle = "#0d0a06";
   ctx.stroke();
   if (resplandor) ctx.restore();
+  ctx.restore();
 }
 
 // pulso (0 por defecto = estado normal ya asentado): al revelarse la marca
@@ -2299,11 +2318,22 @@ function dibujarPunto(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: 
 // un "ping" real, no un marcador estático -- y después queda en su estado
 // fijo (punto + resplandor + casilla) el resto del video.
 function dibujarMarcaVelMax(ctx: CanvasRenderingContext2D, cx: number, cy: number, kmh: number, pulso = 0) {
+  // Transformación inversa localizada (ver dibujarEtiquetaSector): cx/cy
+  // siguen siendo la posición geográfica real; todo lo que sigue queda
+  // relativo a un origen local (0,0) escalado por 1/escalaAmbiente, para
+  // que anillo/punto/caja/texto mantengan tamaño físico constante en
+  // pantalla sin importar camara.escala.
+  const t = ctx.getTransform();
+  const escalaAmbiente = Math.hypot(t.a, t.b);
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(1 / escalaAmbiente, 1 / escalaAmbiente);
+
   if (pulso > 0) {
     ctx.save();
     ctx.globalAlpha = Math.max(0, 1 - pulso) * 0.6;
     ctx.beginPath();
-    ctx.arc(cx, cy, 9 + pulso * 30, 0, Math.PI * 2);
+    ctx.arc(0, 0, 9 + pulso * 30, 0, Math.PI * 2);
     ctx.strokeStyle = DORADO;
     ctx.lineWidth = 3;
     ctx.stroke();
@@ -2314,7 +2344,7 @@ function dibujarMarcaVelMax(ctx: CanvasRenderingContext2D, cx: number, cy: numbe
   ctx.shadowColor = DORADO;
   ctx.shadowBlur = 12;
   ctx.beginPath();
-  ctx.arc(cx, cy, 8, 0, Math.PI * 2);
+  ctx.arc(0, 0, 8, 0, Math.PI * 2);
   ctx.fillStyle = DORADO;
   ctx.fill();
   ctx.lineWidth = 2.5;
@@ -2329,44 +2359,57 @@ function dibujarMarcaVelMax(ctx: CanvasRenderingContext2D, cx: number, cy: numbe
   ctx.shadowColor = "rgba(0,0,0,0.75)";
   ctx.shadowBlur = 5;
   ctx.fillStyle = "rgba(13,10,6,0.88)";
-  dibujarRectRedondeado(ctx, cx + 14, cy - 16, ancho, 32, 16);
+  dibujarRectRedondeado(ctx, 14, -16, ancho, 32, 16);
   ctx.restore();
   ctx.strokeStyle = DORADO_BORDE;
   ctx.lineWidth = 1.4;
-  trazarRectRedondeado(ctx, cx + 14, cy - 16, ancho, 32, 16);
+  trazarRectRedondeado(ctx, 14, -16, ancho, 32, 16);
   ctx.stroke();
   ctx.fillStyle = DORADO;
   ctx.textAlign = "left";
   ctx.textBaseline = "alphabetic";
-  ctx.fillText(texto, cx + 28, cy + 6);
+  ctx.fillText(texto, 28, 6);
+  ctx.restore();
 }
 
 // Pin circular con la foto del usuario clavado en un punto del mapa (estilo
 // Relive/Strava) -- un triángulo apuntador + la foto recortada en círculo.
 function dibujarPinFoto(ctx: CanvasRenderingContext2D, fotoImg: HTMLImageElement, cx: number, cyPunta: number, radio: number) {
-  const cyCentro = cyPunta - radio - 6;
+  // Transformación inversa localizada (ver dibujarEtiquetaSector): cx/cyPunta
+  // siguen siendo la posición geográfica real (la punta del pin); todo lo
+  // que sigue queda relativo a un origen local (0,0) escalado por
+  // 1/escalaAmbiente, para que el pin mantenga tamaño físico constante en
+  // pantalla sin importar camara.escala.
+  const t = ctx.getTransform();
+  const escalaAmbiente = Math.hypot(t.a, t.b);
+  ctx.save();
+  ctx.translate(cx, cyPunta);
+  ctx.scale(1 / escalaAmbiente, 1 / escalaAmbiente);
+
+  const cyCentro = -radio - 6;
   ctx.beginPath();
-  ctx.moveTo(cx, cyPunta);
-  ctx.lineTo(cx - 8, cyCentro + radio - 4);
-  ctx.lineTo(cx + 8, cyCentro + radio - 4);
+  ctx.moveTo(0, 0);
+  ctx.lineTo(-8, cyCentro + radio - 4);
+  ctx.lineTo(8, cyCentro + radio - 4);
   ctx.closePath();
   ctx.fillStyle = "#0d0a06";
   ctx.fill();
 
   ctx.save();
   ctx.beginPath();
-  ctx.arc(cx, cyCentro, radio, 0, Math.PI * 2);
+  ctx.arc(0, cyCentro, radio, 0, Math.PI * 2);
   ctx.fillStyle = "#0d0a06";
   ctx.fill();
   ctx.clip();
-  dibujarImagenCover(ctx, fotoImg, cx - radio, cyCentro - radio, radio * 2, radio * 2);
+  dibujarImagenCover(ctx, fotoImg, -radio, cyCentro - radio, radio * 2, radio * 2);
   ctx.restore();
 
   ctx.beginPath();
-  ctx.arc(cx, cyCentro, radio, 0, Math.PI * 2);
+  ctx.arc(0, cyCentro, radio, 0, Math.PI * 2);
   ctx.strokeStyle = DORADO_BORDE;
   ctx.lineWidth = 2.5;
   ctx.stroke();
+  ctx.restore();
 }
 
 // Dibuja una imagen recortándola (nunca deformándola) para cubrir todo el
@@ -2598,8 +2641,12 @@ function dibujarCuadroVideo(
 
   // El trazo se dibuja tramo a tramo (no una sola polyline) para poder
   // colorear cada segmento según la velocidad real ahí -- más dorado/claro
-  // en los tramos rápidos, más bronce/oscuro en los lentos.
-  ctx.lineWidth = 6;
+  // en los tramos rápidos, más bronce/oscuro en los lentos. El grosor se
+  // compensa por camara.escala (transformación activa en este bloque, ver
+  // el ctx.scale de más arriba) para que se vea constante en pantalla --
+  // las coordenadas x/y de cada segmento NO se tocan, siguen en espacio de
+  // mapa como siempre.
+  ctx.lineWidth = 6 / camara.escala;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   for (let k = 0; k < frame.puntosTrazo.length - 1; k++) {
