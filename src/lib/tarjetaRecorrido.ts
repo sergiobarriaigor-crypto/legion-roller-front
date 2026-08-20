@@ -367,13 +367,14 @@ async function cargarTileComoImagen(
 // para el mosaico anterior -- sin este cache, generarMapaEnZoom lo vuelve a
 // pedir por red cada vez. Guarda la Promise (no la Image ya resuelta) para
 // que si dos mosaicos vecinos necesitan el mismo tile EN PARALELO (ver
-// mantenerVentana, que dispara varias descargas a la vez), el segundo
-// reutilice el mismo fetch en vuelo en vez de duplicarlo.
+// prepararTodosLosMosaicosSeguimiento, que puede generar varios mosaicos a
+// la vez -- ver CONCURRENCIA_PREPARACION_SEGUIMIENTO), el segundo reutilice
+// el mismo fetch en vuelo en vez de duplicarlo.
 //
 // Solo se usa para la capa satelital de los mosaicos de seguimiento (ver
 // generarMapaEnZoom): la clave es nada más "zoom/x/y" porque esta cache
-// nunca recibe tiles de la capa de etiquetas (asegurarDescarga siempre pide
-// incluirEtiquetas=false) ni tiles del panorámico (generarMapaReal/
+// nunca recibe tiles de la capa de etiquetas (los mosaicos de seguimiento
+// siempre piden incluirEtiquetas=false) ni tiles del panorámico (generarMapaReal/
 // generarMapaDetallado no reciben cache) -- si algún día se cachea más de
 // una capa, la clave necesitaría incluir cuál.
 interface CacheTilesLRU {
@@ -435,12 +436,33 @@ interface MapaGenerado {
   centroPxY: number;
 }
 
+// Variante de MapaGenerado para el pipeline de mosaicos de seguimiento (ver
+// Fase A / prepararTodosLosMosaicosSeguimiento): en vez de PNG codificado en
+// un dataUrl (que después hay que decodificar de nuevo con new Image()),
+// entrega directamente un ImageBitmap listo para ctx.drawImage() -- se
+// elimina por completo el viaje canvas -> toDataURL() -> string base64 ->
+// Image -> decode que causaba los bloqueos de varios segundos en el loop de
+// render (ver [render-diag] de la ronda de diagnóstico anterior).
+interface MosaicoBitmap {
+  bitmap: ImageBitmap;
+  zoom: number;
+  centroPxX: number;
+  centroPxY: number;
+}
+
 // Pide y compone los tiles de un zoom/centro ya decididos por el llamador
 // (generarMapaReal calcula el zoom que hace entrar TODO el recorrido;
 // generarMapaDetallado, más abajo, pide el mismo recuadro geográfico un
 // zoom más arriba, con el doble de lienzo, para tener detalle real donde
 // antes solo había un acercamiento digital). Mismo criterio de "nunca
 // romper la tarjeta/video": ante cualquier falla devuelve null.
+// Dos formatos de salida posibles (ver diseño Fase A / Fase B aprobado):
+// "dataUrl" (por defecto, comportamiento de siempre -- PNG codificado, para
+// generarMapaReal/generarMapaDetallado) o "bitmap" (exclusivo del pipeline
+// de mosaicos de seguimiento -- entrega un ImageBitmap ya decodificado,
+// listo para dibujar, sin pasar por toDataURL()/new Image()). Sobrecargas
+// para que el tipo de retorno quede resuelto en tiempo de compilación según
+// qué `formato` se pasa, sin castear en cada llamador.
 async function generarMapaEnZoom(
   centroPxX: number,
   centroPxY: number,
@@ -449,23 +471,61 @@ async function generarMapaEnZoom(
   altoDestino: number,
   incluirEtiquetas: boolean,
   maxTiles: number,
-  // Solo lo usan los mosaicos de seguimiento (ver asegurarDescarga) -- la
-  // panorámica (generarMapaReal/generarMapaDetallado) sigue sin cache,
+  cache?: CacheTilesLRU | null,
+  etiquetaDiagnostico?: string | null,
+  escalaSalida?: number,
+  formato?: "dataUrl",
+): Promise<MapaGenerado | null>;
+async function generarMapaEnZoom(
+  centroPxX: number,
+  centroPxY: number,
+  zoom: number,
+  anchoDestino: number,
+  altoDestino: number,
+  incluirEtiquetas: boolean,
+  maxTiles: number,
+  cache: CacheTilesLRU | null,
+  etiquetaDiagnostico: string | null,
+  escalaSalida: number,
+  formato: "bitmap",
+): Promise<MosaicoBitmap | null>;
+async function generarMapaEnZoom(
+  centroPxX: number,
+  centroPxY: number,
+  zoom: number,
+  anchoDestino: number,
+  altoDestino: number,
+  incluirEtiquetas: boolean,
+  maxTiles: number,
+  // Solo lo usan los mosaicos de seguimiento (ver prepararTodosLosMosaicosSeguimiento)
+  // -- la panorámica (generarMapaReal/generarMapaDetallado) sigue sin cache,
   // exactamente como antes, al no pasar este argumento.
   cache: CacheTilesLRU | null = null,
-  // Instrumentación temporal (ver asegurarDescarga): si viene una etiqueta
-  // ("indice=N"), loguea inicio/resultado de ESTE mosaico puntual -- la
-  // panorámica no pasa etiqueta, así que sigue muda como antes.
+  // Instrumentación temporal (ver prepararTodosLosMosaicosSeguimiento): si
+  // viene una etiqueta ("indice=N"), loguea inicio/resultado de ESTE
+  // mosaico puntual -- la panorámica no pasa etiqueta, así que sigue muda
+  // como antes.
   etiquetaDiagnostico: string | null = null,
-): Promise<MapaGenerado | null> {
+  // Cuántos píxeles físicos del canvas por píxel lógico de destino -- por
+  // defecto ESCALA (retina, 2x), igual que siempre. Los mosaicos de
+  // seguimiento pasan ESCALA_SALIDA_MOSAICO_SEGUIMIENTO (1) acá: los tiles
+  // fuente son 256px reales sin variante "@2x", así que estirarlos 2x en
+  // este paso no agregaba detalle real, solo costo (memoria, toDataURL,
+  // decode) -- ver diseño aprobado.
+  escalaSalida: number = ESCALA,
+  // "dataUrl" (por defecto) codifica a PNG como siempre. "bitmap" devuelve
+  // un ImageBitmap directamente dibujable, sin tocar toDataURL()/Image en
+  // absoluto -- ver el branch al final de esta función.
+  formato: "dataUrl" | "bitmap" = "dataUrl",
+): Promise<MapaGenerado | MosaicoBitmap | null> {
   // Diagnóstico temporal (investigación de por qué un video a 30fps termina
   // con ~80% de cuadros duplicados): separa descarga/red, drawImage de
   // tiles y toDataURL en tres mediciones independientes, cada una con
   // performance.now() ABSOLUTO (no relativo al loop de render) para poder
   // cruzarlas directo contra los [render-diag] *** STALL *** del loop
   // principal, que usa el mismo reloj. tEtiqueta ya trae "indice=N" (ver
-  // asegurarDescarga) para los mosaicos de seguimiento; "sin-etiqueta" para
-  // la panorámica/detallado, que no lo pasan.
+  // prepararTodosLosMosaicosSeguimiento) para los mosaicos de seguimiento;
+  // "sin-etiqueta" para la panorámica/detallado, que no lo pasan.
   const tEtiqueta = etiquetaDiagnostico ?? "sin-etiqueta";
   try {
     const tiles = calcularTilesNecesarios(centroPxX, centroPxY, zoom, anchoDestino, altoDestino);
@@ -523,25 +583,28 @@ async function generarMapaEnZoom(
     // no corresponde" reportado, independiente de si el mosaico "existe" o
     // no (acá SÍ existe, solo tiene huecos).
     const canvas = document.createElement("canvas");
-    canvas.width = anchoDestino * ESCALA;
-    canvas.height = altoDestino * ESCALA;
+    canvas.width = anchoDestino * escalaSalida;
+    canvas.height = altoDestino * escalaSalida;
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
     ctx.fillStyle = "#1a1108";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    // tiles.forEach y canvas.toDataURL() son SÍNCRONOS y corren en el mismo
-    // hilo que el loop de dibujarFrame -- aunque asegurarDescarga/
-    // mantenerVentana se disparan sin await desde dibujarFrame, el trabajo
-    // síncrono de acá adentro igual bloquea ese mismo hilo mientras se
-    // ejecuta (JS es de un solo hilo). Se mide cada paso por separado para
-    // saber cuál pesa más -- warn (en vez de log) cuando supera 50ms, para
-    // que salte a la vista en medio de un log largo.
+    // tiles.forEach, canvas.toDataURL() y createImageBitmap() son trabajo
+    // pesado que corre en el mismo hilo que el loop de dibujarFrame cuando
+    // se dispara sin await desde ahí -- por eso, en el pipeline de
+    // seguimiento (Fase A / prepararTodosLosMosaicosSeguimiento), TODO esto
+    // se resuelve antes de arrancar MediaRecorder, no durante la grabación
+    // (ver diseño aprobado). Se mide cada paso por separado para saber cuál
+    // pesa más -- warn (en vez de log) cuando supera 50ms, para que salte a
+    // la vista en medio de un log largo.
     const tDibujoInicio = performance.now();
     tiles.forEach((t, i) => {
       const base = imagenesBase[i];
-      if (base) ctx.drawImage(base, t.destX * ESCALA, t.destY * ESCALA, TAM_TILE * ESCALA, TAM_TILE * ESCALA);
+      if (base)
+        ctx.drawImage(base, t.destX * escalaSalida, t.destY * escalaSalida, TAM_TILE * escalaSalida, TAM_TILE * escalaSalida);
       const etiquetas = imagenesEtiquetas[i];
-      if (etiquetas) ctx.drawImage(etiquetas, t.destX * ESCALA, t.destY * ESCALA, TAM_TILE * ESCALA, TAM_TILE * ESCALA);
+      if (etiquetas)
+        ctx.drawImage(etiquetas, t.destX * escalaSalida, t.destY * escalaSalida, TAM_TILE * escalaSalida, TAM_TILE * escalaSalida);
     });
     const tDibujoMs = performance.now() - tDibujoInicio;
     (tDibujoMs > 50 ? console.warn : console.log)(
@@ -553,6 +616,16 @@ async function generarMapaEnZoom(
         `[mosaico] ${etiquetaDiagnostico} generado OK -- tiles ${cargados}/${tiles.length} cargados (${fallidos} fallidos), canvas=${canvas.width}x${canvas.height}`,
       );
       if (cache) cache.contadores.mosaicosOK++;
+    }
+
+    if (formato === "bitmap") {
+      const tBitmapInicio = performance.now();
+      const bitmap = await createImageBitmap(canvas);
+      const tBitmapMs = performance.now() - tBitmapInicio;
+      (tBitmapMs > 50 ? console.warn : console.log)(
+        `[render-diag] ${tEtiqueta} createImageBitmap (${canvas.width}x${canvas.height}) = ${tBitmapMs.toFixed(1)}ms tAbsMs=${performance.now().toFixed(0)}`,
+      );
+      return { bitmap, zoom, centroPxX, centroPxY };
     }
 
     const tDataUrlInicio = performance.now();
@@ -693,6 +766,22 @@ const FACTOR_COBERTURA_MOSAICO = 2.6;
 // completa.
 const ESCALA_SEGUIMIENTO = 1;
 
+// Escala de SALIDA (retina) exclusiva de los mosaicos de seguimiento -- NO
+// confundir con ESCALA_SEGUIMIENTO de arriba (esa es "K", el factor lógico
+// de acercamiento de cámara). Esta es cuántos píxeles físicos del canvas
+// del mosaico corresponden a cada píxel lógico de ZOOM_SEGUIMIENTO (se pasa
+// como `escalaSalida` a generarMapaEnZoom, ver ese comentario). La global
+// ESCALA=2 (retina) tiene sentido para la tarjeta estática y la panorámica,
+// pero acá los tiles fuente son 256px reales SIN variante "@2x" -- ESCALA=2
+// solo estiraba esos mismos píxeles al doble dentro del canvas del mosaico
+// (drawImage 2x), y ese recorte se vuelve a reescalar una segunda vez al
+// dibujarse en el canvas final del video (ver calcularRecorteMosaico) --
+// dos remuestreos en cadena sin detalle real ganado en ninguno. Con 1: un
+// solo remuestreo (mosaico -> video), un cuarto de los píxeles por mosaico
+// (memoria, drawImage, y sobre todo createImageBitmap/toDataURL, todos
+// escalan con el total de píxeles) -- ver diseño Fase A aprobado.
+const ESCALA_SALIDA_MOSAICO_SEGUIMIENTO = 1;
+
 // Del semirradio útil del mosaico (mitad del lado más chico del lienzo, en
 // píxeles de ZOOM_SEGUIMIENTO), qué fracción es "zona segura" (un solo
 // mosaico, sin crossfade) y cuánto más se extiende la banda de transición
@@ -713,21 +802,13 @@ const FRACCION_BANDA_TRANSICION = 0.15;
 const MAX_TILES_MOSAICO_SEGUIMIENTO = 150;
 // Tope del cache temporal de tiles de seguimiento (ver CacheTilesLRU) --
 // dimensionado para cubrir el mosaico activo completo (~112-126 tiles) más
-// varios vecinos con alto solape geográfico (ver VENTANA_DESCARGA_ADELANTE
-// más abajo), sin crecer sin límite en rutas largas: memoria acotada
-// (~300 tiles × ~0.25 MB/tile decodificado ≈ 75 MB) constante sin importar
-// si la ruta son 5 km o 70 km.
+// varios vecinos con alto solape geográfico (mosaicos consecutivos de
+// FACTOR_COBERTURA_MOSAICO=2.6 comparten buena parte de sus tiles), sin
+// crecer sin límite en rutas largas: memoria acotada (~300 tiles ×
+// ~0.25 MB/tile decodificado ≈ 75 MB) constante sin importar si la ruta son
+// 5 km o 70 km. Ver prepararTodosLosMosaicosSeguimiento (Fase A) para cómo
+// se recorre la cadena completa de mosaicos reutilizando este cache.
 const LIMITE_CACHE_TILES_SEGUIMIENTO = 300;
-
-// Ventanas de memoria acotadas, independientes de cuántos mosaicos tenga la
-// ruta completa (ver comentario largo en EstadoVentanaMosaicos): cuántos
-// mosaicos por delante del actual se mantienen DESCARGADOS (dataURL, sin
-// decodificar -- liviano, solo para no depender de la red justo en el
-// instante del cambio) vs. DECODIFICADOS (Image real en memoria, listos
-// para dibujar de inmediato).
-const VENTANA_DESCARGA_ADELANTE = 3;
-const VENTANA_DESCARGA_ATRAS = 1;
-const VENTANA_DECODIFICADA_ADELANTE = 1;
 
 interface MosaicoSeguimientoMeta {
   centroPxX: number; // en ZOOM_SEGUIMIENTO (lógico, sin ESCALA retina)
@@ -927,8 +1008,8 @@ interface RecorteMosaico {
 
 // Ventana de recorte real dentro del mosaico -- source crop, no reescalado
 // del mosaico completo. Todo en píxeles LÓGICOS de ZOOM_SEGUIMIENTO hasta
-// el último paso, donde recién se multiplica por ESCALA (retina, 2x) para
-// obtener las coordenadas sobre la imagen FÍSICA que espera drawImage.
+// el último paso, donde recién se multiplica por ESCALA_SALIDA_MOSAICO_SEGUIMIENTO
+// para obtener las coordenadas sobre la imagen FÍSICA que espera drawImage.
 // `escalaSeguimiento` es camara.escala tal cual (ya vale factor×ESCALA_SEGUIMIENTO
 // durante el seguimiento -- ver estadoCamara), así que la ventana lógica
 // (ANCHO_VIDEO/escalaSeguimiento) quiere decir exactamente lo mismo acá que
@@ -947,10 +1028,10 @@ function calcularRecorteMosaico(
   const localX = camaraZ17.x - anchoVentanaZ17 / 2 - origenMosaicoX;
   const localY = camaraZ17.y - altoVentanaZ17 / 2 - origenMosaicoY;
   return {
-    sx: localX * ESCALA,
-    sy: localY * ESCALA,
-    sWidth: anchoVentanaZ17 * ESCALA,
-    sHeight: altoVentanaZ17 * ESCALA,
+    sx: localX * ESCALA_SALIDA_MOSAICO_SEGUIMIENTO,
+    sy: localY * ESCALA_SALIDA_MOSAICO_SEGUIMIENTO,
+    sWidth: anchoVentanaZ17 * ESCALA_SALIDA_MOSAICO_SEGUIMIENTO,
+    sHeight: altoVentanaZ17 * ESCALA_SALIDA_MOSAICO_SEGUIMIENTO,
   };
 }
 
@@ -962,190 +1043,178 @@ function calcularRecorteMosaico(
 // calcularMosaicosSeguimiento esto no debería activarse en operación
 // normal; es la red de seguridad para el caso límite.
 function recorteValido(r: RecorteMosaico, mosaico: MosaicoSeguimientoMeta): boolean {
-  return r.sx >= 0 && r.sy >= 0 && r.sx + r.sWidth <= mosaico.anchoPx * ESCALA && r.sy + r.sHeight <= mosaico.altoPx * ESCALA;
+  return (
+    r.sx >= 0 &&
+    r.sy >= 0 &&
+    r.sx + r.sWidth <= mosaico.anchoPx * ESCALA_SALIDA_MOSAICO_SEGUIMIENTO &&
+    r.sy + r.sHeight <= mosaico.altoPx * ESCALA_SALIDA_MOSAICO_SEGUIMIENTO
+  );
 }
 
-// Estado vivo de los mosaicos de seguimiento durante la generación: separa
-// a propósito "descargado" (dataURL ya resuelto, liviano, comprimido) de
-// "decodificado" (Image real, lista para dibujar, pesada en RAM sin
-// comprimir) -- son dos ventanas de tamaño fijo, independientes de cuántos
-// mosaicos tenga la ruta completa, así una ruta de 70 km no consume más
-// memoria en ningún momento dado que una de 5 km, solo tarda más en total
-// (más mosaicos en la cadena, no más memoria simultánea).
+// Estado vivo de los mosaicos de seguimiento: se prepara COMPLETO en Fase A
+// (ver prepararTodosLosMosaicosSeguimiento), antes de arrancar
+// MediaRecorder -- por eso ya no hace falta separar "descargado" (dataURL)
+// de "decodificado" (Image) ni una ventana de memoria deslizante en vivo:
+// cada índice pasa una sola vez por generarMapaEnZoom(..., "bitmap") y su
+// resultado (ImageBitmap, ya directamente dibujable) queda en `imagenes`
+// hasta el final de la generación de este video. Ver diseño aprobado --
+// "no asumir que el preload completo es la solución definitiva para rutas
+// arbitrariamente largas": esto es correcto para esta primera prueba
+// (validar la hipótesis con una ruta de referencia de ~16 mosaicos), no una
+// arquitectura final para rutas muy largas (ver el diagnóstico de memoria
+// cruda estimada en prepararTodosLosMosaicosSeguimiento).
 interface EstadoVentanaMosaicos {
   metas: MosaicoSeguimientoMeta[];
-  dataUrls: (string | null)[];
-  imagenes: (HTMLImageElement | null)[];
-  // Promesa de la descarga real en curso para cada índice (no solo un flag)
-  // -- así una segunda llamada concurrente a asegurarDescarga() para el
-  // MISMO índice puede esperar la misma descarga en vez de asumir que ya
-  // terminó (ver asegurarDescarga). Sin esto, asegurarDecodificado() podía
-  // leer dataUrls[indice] todavía null cuando dos llamadas para el mismo
-  // índice arrancaban en el mismo Promise.all (ver mantenerVentana).
-  descargando: Map<number, Promise<void>>;
+  imagenes: (ImageBitmap | null)[];
   // Cache temporal de tiles, exclusivo de ESTA generación de video (ver
-  // CacheTilesLRU) -- vive acá para que asegurarDescarga lo tenga a mano sin
-  // pasarlo como parámetro suelto por todos lados.
+  // CacheTilesLRU) -- vive acá para que prepararTodosLosMosaicosSeguimiento
+  // lo tenga a mano sin pasarlo como parámetro suelto por todos lados.
   cache: CacheTilesLRU;
-  // Diagnóstico temporal (investigación de congelamientos, ver [render-diag]):
-  // qué índices tienen ahora mismo una generación REAL en curso (mutado por
-  // asegurarDescarga alrededor de su llamada a generarMapaEnZoom) -- el loop
-  // principal de generarVideoRecorrido lo lee al detectar un *** STALL ***
-  // para reportar "cuando sea posible" qué mosaico se estaba generando en
-  // ese instante. Set (no un solo número) porque puede haber más de una
-  // generación real en paralelo dentro de un mismo mantenerVentana().
+  // Diagnóstico (ver [render-diag]): qué índices tienen ahora mismo una
+  // generación REAL en curso (mutado por prepararTodosLosMosaicosSeguimiento
+  // alrededor de cada llamada a generarMapaEnZoom). Durante Fase A puede
+  // tener varios índices a la vez, según CONCURRENCIA_PREPARACION_SEGUIMIENTO;
+  // una vez terminada Fase A queda vacío por el resto de la generación -- el
+  // loop principal (Fase B) lo sigue logueando en cada *** STALL ***, y ahí
+  // debería mostrar siempre "ninguno" (ver criterio de éxito #2 del diseño
+  // aprobado: ninguna generación pendiente al arrancar MediaRecorder).
   mosaicosEnGeneracion: Set<number>;
 }
 
 function crearVentanaMosaicos(metas: MosaicoSeguimientoMeta[], cache: CacheTilesLRU): EstadoVentanaMosaicos {
   return {
     metas,
-    dataUrls: metas.map(() => null),
     imagenes: metas.map(() => null),
-    descargando: new Map(),
     cache,
     mosaicosEnGeneracion: new Set(),
   };
 }
 
-// "Descargar" acá es pedir los tiles y componer el mosaico (reutilizando
-// generarMapaEnZoom tal cual, solo con el centro/zoom de este mosaico en vez
-// del de toda la ruta) -- el resultado es un dataURL, todavía sin decodificar
-// a Image. `descargando` evita pedir el mismo índice dos veces en paralelo
-// si dos llamadas a mantenerVentana se superponen. Pasa estado.cache para
-// que tiles ya descargados por un mosaico vecino (alto solape geográfico
-// entre mosaicos consecutivos, ver calcularMosaicosSeguimiento) no se vuelvan
-// a pedir por red.
-async function asegurarDescarga(estado: EstadoVentanaMosaicos, indice: number): Promise<void> {
-  if (indice < 0 || indice >= estado.metas.length) return;
-  if (estado.dataUrls[indice] !== null) return;
-  // Si ya hay una descarga real en curso para este índice (disparada por
-  // otra llamada concurrente -- p.ej. la del propio asegurarDecodificado()
-  // dentro del mismo Promise.all de mantenerVentana), esperar ESA misma
-  // promesa en vez de asumir que ya terminó y devolver de una. Sin esto,
-  // el segundo llamador seguía de largo con dataUrls[indice] todavía null.
-  const enCurso = estado.descargando.get(indice);
-  if (enCurso) {
-    await enCurso;
-    return;
-  }
-  // Se registra la promesa en el Map ANTES de cualquier punto de espera
-  // real (todo lo de acá arriba es síncrono) -- así ninguna llamada
-  // concurrente que entre en el mismo tick puede colarse a iniciar una
-  // segunda descarga real para el mismo índice.
-  const promesa = (async () => {
-    estado.mosaicosEnGeneracion.add(indice);
-    try {
-      const meta = estado.metas[indice];
-      const generado = await generarMapaEnZoom(
-        meta.centroPxX,
-        meta.centroPxY,
-        ZOOM_SEGUIMIENTO,
-        meta.anchoPx,
-        meta.altoPx,
-        false,
-        MAX_TILES_MOSAICO_SEGUIMIENTO,
-        estado.cache,
-        `indice=${indice}`,
-      );
-      estado.dataUrls[indice] = generado?.dataUrl ?? null;
-    } finally {
-      estado.descargando.delete(indice);
-      estado.mosaicosEnGeneracion.delete(indice);
-    }
-  })();
-  estado.descargando.set(indice, promesa);
-  await promesa;
-}
+// Cuántos mosaicos completos (red + composición + createImageBitmap) se
+// generan en simultáneo durante Fase A. Valor inicial conservador (ver
+// diseño aprobado) -- cada mosaico ya dispara su propio Promise.all de
+// ~100-150 tiles, así que subir esto multiplica cuántas ráfagas de tiles
+// compiten a la vez por red/CPU; 2 es un punto de partida a validar con
+// datos reales de esta primera prueba, no un número definitivo.
+const CONCURRENCIA_PREPARACION_SEGUIMIENTO = 2;
 
-async function asegurarDecodificado(estado: EstadoVentanaMosaicos, indice: number): Promise<void> {
-  if (indice < 0 || indice >= estado.metas.length) return;
-  if (estado.imagenes[indice] !== null) return;
-  await asegurarDescarga(estado, indice);
-  const url = estado.dataUrls[indice];
-  if (!url) return;
-  // Diagnóstico temporal (investigación de congelamientos, ver [render-diag]):
-  // new Image() + onload es async, pero si el navegador decodifica de forma
-  // eager/síncrona un data URL de varios MB esto puede seguir bloqueando el
-  // hilo principal un rato -- se mide igual que el resto de la cadena.
-  const tDecodeInicio = performance.now();
-  estado.imagenes[indice] = await cargarImagenOpcional(url);
-  const tDecodeMs = performance.now() - tDecodeInicio;
-  (tDecodeMs > 50 ? console.warn : console.log)(
-    `[render-diag] indice=${indice} decode de Image (onload) = ${tDecodeMs.toFixed(1)}ms tAbsMs=${performance.now().toFixed(0)}`,
+// Límite de referencia (MB) para la advertencia de memoria cruda estimada
+// de abajo -- NO es un tope real ni dispara ninguna estrategia nueva (sin
+// cache por lotes ni streaming todavía, ver diseño aprobado): solo deja
+// registrado el riesgo si una ruta particular excede este orden de
+// magnitud, para decidir con datos reales si hace falta una fase 2 de este
+// diseño.
+const LIMITE_REFERENCIA_MEMORIA_MOSAICOS_MB = 400;
+
+// Fase A del video de seguimiento: prepara TODOS los mosaicos de la ruta
+// (metas ya calculadas de antemano por calcularMosaicosSeguimiento -- no
+// dependen de tiempo real ni de la cámara) como ImageBitmap directamente
+// dibujables, con concurrencia acotada, ANTES de que el llamador arranque
+// canvas.captureStream()/MediaRecorder (ver generarVideoRecorridoInterno).
+//
+// Reemplaza por completo al esquema anterior de "ventana deslizante en
+// vivo" (mantenerVentana/asegurarDescarga/asegurarDecodificado/
+// liberarFueraDeVentana, eliminados) -- ver el diagnóstico [render-diag] de
+// la ronda anterior: ese esquema disparaba la descarga+composición+
+// toDataURL+decode de mosaicos SIN await desde dentro del loop de render, y
+// ese trabajo síncrono/pendiente bloqueaba el mismo hilo que
+// canvas.captureStream(fps) necesita para producir cuadros nuevos a tiempo
+// real, produciendo los cuadros duplicados y congelamientos reportados. Acá
+// no hay ningún loop de render corriendo todavía, así que no hay nada que
+// proteger de bloqueos -- el único costo de tardar más acá es que la
+// preparación total tarde más (aceptado explícitamente en el criterio de
+// éxito: "Fase A puede tardar lo que necesite").
+//
+// A propósito NO se llama a ninguna liberación de memoria (ver diseño
+// aprobado, "no usar liberarFueraDeVentana() durante esta primera prueba de
+// preload completo") -- todos los ImageBitmap generados quedan residentes
+// hasta el final de la generación del video. Ver el log de memoria cruda
+// estimada de abajo para el riesgo conocido en rutas muy largas.
+async function prepararTodosLosMosaicosSeguimiento(estado: EstadoVentanaMosaicos): Promise<void> {
+  const n = estado.metas.length;
+  if (n === 0) return;
+
+  const meta0 = estado.metas[0];
+  const anchoFisicoPx = meta0.anchoPx * ESCALA_SALIDA_MOSAICO_SEGUIMIENTO;
+  const altoFisicoPx = meta0.altoPx * ESCALA_SALIDA_MOSAICO_SEGUIMIENTO;
+  const bytesPorMosaico = anchoFisicoPx * altoFisicoPx * 4; // RGBA sin comprimir
+  const mbTotalEstimado = (bytesPorMosaico * n) / 1_048_576;
+  console.log(
+    `[fase-a] preparando ${n} mosaicos de seguimiento -- dimensiones=${anchoFisicoPx}x${altoFisicoPx}px ` +
+      `(~${(bytesPorMosaico / 1_048_576).toFixed(1)}MB c/u sin comprimir) concurrencia=${CONCURRENCIA_PREPARACION_SEGUIMIENTO} ` +
+      `memoriaCrudaEstimadaTotal≈${mbTotalEstimado.toFixed(1)}MB`,
   );
-  const img = estado.imagenes[indice];
-  if (img) {
-    console.log(`[mosaico] indice=${indice} decodificado -- naturalWidth=${img.naturalWidth} naturalHeight=${img.naturalHeight}`);
+  if (mbTotalEstimado > LIMITE_REFERENCIA_MEMORIA_MOSAICOS_MB) {
+    console.warn(
+      `[fase-a] riesgo de memoria -- la estimación (${mbTotalEstimado.toFixed(1)}MB) supera el límite de referencia ` +
+        `(${LIMITE_REFERENCIA_MEMORIA_MOSAICOS_MB}MB) para esta primera implementación de preload completo, sin cache ` +
+        `por lotes ni streaming todavía. Registrado como riesgo conocido, no se aplica ninguna estrategia nueva acá.`,
+    );
   }
+
+  const tFaseAInicio = performance.now();
+  let siguienteIndice = 0;
+  let enVuelo = 0;
+  let maxSimultaneos = 0;
+
+  async function trabajador(): Promise<void> {
+    while (siguienteIndice < n) {
+      const indice = siguienteIndice++;
+      enVuelo++;
+      maxSimultaneos = Math.max(maxSimultaneos, enVuelo);
+      estado.mosaicosEnGeneracion.add(indice);
+      const tMosaicoInicio = performance.now();
+      try {
+        const meta = estado.metas[indice];
+        const generado = await generarMapaEnZoom(
+          meta.centroPxX,
+          meta.centroPxY,
+          ZOOM_SEGUIMIENTO,
+          meta.anchoPx,
+          meta.altoPx,
+          false,
+          MAX_TILES_MOSAICO_SEGUIMIENTO,
+          estado.cache,
+          `indice=${indice}`,
+          ESCALA_SALIDA_MOSAICO_SEGUIMIENTO,
+          "bitmap",
+        );
+        estado.imagenes[indice] = generado?.bitmap ?? null;
+      } finally {
+        const tMosaicoMs = performance.now() - tMosaicoInicio;
+        console.log(`[fase-a] indice=${indice} listo en ${tMosaicoMs.toFixed(1)}ms tAbsMs=${performance.now().toFixed(0)}`);
+        estado.mosaicosEnGeneracion.delete(indice);
+        enVuelo--;
+      }
+    }
+  }
+
+  const trabajadores = Array.from({ length: Math.min(CONCURRENCIA_PREPARACION_SEGUIMIENTO, n) }, () => trabajador());
+  await Promise.all(trabajadores);
+
+  const tFaseAMs = performance.now() - tFaseAInicio;
+  console.log(
+    `[fase-a] preparación completa -- ${n} mosaicos, maxSimultaneos=${maxSimultaneos}, tiempoTotalMs=${tFaseAMs.toFixed(1)}`,
+  );
 }
 
-// Último mosaico que SÍ llegó a decodificar y mostrarse -- ver
-// seleccionarMosaico/liberarFueraDeVentana. Mientras el mosaico "actual"
-// (según la posición real de la cámara) todavía no decodificó, se sigue
-// mostrando este en su lugar, en vez de caer a la panorámica.
+// Último mosaico que SÍ llegó a prepararse y mostrarse -- ver
+// seleccionarMosaico. Mientras el mosaico "actual" (según la posición real
+// de la cámara) todavía no esté listo, se sigue mostrando este en su lugar,
+// en vez de caer a la panorámica. Con Fase A preparando todo de antemano
+// esto no debería activarse en operación normal -- sigue siendo la misma
+// red de seguridad que ya existía antes de este cambio.
 interface UltimoMosaicoValido {
   indice: number;
-  img: HTMLImageElement;
+  img: ImageBitmap;
   meta: MosaicoSeguimientoMeta;
-}
-
-// Libera lo que quedó fuera de la ventana (imágenes decodificadas primero,
-// que son lo más pesado; dataURLs con un margen un poco mayor hacia atrás,
-// por si un mosaico recién superado hiciera falta de nuevo por algún
-// reordenamiento -- en la práctica el índice solo avanza, nunca retrocede).
-// `indiceProtegido` (el último mosaico válido en uso como fallback, ver
-// seleccionarMosaico) queda EXCLUIDO de esta limpieza sin importar la
-// ventana -- si la cámara ya avanzó de índice pero la imagen nueva todavía
-// no decodificó, se sigue mostrando la protegida; liberarla acá la borraría
-// de memoria mientras todavía está en pantalla. Deja de estar protegida
-// sola, en la siguiente llamada, en cuanto el llamador actualiza cuál es el
-// "último válido" a uno más nuevo (ver dibujarFrame).
-function liberarFueraDeVentana(estado: EstadoVentanaMosaicos, indiceActual: number, indiceProtegido: number | null): void {
-  for (let i = 0; i < estado.metas.length; i++) {
-    if (i === indiceProtegido) continue;
-    if (i < indiceActual - VENTANA_DECODIFICADA_ADELANTE || i > indiceActual + VENTANA_DECODIFICADA_ADELANTE + 1) {
-      estado.imagenes[i] = null;
-    }
-    if (i < indiceActual - VENTANA_DESCARGA_ATRAS || i > indiceActual + VENTANA_DESCARGA_ADELANTE) {
-      estado.dataUrls[i] = null;
-    }
-  }
-}
-
-// Mantiene la ventana alrededor de indiceActual: dispara descargas (rango
-// más amplio, por delante) y decodificaciones (rango más angosto, lo justo
-// para dibujar ya mismo y el próximo cambio) en paralelo, y libera lo que
-// quedó atrás (salvo indiceProtegido, ver liberarFueraDeVentana). Se llama
-// tanto antes de arrancar MediaRecorder (con await, para no empezar a
-// grabar sin lo mínimo listo) como en segundo plano durante la grabación
-// (sin await, ver generarVideoRecorrido) cada vez que el índice activo
-// avanza.
-async function mantenerVentana(estado: EstadoVentanaMosaicos, indiceActual: number, indiceProtegido: number | null): Promise<void> {
-  liberarFueraDeVentana(estado, indiceActual, indiceProtegido);
-  const tareas: Promise<void>[] = [];
-  const finDescarga = Math.min(estado.metas.length - 1, indiceActual + VENTANA_DESCARGA_ADELANTE);
-  for (let i = indiceActual; i <= finDescarga; i++) tareas.push(asegurarDescarga(estado, i));
-  const finDecodificado = Math.min(estado.metas.length - 1, indiceActual + VENTANA_DECODIFICADA_ADELANTE);
-  for (let i = indiceActual; i <= finDecodificado; i++) tareas.push(asegurarDecodificado(estado, i));
-  // Diagnóstico temporal (investigación de congelamientos, ver [render-diag]):
-  // esto mide espera TOTAL (red real + trabajo síncrono), no solo bloqueo de
-  // hilo -- útil para correlacionar con los cortes observados, pero un valor
-  // alto acá no prueba por sí solo que el hilo principal estuvo bloqueado
-  // (ver los logs de tiles.forEach/toDataURL/decodificado para esa parte).
-  const tVentanaInicio = performance.now();
-  await Promise.all(tareas);
-  const tVentanaMs = performance.now() - tVentanaInicio;
-  (tVentanaMs > 50 ? console.warn : console.log)(
-    `[render-diag] mantenerVentana(indiceActual=${indiceActual}, ${tareas.length} tareas) = ${tVentanaMs.toFixed(1)}ms en total (red + trabajo síncrono) tAbsMs=${performance.now().toFixed(0)}`,
-  );
 }
 
 interface SeleccionMosaico {
   indiceActual: number;
-  actual: HTMLImageElement | null;
+  actual: ImageBitmap | null;
   metaActual: MosaicoSeguimientoMeta | null;
-  siguiente: HTMLImageElement | null;
+  siguiente: ImageBitmap | null;
   metaSiguiente: MosaicoSeguimientoMeta | null;
   // 0 = solo "actual" a la vista; 1 = ya cruzó del todo al "siguiente".
   peso: number;
@@ -1285,7 +1354,7 @@ function seleccionarMosaico(
     recorteValido(calcularRecorteMosaico(camaraZ17, metaActual, escalaSeguimiento), metaActual);
 
   if (actualUsable) {
-    ultimoValidoRef.valor = { indice: indiceActual, img: imagenActual as HTMLImageElement, meta: metaActual as MosaicoSeguimientoMeta };
+    ultimoValidoRef.valor = { indice: indiceActual, img: imagenActual as ImageBitmap, meta: metaActual as MosaicoSeguimientoMeta };
   }
 
   let peso = 0;
@@ -1356,7 +1425,7 @@ function dibujarMosaicosSeguimiento(
   escalaSeguimiento: number,
   modoIntro = false,
 ): string {
-  function intentarDibujar(img: HTMLImageElement, meta: MosaicoSeguimientoMeta, alpha: number): boolean {
+  function intentarDibujar(img: ImageBitmap, meta: MosaicoSeguimientoMeta, alpha: number): boolean {
     if (alpha <= 0) return false;
     const r = calcularRecorteMosaico(camaraZ17, meta, escalaSeguimiento);
     if (!recorteValido(r, meta)) return false;
@@ -1383,7 +1452,7 @@ function dibujarMosaicosSeguimiento(
 
   if (actualOk && hayCrossfade) {
     // Caso 1: crossfade normal -- ambos representan la misma ventana real.
-    intentarDibujar(seleccion.siguiente as HTMLImageElement, seleccion.metaSiguiente as MosaicoSeguimientoMeta, seleccion.peso);
+    intentarDibujar(seleccion.siguiente as ImageBitmap, seleccion.metaSiguiente as MosaicoSeguimientoMeta, seleccion.peso);
     return `CROSSFADE ${seleccion.indiceMostrado}→${seleccion.indiceActual + 1} peso=${seleccion.peso.toFixed(2)}`;
   }
 
@@ -1392,7 +1461,7 @@ function dibujarMosaicosSeguimiento(
     // parcial (eso sería exactamente la mezcla panorámica+parcial que no
     // queremos).
     const siguienteOk = intentarDibujar(
-      seleccion.siguiente as HTMLImageElement,
+      seleccion.siguiente as ImageBitmap,
       seleccion.metaSiguiente as MosaicoSeguimientoMeta,
       1,
     );
@@ -3125,11 +3194,14 @@ async function generarVideoRecorridoInterno(
   // decodificar más abajo.
   const ultimoMosaicoValidoRef: { valor: UltimoMosaicoValido | null } = { valor: null };
   if (mosaicosSeguimiento.length > 0) {
-    // Antes de dibujar el primer cuadro (y bastante antes de arrancar
-    // MediaRecorder, ver más abajo): deja el primer mosaico decodificado y
-    // unos cuantos más ya descargados -- sin esto, la cámara arrancaría el
-    // seguimiento con el mosaico 0 todavía en blanco.
-    await mantenerVentana(ventanaMosaicos, 0, null);
+    // Fase A (ver diseño aprobado): prepara TODOS los mosaicos de la ruta
+    // -- no solo los primeros -- antes de dibujar el primer cuadro y bien
+    // antes de arrancar MediaRecorder (ver más abajo). Reemplaza al viejo
+    // "await mantenerVentana(ventanaMosaicos, 0, null)" que solo dejaba
+    // listo el entorno del mosaico 0 y confiaba en que el resto se fuera
+    // resolviendo en vivo durante la grabación (esa era la causa raíz de
+    // los congelamientos: ver prepararTodosLosMosaicosSeguimiento).
+    await prepararTodosLosMosaicosSeguimiento(ventanaMosaicos);
   }
 
   const { punto: puntoVelMax, indice: indiceVelMax, kmh: kmhVelMax } = velocidadMaximaConPunto(datos.puntos);
@@ -3389,12 +3461,12 @@ async function generarVideoRecorridoInterno(
       // Cámara de mosaicos: solo aplica durante el trazo (nunca en el tramo
       // final, que sigue usando la panorámica de siempre). El índice de
       // mosaico activo (indiceMosaicoRef) es mutable y persiste entre
-      // llamadas -- seleccionarMosaico lo avanza cuando corresponde. Si el
-      // índice avanzó respecto del cuadro anterior, se dispara (sin await,
-      // sigue en paralelo mientras la grabación continúa en tiempo real) el
-      // mantenimiento de la ventana de descarga/decodificación para el
-      // nuevo entorno, protegiendo el último mosaico válido en uso como
-      // fallback -- ver mantenerVentana/liberarFueraDeVentana.
+      // llamadas -- seleccionarMosaico lo avanza cuando corresponde. A
+      // diferencia del esquema anterior, acá NO se dispara ningún
+      // fetch/composición/preparación de mosaicos cuando el índice avanza
+      // -- Fase A (prepararTodosLosMosaicosSeguimiento) ya dejó
+      // ventanaMosaicos.imagenes completo de antemano, así que este bloque
+      // (Fase B) solo lee de ahí, nunca escribe.
       if (mosaicosSeguimiento.length > 0 && mapa) {
         // Transiciones de fase de la Opción 5, evaluadas con la cámara YA
         // calculada este mismo frame (ver diseño aprobado: mismo `camara`
@@ -3438,8 +3510,8 @@ async function generarVideoRecorridoInterno(
               camaraZ17Regreso.x - metaDestino.centroPxX,
               camaraZ17Regreso.y - metaDestino.centroPxY,
             );
-            const anchoFisicoDestino = metaDestino.anchoPx * ESCALA;
-            const altoFisicoDestino = metaDestino.altoPx * ESCALA;
+            const anchoFisicoDestino = metaDestino.anchoPx * ESCALA_SALIDA_MOSAICO_SEGUIMIENTO;
+            const altoFisicoDestino = metaDestino.altoPx * ESCALA_SALIDA_MOSAICO_SEGUIMIENTO;
             console.log(
               `[hueco-diag] fraccionTotal=${fraccionTotal.toFixed(3)} restanteHastaTrazoCompleto=${(FRACCION_TRAZO_COMPLETO - fraccionTotal).toFixed(3)} destino=${huecoRef.valor.indiceDestino} ` +
                 `camara.cx=${camara.cx.toFixed(1)} camara.cy=${camara.cy.toFixed(1)} camara.escala=${camara.escala.toFixed(4)} escalaCropTransicion=${escalaCropTransicion.toFixed(4)} escalaActual=${huecoRef.valor.escalaActual?.toFixed(4)} ` +
@@ -3482,14 +3554,8 @@ async function generarVideoRecorridoInterno(
             console.log(
               `[hueco] fraccionTotal=${fraccionTotal.toFixed(3)} regresando -> convergiendo (Z17 reactivado en indice=${huecoRef.valor.indiceDestino}, escalaCropTransicion=${escalaCropTransicion.toFixed(4)})`,
             );
-            const indicePrevioHueco = indiceMosaicoRef.valor;
             indiceMosaicoRef.valor = huecoRef.valor.indiceDestino;
             huecoRef.valor = { ...huecoRef.valor, fase: "convergiendo" };
-            if (indiceMosaicoRef.valor !== indicePrevioHueco) {
-              mantenerVentana(ventanaMosaicos, indiceMosaicoRef.valor, ultimoMosaicoValidoRef.valor?.indice ?? null).catch(
-                () => {},
-              );
-            }
           }
         }
 
@@ -3546,30 +3612,16 @@ async function generarVideoRecorridoInterno(
             console.log(
               `[hueco] fraccionTotal=${fraccionTotal.toFixed(3)} detectado -- origen=${indiceMosaicoRef.valor} destino=${resultado.huecoDetectado} camaraAmplia.escala=${camaraAmplia.escala.toFixed(3)}`,
             );
-            // PENDIENTE (optimización de memoria/red, no bloqueante): este
-            // mantenerVentana centra su ventana en el DESTINO del hueco, lejos
-            // del índice origen -- su liberarFueraDeVentana() puede vaciar
-            // dataUrls/imagenes del origen (p.ej. el mosaico que se está por
-            // volver "geométrico activo" este mismo frame, ver más abajo),
-            // forzando un segundo fetch real de un mosaico que ya se había
-            // descargado y decodificado. No es la carrera de asegurarDescarga/
-            // asegurarDecodificado (esa ya está resuelta, ver el Map en
-            // EstadoVentanaMosaicos.descargando) -- es la política de ventanas
-            // en sí, que no protege al índice de origen del hueco además del
-            // `indiceProtegido` que ya recibe. Confirmado en prueba real:
-            // "[mosaico] indice=7 descarga iniciada" dos veces en la misma
-            // generación. Sin corregir a propósito por ahora.
-            mantenerVentana(ventanaMosaicos, resultado.huecoDetectado, ultimoMosaicoValidoRef.valor?.indice ?? null).catch(
-              () => {},
-            );
+            // Con Fase A, el mosaico destino ya está preparado de antemano
+            // (ver prepararTodosLosMosaicosSeguimiento) -- no hace falta
+            // disparar nada acá. El viejo PENDIENTE sobre mantenerVentana
+            // vaciando por error el índice de origen ya no aplica: Fase A
+            // no libera ningún mosaico durante toda la generación.
           }
 
           if (indiceMosaicoRef.valor !== indicePrevio) {
             console.log(
               `[video] fraccionTotal=${fraccionTotal.toFixed(3)} indice geometrico activo: ${indicePrevio} -> ${indiceMosaicoRef.valor}`,
-            );
-            mantenerVentana(ventanaMosaicos, indiceMosaicoRef.valor, ultimoMosaicoValidoRef.valor?.indice ?? null).catch(
-              () => {},
             );
           }
 
@@ -3795,12 +3847,22 @@ async function generarVideoRecorridoInterno(
   mediaRecorder.ondataavailable = (e) => {
     if (e.data.size > 0) chunks.push(e.data);
   };
+  // Instrumentación (ver criterio de éxito #2 y #3 del diseño Fase A/Fase B
+  // aprobado): tiempo real total desde que arranca MediaRecorder hasta que
+  // termina de capturar -- se fija recién después de mediaRecorder.start()
+  // más abajo, pero el closure de onstop lo lee al vuelo (let, no const).
+  let tInicioGrabacionMs = 0;
   const grabacionLista = new Promise<Blob>((resolve, reject) => {
-    mediaRecorder.onstop = () => resolve(new Blob(chunks, { type: "video/webm" }));
+    mediaRecorder.onstop = () => {
+      const tCapturaMs = performance.now() - tInicioGrabacionMs;
+      console.log(`[fase-b] MediaRecorder start() -> stop() = ${(tCapturaMs / 1000).toFixed(2)}s`);
+      resolve(new Blob(chunks, { type: "video/webm" }));
+    };
     mediaRecorder.onerror = () => reject(new Error("Falló la grabación del video."));
   });
 
   mediaRecorder.start();
+  tInicioGrabacionMs = performance.now();
 
   const intervaloMs = 1000 / fps;
 
@@ -3906,6 +3968,19 @@ async function generarVideoRecorridoInterno(
     }
   }
 
+  // Instrumentación (ver criterio de éxito #3 del diseño Fase A/Fase B
+  // aprobado): compara el tiempo REAL que tardó este loop contra su
+  // duración lógica nominal (duracionAnimSeg) -- con Fase A ya habiendo
+  // preparado todo de antemano, dibujarFrame() en este loop no debería
+  // hacer fetch/toDataURL/decode/espera de ningún tipo, así que esta
+  // diferencia debería quedar cerca de 0 (a diferencia de los ~187s reales
+  // medidos para un video de ~11s lógicos antes de este cambio).
+  const tiempoLoopRealMs = performance.now() - tiempoInicioLoopMs;
+  console.log(
+    `[fase-b] loop de seguimiento terminado -- tiempoRealMs=${tiempoLoopRealMs.toFixed(0)} ` +
+      `duracionNominalMs=${(duracionAnimSeg * 1000).toFixed(0)} diferencia=${(tiempoLoopRealMs - duracionAnimSeg * 1000).toFixed(0)}ms`,
+  );
+
   // Cuadro final congelado unos segundos más, para que en redes sociales
   // alcance a leerse antes de que corte -- panorámica del recorrido
   // completo, o la foto de portada si el usuario eligió estiloFoto "final".
@@ -3980,7 +4055,7 @@ export async function generarDiagnosticoMosaico(
 
   const lineas: string[] = [
     `ZOOM = ${ZOOM_SEGUIMIENTO}`,
-    `ESCALA (retina) = ${ESCALA}`,
+    `ESCALA_SALIDA_MOSAICO_SEGUIMIENTO = ${ESCALA_SALIDA_MOSAICO_SEGUIMIENTO}`,
     `ESCALA_SEGUIMIENTO = ${ESCALA_SEGUIMIENTO}`,
     `lon,lat prueba = ${DIAG_LON}, ${DIAG_LAT}`,
     `mosaico.anchoPx x altoPx (lógico) = ${anchoPx} x ${altoPx}`,
@@ -3994,7 +4069,23 @@ export async function generarDiagnosticoMosaico(
   // generarMapaEnZoom devuelve null SIEMPRE. Acá se sube solo para poder
   // completar la verificación matemática pedida -- el tope real de
   // producción NO se toca todavía, queda para la siguiente decisión.
-  const generado = await generarMapaEnZoom(centroPxX, centroPxY, ZOOM_SEGUIMIENTO, anchoPx, altoPx, false, 200);
+  // escalaSalida=ESCALA_SALIDA_MOSAICO_SEGUIMIENTO (no el default ESCALA):
+  // calcularRecorteMosaico/recorteValido ya asumen esa escala para los
+  // mosaicos de seguimiento (ver diseño Fase A/Fase B aprobado), así que
+  // este mosaico de prueba tiene que generarse a la misma escala física
+  // para que el recorte de abajo sea comparable con la generación real.
+  const generado = await generarMapaEnZoom(
+    centroPxX,
+    centroPxY,
+    ZOOM_SEGUIMIENTO,
+    anchoPx,
+    altoPx,
+    false,
+    200,
+    null,
+    null,
+    ESCALA_SALIDA_MOSAICO_SEGUIMIENTO,
+  );
 
   if (!generado) {
     lineas.push("CROP INVALIDO: generarMapaEnZoom devolvio null (fallo de red/tiles).");
@@ -4010,7 +4101,7 @@ export async function generarDiagnosticoMosaico(
   }
 
   lineas.push(`img.naturalWidth x naturalHeight (fisico) = ${img.naturalWidth} x ${img.naturalHeight}`);
-  lineas.push(`esperado fisico = ${anchoPx * ESCALA} x ${altoPx * ESCALA}`);
+  lineas.push(`esperado fisico = ${anchoPx * ESCALA_SALIDA_MOSAICO_SEGUIMIENTO} x ${altoPx * ESCALA_SALIDA_MOSAICO_SEGUIMIENTO}`);
 
   const mosaico: MosaicoSeguimientoMeta = {
     centroPxX,
