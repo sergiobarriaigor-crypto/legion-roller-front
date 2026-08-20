@@ -1,7 +1,6 @@
 import {
   distanciaHaversineKm,
   velocidadMaximaConPunto,
-  simplificarRutaParaDibujo,
   clasificarTramos,
   type PuntoGps,
   type ClasificacionTramo,
@@ -353,6 +352,53 @@ async function cargarTileComoImagen(
     });
     if (contadores) contadores.exitosos++;
     return img;
+  } catch (err) {
+    registrarFalloTile("decodificacion", url, err instanceof Error ? err.message : String(err), contadores);
+    return null;
+  }
+}
+
+// Variante EXCLUSIVA de la grilla Z17 de seguimiento (ver
+// prepararTilesZ17/construirCorredorTilesZ17 más abajo) -- mismo fetch/
+// manejo de error/timeout que cargarTileComoImagen, pero decodifica
+// directo `fetch → blob → createImageBitmap(blob)`, sin el rodeo por
+// FileReader/dataURL/`new Image()` (puro desperdicio de CPU para un tile
+// que de todos modos se va a descartar apenas termine de decodificar).
+// `createImageBitmap` acá es Fase A (permitido) -- Fase B nunca la llama,
+// solo lee del Map ya poblado. Se prefiere ImageBitmap sobre
+// HTMLImageElement específicamente por `.close()`: liberación
+// determinística de memoria GPU/CPU, más estable que depender del GC del
+// navegador bajo presión de memoria (ver diseño aprobado, prioridad
+// "estabilidad en Chrome/Android").
+async function cargarTileComoImageBitmap(
+  url: string,
+  contadores: ContadoresTilesSeguimiento | null = null,
+): Promise<ImageBitmap | null> {
+  const controlador = new AbortController();
+  const idTimeout = setTimeout(() => controlador.abort(), TIMEOUT_TILE_MS);
+  let res: Response;
+  try {
+    try {
+      res = await fetch(url, { signal: controlador.signal });
+    } finally {
+      clearTimeout(idTimeout);
+    }
+  } catch (err) {
+    const esTimeout = err instanceof DOMException && err.name === "AbortError";
+    registrarFalloTile(esTimeout ? "timeout" : "red", url, err instanceof Error ? err.message : String(err), contadores);
+    return null;
+  }
+  if (!res.ok) {
+    if (res.status === 429) registrarFalloTile("http_429", url, String(res.status), contadores);
+    else if (res.status === 404) registrarFalloTile("http_404", url, String(res.status), contadores);
+    else registrarFalloTile("http_otro", url, String(res.status), contadores);
+    return null;
+  }
+  try {
+    const blob = await res.blob();
+    const bitmap = await createImageBitmap(blob);
+    if (contadores) contadores.exitosos++;
+    return bitmap;
   } catch (err) {
     registrarFalloTile("decodificacion", url, err instanceof Error ? err.message : String(err), contadores);
     return null;
@@ -715,47 +761,42 @@ async function generarMapaDetallado(
   );
 }
 
-// --- Video 2D: cámara de seguimiento con múltiples mosaicos ---
+// --- Video 2D: cámara de seguimiento sobre una grilla Z17 continua ---
 //
 // Reemplaza, SOLO durante el tramo de seguimiento (fraccionTotal <=
 // FRACCION_TRAZO_COMPLETO), el esquema anterior de "una panorámica +
 // un detalle digital sobre la misma ventana" -- ese esquema no podía dar
 // sensación de cámara cercana en rutas urbanas largas porque la panorámica
 // (elegirZoom) se calcula para que ENTRE TODA la ruta, así que ya arranca
-// lejos antes de cualquier acercamiento óptico. Acá en cambio se piden
-// varios mosaicos reales, cada uno centrado en un tramo distinto de la
-// ruta, todos al MISMO zoom fijo (ZOOM_SEGUIMIENTO) -- así la escala visual
-// no depende de cuán larga sea la ruta completa, solo cambia cuántos
-// mosaicos hacen falta para cubrirla. La panorámica (mapaImg/elegirZoom)
-// sigue existiendo tal cual, pero queda reservada exclusivamente para el
-// tramo final (alejamiento + resumen), donde sí corresponde ver la ruta
-// completa.
+// lejos antes de cualquier acercamiento óptico.
+//
+// A diferencia del esquema anterior (mosaicos grandes pre-compuestos,
+// calcularMosaicosSeguimiento/seleccionarMosaico/dibujarMosaicosSeguimiento,
+// eliminados -- ver diseño aprobado "tiles Z17 directos"), acá NO se
+// compone ningún canvas grande: la cámara viaja sobre la misma grilla
+// nativa de tiles Web Mercator (256x256, ZOOM_SEGUIMIENTO fijo) que ya usa
+// la panorámica, dibujando directamente los tiles que caen dentro del
+// viewport cada cuadro (ver construirCorredorTilesZ17/prepararTilesZ17/
+// dibujarTilesZ17 más abajo). Sin "mosaico actual/siguiente", sin
+// crossfade entre tiles, sin radioZonaSegura/radioLimite -- los tiles
+// vecinos son la MISMA grilla, aparecen/desaparecen solo al entrar/salir
+// del viewport. La panorámica (mapaImg/elegirZoom) sigue existiendo tal
+// cual, reservada para PANORAMICA_HUECO/PANORAMICA_OUTRO.
 
-// Zoom real fijo para TODOS los mosaicos de seguimiento -- nunca se aleja
-// por más larga que sea la ruta (a diferencia de elegirZoom). Mismo orden
-// que ZOOM_CENTRADO_AUTOMATICO en MapaView.tsx (16, ya validado ahí como
+// Zoom real fijo para el seguimiento -- nunca se aleja por más larga que
+// sea la ruta (a diferencia de elegirZoom). Mismo orden que
+// ZOOM_CENTRADO_AUTOMATICO en MapaView.tsx (16, ya validado ahí como
 // "cómodo para ver tu cuadra" al centrar el mapa en vivo) -- un paso más
 // cerca porque acá el encuadre es una franja vertical angosta, no el mapa
 // completo. Sujeto a ajuste visual.
 const ZOOM_SEGUIMIENTO = 17;
 
-// Cuánto lienzo se pide por mosaico, en "anchos/altos de video" -- más
-// grande que el viewport final. Dentro de ese margen extra viven la zona
-// segura, la banda de transición hacia el siguiente mosaico, y el semi-largo
-// de la propia diagonal del viewport (para que la cámara nunca llegue a ver
-// el borde real de la imagen cargada, sin importar hacia qué lado se mueva).
-const FACTOR_COBERTURA_MOSAICO = 2.6;
-
-// Escala del SEGUIMIENTO -- reemplaza el intento anterior (ESCALA_MOSAICO_FIJA,
-// que reescalaba el mosaico completo con un número independiente de la
-// conversión geográfica real, y por eso desalineaba todo lo que no fuera el
-// centro exacto -- ver el diagnóstico correcto en calcularRecorteMosaico).
-// Acá NO se reescala nada: se recorta una ventana real del mosaico
-// (drawImage de 9 argumentos). K = ESCALA_SEGUIMIENTO define cuántos
-// píxeles de VIDEO representa cada píxel LÓGICO de ZOOM_SEGUIMIENTO -- K=1
-// es resolución nativa (ni estirado ni reducido). VALOR INICIAL sujeto a
-// ajuste visual: K>1 acerca la cámara (recorta una ventana más chica del
-// mosaico), K<1 la aleja.
+// K = ESCALA_SEGUIMIENTO define cuántos píxeles de VIDEO representa cada
+// píxel LÓGICO de ZOOM_SEGUIMIENTO -- K=1 es resolución nativa (ni
+// estirado ni reducido): con escalaCropSeguimiento=1 (ver dibujarFrame),
+// cada tile de 256x256 se dibuja 1:1 en pantalla, sin reescalado digital
+// alguno (ver dibujarTilesZ17). VALOR INICIAL sujeto a ajuste visual: K>1
+// acerca la cámara, K<1 la aleja.
 //
 // Durante el seguimiento, camara.escala (ver estadoCamara) pasa a valer
 // `factor × ESCALA_SEGUIMIENTO` en vez del fijo ESCALA_CAMARA_CERCANA --
@@ -763,130 +804,85 @@ const FACTOR_COBERTURA_MOSAICO = 2.6;
 // o sea de la distancia total de la ruta) se cancela al combinarse con la
 // conversión geográfica real, dejando el nivel de acercamiento final
 // idéntico sin importar qué zoom haya elegido la panorámica para la ruta
-// completa.
+// completa. Importante (ver diseño aprobado, separación escala geográfica/
+// zoom visual): `factor` (factorSeguimiento) sigue existiendo SOLO para
+// convertir coordenadas canvas-base<->Z17 -- el recorte/dibujo de tiles
+// usa escalaCropSeguimiento (=ESCALA_SEGUIMIENTO en régimen normal), NUNCA
+// factorSeguimiento×ESCALA_SEGUIMIENTO, para no reintroducir accidentalmente
+// una ampliación digital del tile.
 const ESCALA_SEGUIMIENTO = 1;
 
-// Escala de SALIDA (retina) exclusiva de los mosaicos de seguimiento -- NO
-// confundir con ESCALA_SEGUIMIENTO de arriba (esa es "K", el factor lógico
-// de acercamiento de cámara). Esta es cuántos píxeles físicos del canvas
-// del mosaico corresponden a cada píxel lógico de ZOOM_SEGUIMIENTO (se pasa
-// como `escalaSalida` a generarMapaEnZoom, ver ese comentario). La global
-// ESCALA=2 (retina) tiene sentido para la tarjeta estática y la panorámica,
-// pero acá los tiles fuente son 256px reales SIN variante "@2x" -- ESCALA=2
-// solo estiraba esos mismos píxeles al doble dentro del canvas del mosaico
-// (drawImage 2x), y ese recorte se vuelve a reescalar una segunda vez al
-// dibujarse en el canvas final del video (ver calcularRecorteMosaico) --
-// dos remuestreos en cadena sin detalle real ganado en ninguno. Con 1: un
-// solo remuestreo (mosaico -> video), un cuarto de los píxeles por mosaico
-// (memoria, drawImage, y sobre todo createImageBitmap/toDataURL, todos
-// escalan con el total de píxeles) -- ver diseño Fase A aprobado.
-const ESCALA_SALIDA_MOSAICO_SEGUIMIENTO = 1;
-
-// Del semirradio útil del mosaico (mitad del lado más chico del lienzo, en
-// píxeles de ZOOM_SEGUIMIENTO), qué fracción es "zona segura" (un solo
-// mosaico, sin crossfade) y cuánto más se extiende la banda de transición
-// antes de forzar el cambio al siguiente. Sujeto a ajuste visual.
-const FRACCION_ZONA_SEGURA = 0.55;
-const FRACCION_BANDA_TRANSICION = 0.15;
-// Tope de tiles por mosaico de seguimiento -- mismo criterio "mejor
-// esfuerzo" que generarMapaDetallado: si un mosaico puntual falla o pide
-// demasiados tiles, se salta sin romper el video (ver seleccionarMosaico).
-//
-// ERA 64 -- confirmado por el diagnóstico aislado (ver debug-mosaico) que un
-// mosaico de FACTOR_COBERTURA_MOSAICO=2.6 necesita ~112 tiles reales (rango
-// 104-126 según cómo caiga el centro en la grilla), así que con 64 CADA
-// mosaico de seguimiento fallaba siempre (generarMapaEnZoom devolvía null),
-// cayendo siempre al fallback panorámico -- esa es la causa raíz real del
-// "rectángulo grande de mapa/mar que no corresponde" reportado. 150 deja
-// margen sobre el máximo observado (126) sin ser un número arbitrario.
-const MAX_TILES_MOSAICO_SEGUIMIENTO = 150;
-// Tope del cache temporal de tiles de seguimiento (ver CacheTilesLRU) --
-// dimensionado para cubrir el mosaico activo completo (~112-126 tiles) más
-// varios vecinos con alto solape geográfico (mosaicos consecutivos de
-// FACTOR_COBERTURA_MOSAICO=2.6 comparten buena parte de sus tiles), sin
-// crecer sin límite en rutas largas: memoria acotada (~300 tiles ×
-// ~0.25 MB/tile decodificado ≈ 75 MB) constante sin importar si la ruta son
-// 5 km o 70 km. Ver prepararTodosLosMosaicosSeguimiento (Fase A) para cómo
-// se recorre la cadena completa de mosaicos reutilizando este cache.
+// El pipeline de tiles Z17 (prepararTilesZ17 más abajo) ya no pasa por
+// CacheTilesLRU/obtenerTileConCache -- el Set de construirCorredorTilesZ17
+// ya viene deduplicado, así que no hace falta una segunda capa de dedup en
+// vuelo. Este límite queda solo para generarVideoRecorrido (wrapper, sin
+// tocar), que sigue creando un CacheTilesLRU para reutilizar
+// cacheTiles.contadores en el RESUMEN final -- generarMapaEnZoom (panorámica)
+// sigue aceptando ese cache opcional tal cual, sin cambios.
 const LIMITE_CACHE_TILES_SEGUIMIENTO = 300;
 
-interface MosaicoSeguimientoMeta {
-  centroPxX: number; // en ZOOM_SEGUIMIENTO (lógico, sin ESCALA retina)
-  centroPxY: number;
-  anchoPx: number; // idem -- lógico
-  altoPx: number;
-  // Radios (px lógicos de ZOOM_SEGUIMIENTO) de la zona segura y del límite
-  // de la banda de transición -- la cámara se queda sola en este mosaico
-  // mientras esté a menos de radioZonaSeguraPx de su centro; entre ese
-  // radio y radioLimitePx hace crossfade con el siguiente (ver
-  // seleccionarMosaico). Ya restan el espacio que ocupa la propia ventana
-  // de recorte (ver calcularMosaicosSeguimiento) -- no son una fracción
-  // ingenua del mosaico completo.
-  radioZonaSeguraPx: number;
-  radioLimitePx: number;
-}
-
-// Recorre la ruta (ya simplificada con Douglas-Peucker) por DESPLAZAMIENTO
-// REAL EN PÍXELES de la grilla Web Mercator a ZOOM_SEGUIMIENTO -- no por
-// distancia en km -- para decidir dónde arranca cada mosaico nuevo. Con
-// distancia en km, una curva cerrada o un zigzag puede desplazar la cámara
-// dentro de la imagen mucho más de lo que esa distancia "en línea de ruta"
-// sugiere; con píxeles reales, el criterio es siempre "¿la cámara sigue
-// viendo terreno cargado?", sin importar la forma de la ruta, la latitud
-// (que distorsiona km/píxel) ni si la ruta vuelve cerca de un tramo
-// anterior (acá simplemente se arma un mosaico nuevo en la cadena, nunca se
-// intenta reutilizar uno geográficamente cercano de más atrás).
+// Recorre datos.puntos REALES (no una versión simplificada -- acá no se
+// paga un costo por punto como con los mosaicos grandes, así que no hace
+// falta reducir la densidad) y arma el Set de tiles Z17 únicos "x/y" que
+// la cámara de seguimiento puede llegar a necesitar en algún momento del
+// video -- el corredor sigue la polilínea real, no el bounding box
+// completo de la ruta (ver diseño aprobado).
 //
-// No recibe `factor` (la conversión geográfica dependiente de la ruta) --
-// justamente porque, como demuestra el comentario de abajo, el tamaño de
-// la ventana de recorte en píxeles de ZOOM_SEGUIMIENTO no depende de él
-// (se cancela algebraicamente), así que esta función no lo necesita para
-// nada.
-function calcularMosaicosSeguimiento(puntosSimplificados: PuntoGps[]): MosaicoSeguimientoMeta[] {
-  const anchoPx = Math.round(ANCHO_VIDEO * FACTOR_COBERTURA_MOSAICO);
-  const altoPx = Math.round(ALTO_VIDEO * FACTOR_COBERTURA_MOSAICO);
-  // Media ventana de recorte, en píxeles LÓGICOS de ZOOM_SEGUIMIENTO --
-  // ANCHO_VIDEO/(2×camara.escala) canvas-base, convertido a Z17 (×factor):
-  // como camara.escala = factor×ESCALA_SEGUIMIENTO durante el seguimiento,
-  // el factor se cancela y queda ANCHO_VIDEO/(2×ESCALA_SEGUIMIENTO) --
-  // independiente de la ruta, igual que el resto de este sistema. El
-  // margen útil real que le queda al mosaico es lo que sobra después de
-  // reservarle ese espacio a cada lado -- recién sobre ESE margen (no sobre
-  // el semirradio bruto del lienzo) se aplican las fracciones de zona
-  // segura/transición, para no correr el riesgo de que la ventana de
-  // recorte llegue a asomarse fuera de la imagen antes de cambiar de
-  // mosaico (ver también recorteValido, la red de seguridad para el caso
-  // límite).
-  const mitadVentanaXPx = ANCHO_VIDEO / (2 * ESCALA_SEGUIMIENTO);
-  const mitadVentanaYPx = ALTO_VIDEO / (2 * ESCALA_SEGUIMIENTO);
-  const margenUtilPx = Math.min(anchoPx / 2 - mitadVentanaXPx, altoPx / 2 - mitadVentanaYPx);
-  const radioZonaSeguraPx = margenUtilPx * FRACCION_ZONA_SEGURA;
-  const radioLimitePx = margenUtilPx * (FRACCION_ZONA_SEGURA + FRACCION_BANDA_TRANSICION);
+// Respeta clasificacionTramos EXACTAMENTE con el mismo criterio que ya usa
+// el trazado ([:2920] aprox., "if (clasificacionTramos[k+1]==='saltoGps')
+// continue") -- un tramo saltoGps no suma cobertura de tiles, igual que
+// hoy no dibuja línea ahí. Eso es lo que deja el hueco real en el corredor
+// (PANORAMICA_HUECO se encarga de esa zona, nunca Z17) -- sin tocar
+// clasificarTramos ni su lógica, solo reutilizando su resultado.
+//
+// margenExcursionPx (zona muerta + anticipación de cámara, ver
+// RADIO_TOLERANCIA_PX/MAX_DESPLAZAMIENTO_ANTICIPACION_PX más abajo en el
+// archivo) se referencia acá ADENTRO de la función a propósito -- son
+// const declaradas más abajo en el archivo, pero como esto es el CUERPO de
+// una función (no se evalúa hasta que se llama, bien entrada la
+// generación del video, con el módulo ya completamente inicializado) no
+// hay ningún problema de orden de declaración.
+function construirCorredorTilesZ17(puntos: PuntoGps[], clasificacionTramos: ClasificacionTramo[]): Set<string> {
+  const margenExcursionPx = RADIO_TOLERANCIA_PX + MAX_DESPLAZAMIENTO_ANTICIPACION_PX;
+  const mitadAnchoPx = ANCHO_VIDEO / 2 + margenExcursionPx;
+  const mitadAltoPx = ALTO_VIDEO / 2 + margenExcursionPx;
+  // Paso máximo entre muestras a lo largo de un tramo confiable -- la
+  // mitad más chica del margen de cobertura, para garantizar que dos
+  // muestras consecutivas siempre tengan zonas de cobertura solapadas. Sin
+  // esto, un tramo válido (no saltoGps) pero con puntos GPS espaciados de
+  // forma poco frecuente podría dejar un hueco de tiles en el medio aunque
+  // ambos extremos del tramo estén cubiertos.
+  const pasoMuestreoPx = Math.min(mitadAnchoPx, mitadAltoPx);
+  const tiles = new Set<string>();
 
-  function metaEnPunto(punto: PuntoGps): MosaicoSeguimientoMeta {
-    return {
-      centroPxX: lonAPixelX(punto.lon, ZOOM_SEGUIMIENTO),
-      centroPxY: latAPixelY(punto.lat, ZOOM_SEGUIMIENTO),
-      anchoPx,
-      altoPx,
-      radioZonaSeguraPx,
-      radioLimitePx,
-    };
-  }
-
-  const mosaicos = [metaEnPunto(puntosSimplificados[0])];
-  let ultimoCentro = { x: mosaicos[0].centroPxX, y: mosaicos[0].centroPxY };
-
-  for (let i = 1; i < puntosSimplificados.length; i++) {
-    const gx = lonAPixelX(puntosSimplificados[i].lon, ZOOM_SEGUIMIENTO);
-    const gy = latAPixelY(puntosSimplificados[i].lat, ZOOM_SEGUIMIENTO);
-    if (Math.hypot(gx - ultimoCentro.x, gy - ultimoCentro.y) > radioZonaSeguraPx) {
-      mosaicos.push(metaEnPunto(puntosSimplificados[i]));
-      ultimoCentro = { x: gx, y: gy };
+  function agregarCobertura(gx: number, gy: number): void {
+    const tileXMin = Math.floor((gx - mitadAnchoPx) / TAM_TILE);
+    const tileXMax = Math.floor((gx + mitadAnchoPx) / TAM_TILE);
+    const tileYMin = Math.floor((gy - mitadAltoPx) / TAM_TILE);
+    const tileYMax = Math.floor((gy + mitadAltoPx) / TAM_TILE);
+    for (let ty = tileYMin; ty <= tileYMax; ty++) {
+      for (let tx = tileXMin; tx <= tileXMax; tx++) tiles.add(`${tx}/${ty}`);
     }
   }
 
-  return mosaicos;
+  let anterior: { x: number; y: number } | null = null;
+  for (let i = 0; i < puntos.length; i++) {
+    const gx = lonAPixelX(puntos[i].lon, ZOOM_SEGUIMIENTO);
+    const gy = latAPixelY(puntos[i].lat, ZOOM_SEGUIMIENTO);
+    const segmentoConfiable = i > 0 && clasificacionTramos[i] !== "saltoGps";
+    if (segmentoConfiable && anterior) {
+      const dist = Math.hypot(gx - anterior.x, gy - anterior.y);
+      const pasos = Math.max(1, Math.ceil(dist / pasoMuestreoPx));
+      for (let p = 1; p <= pasos; p++) {
+        const t = p / pasos;
+        agregarCobertura(anterior.x + (gx - anterior.x) * t, anterior.y + (gy - anterior.y) * t);
+      }
+    } else {
+      agregarCobertura(gx, gy);
+    }
+    anterior = { x: gx, y: gy };
+  }
+  return tiles;
 }
 
 // Posición de la cámara (canvas-base) expresada en píxeles GLOBALES de
@@ -910,47 +906,30 @@ function calcularCamaraZ17(
   };
 }
 
-// Inversa exacta de calcularCamaraZ17 -- convierte un punto YA en píxeles
-// globales de ZOOM_SEGUIMIENTO (ej. el centro de un mosaico) de vuelta a
-// coordenadas canvas-base (el mismo espacio en el que vive EstadoCamara).
-// Solo la usa la Opción 5 (huecos de cobertura, ver calcularCamaraHueco) para
-// poder encuadrar dos mosaicos con la cámara sin pasar por Z17 en ningún
-// otro lado del cálculo.
-function z17ACanvasBase(
-  z17: { x: number; y: number },
-  mapaBase: MapaGenerado,
-  factor: number,
-): { x: number; y: number } {
-  return {
-    x: z17.x / factor - mapaBase.centroPxX + ANCHO_VIDEO / 2,
-    y: z17.y / factor - mapaBase.centroPxY + ALTO_VIDEO / 2,
-  };
-}
-
-// Opción 5 -- huecos de cobertura entre puntos GPS reales sin mosaicos
-// intermedios (ver el diseño largo aprobado, comentario de seleccionarMosaico
-// más abajo). En vez de forzar el seguimiento Z17 a través de una zona sin
-// datos, la cámara se aleja lo justo para encuadrar el ORIGEN (último
-// mosaico válido) y el DESTINO (adonde el recorrido forward-only normal
-// habría llegado) en un solo cuadro, el marcador avanza sobre esa vista
-// (panorámica ya cargada, dibujarFondoMapaVideo) sin ninguna geometría
-// inventada, y al acercarse geográficamente al destino la cámara vuelve
-// sola al seguimiento cercano -- ver el chequeo de recorteValido en
-// dibujarFrame, no un umbral de escala arbitrario.
-// "convergiendo": la fuente Z17 YA está activa (indiceMosaicoRef ya apunta
-// al destino, seleccionarMosaico/dibujarMosaicosSeguimiento corren normal,
-// incluida la detección de un hueco nuevo) pero camara.escala todavía viene
-// convergiendo desde el encuadre amplio de la panorámica -- se desacopla a
-// propósito de "regresando -> ninguno" (que antes activaba la fuente Y daba
-// por terminada la convergencia en el mismo instante, forzando un salto de
-// escalaCropSeguimiento de golpe a ESCALA_SEGUIMIENTO). No tiene condición
-// de salida explícita hacia "ninguno": para todo propósito de dibujo/
-// detección se trata igual que "ninguno" (ver los dos gates que aceptan
-// ambas), y escalaCropSeguimiento converge sola hacia ESCALA_SEGUIMIENTO a
-// medida que camara.escala converge hacia su régimen estable (ver
-// verificar_continuidad_hueco.ts) -- si aparece un hueco nuevo mientras
-// seguimos acá, se pasa directo a "en_hueco" como siempre, sin pasar por
-// "ninguno" en el medio.
+// Opción 5 -- huecos de cobertura entre puntos GPS reales sin tiles Z17
+// preparados (ver el diseño largo aprobado, comentario de
+// coberturaCompletaZ17/dibujarFrame más abajo). En vez de forzar el
+// seguimiento Z17 a través de una zona sin tiles, la cámara se aleja lo
+// justo para encuadrar el ORIGEN (última posición con cobertura) y el
+// DESTINO (adonde el recorrido forward-only normal habría llegado) en un
+// solo cuadro, el marcador avanza sobre esa vista (panorámica ya cargada,
+// dibujarFondoMapaVideo) sin ninguna geometría inventada, y al acercarse
+// geográficamente al destino la cámara vuelve sola al seguimiento cercano
+// -- ver el chequeo de coberturaCompletaZ17 en dibujarFrame, no un umbral
+// de escala arbitrario.
+// "convergiendo": la fuente Z17 YA está activa (coberturaCompletaZ17 ya
+// dio true con la cámara real, incluida la detección de un hueco nuevo)
+// pero camara.escala todavía viene convergiendo desde el encuadre amplio
+// de la panorámica -- se desacopla a propósito de "regresando -> ninguno"
+// (que antes activaba la fuente Y daba por terminada la convergencia en el
+// mismo instante, forzando un salto de escalaCropSeguimiento de golpe a
+// ESCALA_SEGUIMIENTO). No tiene condición de salida explícita hacia
+// "ninguno": para todo propósito de dibujo/detección se trata igual que
+// "ninguno" (ver los dos gates que aceptan ambas), y escalaCropSeguimiento
+// converge sola hacia ESCALA_SEGUIMIENTO a medida que camara.escala
+// converge hacia su régimen estable (ver verificar_continuidad_hueco.ts)
+// -- si aparece un hueco nuevo mientras seguimos acá, se pasa directo a
+// "en_hueco" como siempre, sin pasar por "ninguno" en el medio.
 type FaseHueco = "ninguno" | "en_hueco" | "regresando" | "convergiendo";
 
 interface EstadoHueco {
@@ -1022,490 +1001,192 @@ function calcularCamaraHueco(
   return { cx, cy, escala };
 }
 
-interface RecorteMosaico {
-  sx: number;
-  sy: number;
-  sWidth: number;
-  sHeight: number;
-}
-
-// Ventana de recorte real dentro del mosaico -- source crop, no reescalado
-// del mosaico completo. Todo en píxeles LÓGICOS de ZOOM_SEGUIMIENTO hasta
-// el último paso, donde recién se multiplica por ESCALA_SALIDA_MOSAICO_SEGUIMIENTO
-// para obtener las coordenadas sobre la imagen FÍSICA que espera drawImage.
-// `escalaSeguimiento` es camara.escala tal cual (ya vale factor×ESCALA_SEGUIMIENTO
-// durante el seguimiento -- ver estadoCamara), así que la ventana lógica
-// (ANCHO_VIDEO/escalaSeguimiento) quiere decir exactamente lo mismo acá que
-// en la transformación de cámara que usan trazo/marcador.
-function calcularRecorteMosaico(
+// Rango de tiles Z17 que intersectan el viewport actual -- misma fórmula
+// para decidir QUÉ cobertura hace falta (ver coberturaCompletaZ17) y para
+// DIBUJAR (ver dibujarTilesZ17 más abajo), así ambas preguntas ("¿está
+// preparado?" y "¿qué dibujo?") usan exactamente el mismo rectángulo, sin
+// riesgo de que diverjan.
+function rangoTilesVisibles(
   camaraZ17: { x: number; y: number },
-  mosaico: MosaicoSeguimientoMeta,
-  escalaSeguimiento: number,
-): RecorteMosaico {
-  const anchoVentanaZ17 = ANCHO_VIDEO / escalaSeguimiento;
-  const altoVentanaZ17 = ALTO_VIDEO / escalaSeguimiento;
-  // Origen del mosaico (su esquina superior izquierda) en píxeles globales
-  // de Z17, para pasar de "global" a "local dentro de este PNG".
-  const origenMosaicoX = mosaico.centroPxX - mosaico.anchoPx / 2;
-  const origenMosaicoY = mosaico.centroPxY - mosaico.altoPx / 2;
-  const localX = camaraZ17.x - anchoVentanaZ17 / 2 - origenMosaicoX;
-  const localY = camaraZ17.y - altoVentanaZ17 / 2 - origenMosaicoY;
+  escalaCropSeguimiento: number,
+): { tileXMin: number; tileXMax: number; tileYMin: number; tileYMax: number } {
+  const anchoVentanaZ17 = ANCHO_VIDEO / escalaCropSeguimiento;
+  const altoVentanaZ17 = ALTO_VIDEO / escalaCropSeguimiento;
   return {
-    sx: localX * ESCALA_SALIDA_MOSAICO_SEGUIMIENTO,
-    sy: localY * ESCALA_SALIDA_MOSAICO_SEGUIMIENTO,
-    sWidth: anchoVentanaZ17 * ESCALA_SALIDA_MOSAICO_SEGUIMIENTO,
-    sHeight: altoVentanaZ17 * ESCALA_SALIDA_MOSAICO_SEGUIMIENTO,
+    tileXMin: Math.floor((camaraZ17.x - anchoVentanaZ17 / 2) / TAM_TILE),
+    tileXMax: Math.floor((camaraZ17.x + anchoVentanaZ17 / 2 - 1) / TAM_TILE),
+    tileYMin: Math.floor((camaraZ17.y - altoVentanaZ17 / 2) / TAM_TILE),
+    tileYMax: Math.floor((camaraZ17.y + altoVentanaZ17 / 2 - 1) / TAM_TILE),
   };
 }
 
-// Nunca se clampea el recorte (eso desplazaría qué zona geográfica se
-// muestra, exactamente lo que no queremos) -- si la ventana pedida se sale
-// del PNG físico del mosaico, se descarta el intento entero y el llamador
-// decide el respaldo (último mosaico válido, o panorámica -- ver
-// seleccionarMosaico/dibujarMosaicosSeguimiento). Con los márgenes de
-// calcularMosaicosSeguimiento esto no debería activarse en operación
-// normal; es la red de seguridad para el caso límite.
-function recorteValido(r: RecorteMosaico, mosaico: MosaicoSeguimientoMeta): boolean {
-  return (
-    r.sx >= 0 &&
-    r.sy >= 0 &&
-    r.sx + r.sWidth <= mosaico.anchoPx * ESCALA_SALIDA_MOSAICO_SEGUIMIENTO &&
-    r.sy + r.sHeight <= mosaico.altoPx * ESCALA_SALIDA_MOSAICO_SEGUIMIENTO
-  );
+// Reemplaza a recorteValido()/calcularRecorteMosaico() -- ver diseño
+// aprobado: ya no existe "¿cabe el recorte dentro del mosaico destino?"
+// (ya no hay mosaico destino), ahora es "¿están preparados todos los
+// tiles necesarios para el viewport Z17 en esta posición de cámara?". Usa
+// el Set PLANEADO por construirCorredorTilesZ17 (no el de tiles
+// efectivamente descargados con éxito) -- es una pregunta geométrica, "¿el
+// corredor preparado alcanza hasta acá?"; si un tile puntual particular
+// falló la descarga por red en Fase A, eso lo maneja el fallback de
+// dibujo por-tile (ver dibujarTilesZ17), no la máquina de estados de
+// hueco. Reemplaza también, en efecto, al viejo margenUtilPx de
+// seleccionarMosaico -- acá no hace falta ningún umbral de distancia
+// aparte, la cobertura real ya lo es.
+function coberturaCompletaZ17(
+  camaraZ17: { x: number; y: number },
+  escalaCropSeguimiento: number,
+  corredorPlaneado: Set<string>,
+): boolean {
+  const { tileXMin, tileXMax, tileYMin, tileYMax } = rangoTilesVisibles(camaraZ17, escalaCropSeguimiento);
+  for (let ty = tileYMin; ty <= tileYMax; ty++) {
+    for (let tx = tileXMin; tx <= tileXMax; tx++) {
+      if (!corredorPlaneado.has(`${tx}/${ty}`)) return false;
+    }
+  }
+  return true;
 }
 
-// Estado vivo de los mosaicos de seguimiento: se prepara COMPLETO en Fase A
-// (ver prepararTodosLosMosaicosSeguimiento), antes de arrancar
-// MediaRecorder -- por eso ya no hace falta separar "descargado" (dataURL)
-// de "decodificado" (Image) ni una ventana de memoria deslizante en vivo:
-// cada índice pasa una sola vez por generarMapaEnZoom(..., "bitmap") y su
-// resultado (ImageBitmap, ya directamente dibujable) queda en `imagenes`
-// hasta el final de la generación de este video. Ver diseño aprobado --
-// "no asumir que el preload completo es la solución definitiva para rutas
-// arbitrariamente largas": esto es correcto para esta primera prueba
-// (validar la hipótesis con una ruta de referencia de ~16 mosaicos), no una
-// arquitectura final para rutas muy largas (ver el diagnóstico de memoria
-// cruda estimada en prepararTodosLosMosaicosSeguimiento).
-interface EstadoVentanaMosaicos {
-  metas: MosaicoSeguimientoMeta[];
-  imagenes: (ImageBitmap | null)[];
-  // Cache temporal de tiles, exclusivo de ESTA generación de video (ver
-  // CacheTilesLRU) -- vive acá para que prepararTodosLosMosaicosSeguimiento
-  // lo tenga a mano sin pasarlo como parámetro suelto por todos lados.
-  cache: CacheTilesLRU;
-  // Diagnóstico (ver [render-diag]): qué índices tienen ahora mismo una
-  // generación REAL en curso (mutado por prepararTodosLosMosaicosSeguimiento
-  // alrededor de cada llamada a generarMapaEnZoom). Durante Fase A puede
-  // tener varios índices a la vez, según CONCURRENCIA_PREPARACION_SEGUIMIENTO;
-  // una vez terminada Fase A queda vacío por el resto de la generación -- el
-  // loop principal (Fase B) lo sigue logueando en cada *** STALL ***, y ahí
-  // debería mostrar siempre "ninguno" (ver criterio de éxito #2 del diseño
-  // aprobado: ninguna generación pendiente al arrancar MediaRecorder).
-  mosaicosEnGeneracion: Set<number>;
-}
+// Cuántos tiles se descargan en simultáneo durante Fase A. Más alto que la
+// concurrencia del viejo esquema de mosaicos (2) porque acá cada unidad de
+// trabajo es UN fetch chico (un tile, no un Promise.all de 100-150 tiles
+// por mosaico) -- la paralelización real de red ya la da la cantidad de
+// tiles en vuelo, esto es la segunda capa. Valor inicial, sujeto a ajuste
+// con datos reales de esta primera prueba.
+const CONCURRENCIA_PREPARACION_TILES_Z17 = 6;
 
-function crearVentanaMosaicos(metas: MosaicoSeguimientoMeta[], cache: CacheTilesLRU): EstadoVentanaMosaicos {
-  return {
-    metas,
-    imagenes: metas.map(() => null),
-    cache,
-    mosaicosEnGeneracion: new Set(),
-  };
-}
+// Límite (MB) de memoria cruda estimada para los tiles del corredor -- a
+// diferencia del límite de referencia del viejo esquema de mosaicos (solo
+// dejaba un warning), este SÍ corta la generación (ver prepararTilesZ17):
+// pedido explícito -- no continuar automáticamente por ahora, sin haber
+// validado primero esta arquitectura con una estrategia de ventana para
+// rutas grandes.
+const LIMITE_REFERENCIA_MEMORIA_TILES_MB = 150;
 
-// Cuántos mosaicos completos (red + composición + createImageBitmap) se
-// generan en simultáneo durante Fase A. Valor inicial conservador (ver
-// diseño aprobado) -- cada mosaico ya dispara su propio Promise.all de
-// ~100-150 tiles, así que subir esto multiplica cuántas ráfagas de tiles
-// compiten a la vez por red/CPU; 2 es un punto de partida a validar con
-// datos reales de esta primera prueba, no un número definitivo.
-const CONCURRENCIA_PREPARACION_SEGUIMIENTO = 2;
-
-// Límite de referencia (MB) para la advertencia de memoria cruda estimada
-// de abajo -- NO es un tope real ni dispara ninguna estrategia nueva (sin
-// cache por lotes ni streaming todavía, ver diseño aprobado): solo deja
-// registrado el riesgo si una ruta particular excede este orden de
-// magnitud, para decidir con datos reales si hace falta una fase 2 de este
-// diseño.
-const LIMITE_REFERENCIA_MEMORIA_MOSAICOS_MB = 400;
-
-// Fase A del video de seguimiento: prepara TODOS los mosaicos de la ruta
-// (metas ya calculadas de antemano por calcularMosaicosSeguimiento -- no
-// dependen de tiempo real ni de la cámara) como ImageBitmap directamente
+// Fase A del video de seguimiento: descarga y decodifica TODOS los tiles
+// del corredor (ver construirCorredorTilesZ17 -- ya calculado de antemano,
+// no depende de tiempo real ni de la cámara) como ImageBitmap directamente
 // dibujables, con concurrencia acotada, ANTES de que el llamador arranque
 // canvas.captureStream()/MediaRecorder (ver generarVideoRecorridoInterno).
-//
-// Reemplaza por completo al esquema anterior de "ventana deslizante en
-// vivo" (mantenerVentana/asegurarDescarga/asegurarDecodificado/
-// liberarFueraDeVentana, eliminados) -- ver el diagnóstico [render-diag] de
-// la ronda anterior: ese esquema disparaba la descarga+composición+
-// toDataURL+decode de mosaicos SIN await desde dentro del loop de render, y
-// ese trabajo síncrono/pendiente bloqueaba el mismo hilo que
-// canvas.captureStream(fps) necesita para producir cuadros nuevos a tiempo
-// real, produciendo los cuadros duplicados y congelamientos reportados. Acá
-// no hay ningún loop de render corriendo todavía, así que no hay nada que
-// proteger de bloqueos -- el único costo de tardar más acá es que la
-// preparación total tarde más (aceptado explícitamente en el criterio de
-// éxito: "Fase A puede tardar lo que necesite").
-//
-// A propósito NO se llama a ninguna liberación de memoria (ver diseño
-// aprobado, "no usar liberarFueraDeVentana() durante esta primera prueba de
-// preload completo") -- todos los ImageBitmap generados quedan residentes
-// hasta el final de la generación del video. Ver el log de memoria cruda
-// estimada de abajo para el riesgo conocido en rutas muy largas.
-async function prepararTodosLosMosaicosSeguimiento(estado: EstadoVentanaMosaicos): Promise<void> {
-  const n = estado.metas.length;
-  if (n === 0) return;
+// Reemplaza por completo al esquema de mosaicos grandes pre-compuestos
+// (prepararTodosLosMosaicosSeguimiento, eliminada) -- acá no hay ninguna
+// composición de canvas en absoluto, cada tile se decodifica directo del
+// blob de red (ver cargarTileComoImageBitmap). Si falta un tile durante
+// Fase B, eso es un error de preparación (tile ausente del Map
+// `residentes`) -- Fase B nunca reintenta la descarga.
+async function prepararTilesZ17(
+  corredorPlaneado: Set<string>,
+  contadores: ContadoresTilesSeguimiento,
+): Promise<Map<string, ImageBitmap>> {
+  const claves = [...corredorPlaneado];
+  const n = claves.length;
+  console.log(`[tile-z17] tilesNecesarios=${n}`);
 
-  const meta0 = estado.metas[0];
-  const anchoFisicoPx = meta0.anchoPx * ESCALA_SALIDA_MOSAICO_SEGUIMIENTO;
-  const altoFisicoPx = meta0.altoPx * ESCALA_SALIDA_MOSAICO_SEGUIMIENTO;
-  const bytesPorMosaico = anchoFisicoPx * altoFisicoPx * 4; // RGBA sin comprimir
-  const mbTotalEstimado = (bytesPorMosaico * n) / 1_048_576;
-  console.log(
-    `[fase-a] preparando ${n} mosaicos de seguimiento -- dimensiones=${anchoFisicoPx}x${altoFisicoPx}px ` +
-      `(~${(bytesPorMosaico / 1_048_576).toFixed(1)}MB c/u sin comprimir) concurrencia=${CONCURRENCIA_PREPARACION_SEGUIMIENTO} ` +
-      `memoriaCrudaEstimadaTotal≈${mbTotalEstimado.toFixed(1)}MB`,
-  );
-  if (mbTotalEstimado > LIMITE_REFERENCIA_MEMORIA_MOSAICOS_MB) {
-    console.warn(
-      `[fase-a] riesgo de memoria -- la estimación (${mbTotalEstimado.toFixed(1)}MB) supera el límite de referencia ` +
-        `(${LIMITE_REFERENCIA_MEMORIA_MOSAICOS_MB}MB) para esta primera implementación de preload completo, sin cache ` +
-        `por lotes ni streaming todavía. Registrado como riesgo conocido, no se aplica ninguna estrategia nueva acá.`,
+  const bytesPorTile = TAM_TILE * TAM_TILE * 4; // RGBA sin comprimir
+  const mbEstimado = (bytesPorTile * n) / 1_048_576;
+  console.log(`[tile-z17] memoriaEstimadaMB=${mbEstimado.toFixed(1)}`);
+  if (mbEstimado > LIMITE_REFERENCIA_MEMORIA_TILES_MB) {
+    throw new Error(
+      `[tile-z17] la memoria estimada para los tiles Z17 de esta ruta (${mbEstimado.toFixed(1)}MB, ${n} tiles) ` +
+        `supera el límite de referencia (${LIMITE_REFERENCIA_MEMORIA_TILES_MB}MB) para esta primera implementación. ` +
+        `No se continúa automáticamente -- hace falta diseñar una estrategia de ventana/liberación antes de generar ` +
+        `el video para una ruta de este tamaño (ver diseño aprobado).`,
     );
   }
 
+  const residentes = new Map<string, ImageBitmap>();
+  let siguiente = 0;
+  let fallidos = 0;
   const tFaseAInicio = performance.now();
-  let siguienteIndice = 0;
-  let enVuelo = 0;
-  let maxSimultaneos = 0;
 
   async function trabajador(): Promise<void> {
-    while (siguienteIndice < n) {
-      const indice = siguienteIndice++;
-      enVuelo++;
-      maxSimultaneos = Math.max(maxSimultaneos, enVuelo);
-      estado.mosaicosEnGeneracion.add(indice);
-      const tMosaicoInicio = performance.now();
-      try {
-        const meta = estado.metas[indice];
-        const generado = await generarMapaEnZoom(
-          meta.centroPxX,
-          meta.centroPxY,
-          ZOOM_SEGUIMIENTO,
-          meta.anchoPx,
-          meta.altoPx,
-          false,
-          MAX_TILES_MOSAICO_SEGUIMIENTO,
-          estado.cache,
-          `indice=${indice}`,
-          ESCALA_SALIDA_MOSAICO_SEGUIMIENTO,
-          "bitmap",
-        );
-        estado.imagenes[indice] = generado?.bitmap ?? null;
-      } finally {
-        const tMosaicoMs = performance.now() - tMosaicoInicio;
-        console.log(`[fase-a] indice=${indice} listo en ${tMosaicoMs.toFixed(1)}ms tAbsMs=${performance.now().toFixed(0)}`);
-        estado.mosaicosEnGeneracion.delete(indice);
-        enVuelo--;
-      }
+    while (siguiente < n) {
+      const clave = claves[siguiente++];
+      const [tx, ty] = clave.split("/").map(Number);
+      const url = urlTile(TILE_SATELITE_URL, ZOOM_SEGUIMIENTO, tx, ty);
+      const bitmap = await cargarTileComoImageBitmap(url, contadores);
+      if (bitmap) residentes.set(clave, bitmap);
+      else fallidos++;
     }
   }
 
-  const trabajadores = Array.from({ length: Math.min(CONCURRENCIA_PREPARACION_SEGUIMIENTO, n) }, () => trabajador());
+  const trabajadores = Array.from({ length: Math.min(CONCURRENCIA_PREPARACION_TILES_Z17, Math.max(n, 1)) }, () => trabajador());
   await Promise.all(trabajadores);
 
   const tFaseAMs = performance.now() - tFaseAInicio;
-  console.log(
-    `[fase-a] preparación completa -- ${n} mosaicos, maxSimultaneos=${maxSimultaneos}, tiempoTotalMs=${tFaseAMs.toFixed(1)}`,
-  );
+  console.log(`[tile-z17] tilesPreparados=${residentes.size}`);
+  console.log(`[tile-z17] tilesFallidos=${fallidos}`);
+  console.log(`[tile-z17] preparación completa -- tiempoTotalMs=${tFaseAMs.toFixed(1)}`);
+  return residentes;
 }
 
-// Último mosaico que SÍ llegó a prepararse y mostrarse -- ver
-// seleccionarMosaico. Mientras el mosaico "actual" (según la posición real
-// de la cámara) todavía no esté listo, se sigue mostrando este en su lugar,
-// en vez de caer a la panorámica. Con Fase A preparando todo de antemano
-// esto no debería activarse en operación normal -- sigue siendo la misma
-// red de seguridad que ya existía antes de este cambio.
-interface UltimoMosaicoValido {
-  indice: number;
-  img: ImageBitmap;
-  meta: MosaicoSeguimientoMeta;
-}
-
-interface SeleccionMosaico {
-  indiceActual: number;
-  actual: ImageBitmap | null;
-  metaActual: MosaicoSeguimientoMeta | null;
-  siguiente: ImageBitmap | null;
-  metaSiguiente: MosaicoSeguimientoMeta | null;
-  // 0 = solo "actual" a la vista; 1 = ya cruzó del todo al "siguiente".
-  peso: number;
-  // Índice REAL de lo que hay en `actual` -- puede diferir de indiceActual
-  // (el índice geométrico según la posición de la cámara) cuando se cayó al
-  // último mosaico válido (ver ultimoValidoRef en seleccionarMosaico), null
-  // si no hay ninguno. Solo para instrumentación/diagnóstico.
-  indiceMostrado: number | null;
-  // Cuántos índices avanzó el while de seleccionarMosaico EN ESTE frame
-  // (0 en el caso normal) -- instrumentación temporal para detectar saltos
-  // anormales (ver el reporte del salto 1->15) y disparar la comparación de
-  // puntos GPS crudos en dibujarFrame.
-  pasosAvanzados: number;
-  // Índice del mosaico al que el while hubiera llegado SI se le dejaba
-  // avanzar libre, cuando en el camino detectó un hueco de cobertura (ver
-  // margenUtilPx dentro del while) -- null en operación normal. Cuando no
-  // es null, indiceActual/actual/etc. de este mismo objeto ya reflejan el
-  // índice de ORIGEN (congelado, revertido), no este destino -- es
-  // responsabilidad de dibujarFrame armar la transición panorámica de la
-  // Opción 5 usando este valor, no aplicarlo directo.
-  huecoDetectado: number | null;
-}
-
-// Decide, para la posición actual del patinador, qué mosaico(s) mostrar:
-// mientras esté dentro de radioZonaSeguraPx del mosaico activo, ese solo
-// (peso 0); al entrar en la banda de transición hacia radioLimitePx, cruza
-// en crossfade con el siguiente; al superar radioLimitePx (caso límite, con
-// el prefetch bien adelantado no debería notarse) fuerza el avance para no
-// quedarse mostrando un mosaico ya fuera de cobertura. `indiceRef` es
-// mutable y persiste entre cuadros -- el índice SOLO avanza, nunca
-// retrocede (la cámara nunca "vuelve" a un mosaico anterior aunque la ruta
-// geográficamente pase cerca de un tramo ya recorrido).
+// Dibuja los tiles Z17 visibles del viewport actual, directo desde la
+// grilla -- ver diseño aprobado "tiles Z17 directos". Reemplaza por
+// completo a seleccionarMosaico/dibujarMosaicosSeguimiento (eliminadas):
+// sin "mosaico actual/siguiente", sin crossfade entre tiles, sin
+// radioZonaSegura/radioLimite -- los tiles vecinos son la MISMA grilla,
+// entran/salen del viewport uno por uno según rangoTilesVisibles, nunca
+// cambian de escala/centro/sistema de coordenadas al cruzar de un tile a
+// otro (misma grilla, mismo origen global siempre).
 //
-// "Válido" ahora exige DOS cosas, no solo estar decodificado: además hay
-// que poder recortar la ventana de cámara actual (camaraZ17/escalaSeguimiento)
-// completamente DENTRO de ese mosaico (ver calcularRecorteMosaico/
-// recorteValido) -- con los márgenes ya calculados en
-// calcularMosaicosSeguimiento esto no debería fallar en operación normal,
-// es una red de seguridad para el caso límite (red muy lenta que deja el
-// índice geométrico muy adelantado respecto de lo decodificado). Si no es
-// válido, se sustituye por el último mosaico que sí lo fue
-// (ultimoValidoRef, mutado acá) -- nunca se desplaza la cámara ni se
-// clampea el recorte para "hacerlo entrar" (eso movería qué zona
-// geográfica se muestra). Sin crossfade hacia el siguiente mientras se
-// está mostrando el fallback.
-function seleccionarMosaico(
-  puntoActual: PuntoGps,
-  camaraZ17: { x: number; y: number },
-  escalaSeguimiento: number,
-  ventana: EstadoVentanaMosaicos,
-  indiceRef: { valor: number },
-  ultimoValidoRef: { valor: UltimoMosaicoValido | null },
-  // Instrumentación temporal (ver el reporte del salto 1->15): solo para
-  // loguear cada paso del while de abajo, no afecta ninguna decisión.
-  fraccionTotal: number,
-  // Clasificación GPS del tramo que se está atravesando AHORA MISMO (ver
-  // clasificarTramos en geo.ts, calculada una vez en generarVideoRecorridoInterno
-  // y evaluada por dibujarFrame para este frame puntual) -- false cuando ese
-  // tramo es "saltoGps". Mientras no sea confiable, el selector NO avanza
-  // indiceRef (evita el salto irreversible 1->15) NI calcula/aplica
-  // crossfade hacia el siguiente mosaico (evita mezclar basado en una
-  // distancia calculada con un punto GPS malo) -- el mosaico actual se
-  // mantiene al 100% tal cual estaba. En cuanto vuelve un tramo confiable,
-  // este mismo código retoma su comportamiento normal sin ningún estado
-  // especial de "reanudación".
-  tramoConfiable: boolean,
-): SeleccionMosaico {
-  const metas = ventana.metas;
-  const gx = lonAPixelX(puntoActual.lon, ZOOM_SEGUIMIENTO);
-  const gy = latAPixelY(puntoActual.lat, ZOOM_SEGUIMIENTO);
-
-  const indiceAlEntrar = indiceRef.valor;
-  let pasosAvanzados = 0;
-  // Índice desde el que arrancó el hueco detectado en este frame (ver Opción
-  // 5) -- el punto exacto al que hay que revertir indiceRef.valor una vez
-  // que el while termine su recorrido forward-only normal. null mientras no
-  // se detecta ningún hueco.
-  let indiceAntesDelHueco: number | null = null;
-  while (tramoConfiable && indiceRef.valor < metas.length - 1) {
-    const metaActual = metas[indiceRef.valor];
-    const distActual = Math.hypot(gx - metaActual.centroPxX, gy - metaActual.centroPxY);
-    if (distActual <= metaActual.radioLimitePx) break;
-
-    // Hueco de cobertura (Opción 5): si este candidato ya está más allá del
-    // borde FÍSICO absoluto que cualquier mosaico puede cubrir (no solo su
-    // radioLimitePx "blando"), ningún ajuste geométrico va a hacerlo válido
-    // -- es un hueco real entre puntos GPS, no una racha rápida con mosaicos
-    // reales en el medio. margenUtilPx se reconstruye desde radioLimitePx
-    // (que sí vive en el meta) y las mismas fracciones ya usadas en
-    // calcularMosaicosSeguimiento -- ningún valor nuevo.
-    if (indiceAntesDelHueco === null) {
-      const margenUtilPx = metaActual.radioLimitePx / (FRACCION_ZONA_SEGURA + FRACCION_BANDA_TRANSICION);
-      if (distActual > margenUtilPx) indiceAntesDelHueco = indiceRef.valor;
-    }
-
-    // Instrumentación temporal: un log por CADA paso del while, no solo el
-    // resultado final -- así "1 -> 15" se ve como 14 líneas individuales
-    // con la distancia real de cada una, en vez de un solo salto opaco.
-    console.log(
-      `[mosaico-salto] fraccionTotal=${fraccionTotal.toFixed(3)} paso indice ${indiceRef.valor}->${indiceRef.valor + 1} -- ` +
-        `lat=${puntoActual.lat.toFixed(6)} lon=${puntoActual.lon.toFixed(6)} ` +
-        `puntoZ17=(${gx.toFixed(2)},${gy.toFixed(2)}) centroMosaico=(${metaActual.centroPxX.toFixed(2)},${metaActual.centroPxY.toFixed(2)}) ` +
-        `distActual=${distActual.toFixed(2)} radioZonaSeguraPx=${metaActual.radioZonaSeguraPx.toFixed(2)} radioLimitePx=${metaActual.radioLimitePx.toFixed(2)}`,
-    );
-    // Ya superó incluso la banda de transición del mosaico actual -- avanza
-    // sin más (caso límite de red muy lenta o mosaicos mal calibrados).
-    indiceRef.valor++;
-    pasosAvanzados++;
-  }
-  if (pasosAvanzados > 0) {
-    console.log(
-      `[mosaico-salto] fraccionTotal=${fraccionTotal.toFixed(3)} total pasos en este frame=${pasosAvanzados} (indice ${indiceAlEntrar} -> ${indiceRef.valor})`,
-    );
-  }
-
-  // Se detectó un hueco: el while ya terminó su recorrido forward-only
-  // normal (llegó a indiceRef.valor -- ESE es el destino real, elegido con
-  // el mismo mecanismo de siempre, sin búsqueda libre). Se revierte acá,
-  // ANTES de calcular indiceActual/metaActual/etc. más abajo, para que el
-  // resto de esta función siga operando sobre el mosaico de ORIGEN
-  // (congelado) como si el while nunca hubiera avanzado -- dibujarFrame
-  // decide qué hacer con el destino reportado en huecoDetectado.
-  let huecoDetectado: number | null = null;
-  if (indiceAntesDelHueco !== null) {
-    huecoDetectado = indiceRef.valor;
-    indiceRef.valor = indiceAntesDelHueco;
-  }
-
-  const indiceActual = indiceRef.valor;
-  const metaActual = metas[indiceActual] ?? null;
-  const metaSiguiente = metas[indiceActual + 1] ?? null;
-  const imagenActual = ventana.imagenes[indiceActual] ?? null;
-
-  const actualUsable =
-    !!imagenActual &&
-    !!metaActual &&
-    recorteValido(calcularRecorteMosaico(camaraZ17, metaActual, escalaSeguimiento), metaActual);
-
-  if (actualUsable) {
-    ultimoValidoRef.valor = { indice: indiceActual, img: imagenActual as ImageBitmap, meta: metaActual as MosaicoSeguimientoMeta };
-  }
-
-  let peso = 0;
-  if (tramoConfiable && actualUsable && metaActual && metaSiguiente) {
-    const distActual = Math.hypot(gx - metaActual.centroPxX, gy - metaActual.centroPxY);
-    if (distActual > metaActual.radioZonaSeguraPx) {
-      const rango = metaActual.radioLimitePx - metaActual.radioZonaSeguraPx;
-      peso = rango > 0 ? clamp((distActual - metaActual.radioZonaSeguraPx) / rango, 0, 1) : 1;
-      if (peso >= 1) indiceRef.valor++; // terminó de cruzar: el próximo cuadro ya arranca en el nuevo índice
-    }
-  }
-
-  return {
-    indiceActual,
-    actual: actualUsable ? imagenActual : (ultimoValidoRef.valor?.img ?? null),
-    metaActual: actualUsable ? metaActual : (ultimoValidoRef.valor?.meta ?? null),
-    indiceMostrado: actualUsable ? indiceActual : (ultimoValidoRef.valor?.indice ?? null),
-    siguiente: metaSiguiente ? (ventana.imagenes[indiceActual + 1] ?? null) : null,
-    metaSiguiente,
-    peso,
-    pasosAvanzados,
-    huecoDetectado,
-  };
-}
-
-// Dibuja el fondo del tramo de seguimiento con recorte real (source crop) --
-// a diferencia de dibujarFondoMapaVideo, se llama FUERA del bloque
-// transformado por la cámara (transformación identidad), porque cada
-// recorte ya representa exactamente la ventana final -- dx/dy/dWidth/dHeight
-// son directamente 0,0,ANCHO_VIDEO,ALTO_VIDEO, sin necesitar ninguna
-// transformación anidada.
+// Geometría: para cualquier punto Z17 (gx,gy), su posición en pantalla es
+// `mitad + escalaCropSeguimiento×(gz17-camaraZ17)` -- la misma
+// transformación lineal ya demostrada algebraicamente en calcularCamaraZ17
+// -- se aplica acá directo a la esquina superior-izquierda de cada tile
+// visible. Con escalaCropSeguimiento=1 (régimen normal) el tile se dibuja
+// 1:1 sin reescalar (drawImage de 3 argumentos); con !=1 (fase
+// "convergiendo", ver dibujarFrame) se reescala con la forma de 9
+// argumentos -- misma fórmula general, sin caso especial para ese
+// instante, la continuidad geométrica ya validada se preserva tal cual.
 //
-// La panorámica es el ÚLTIMO recurso, nunca una capa más de un crossfade de
-// seguimiento -- mezclar "panorámica completa" (toda la ruta) con "un
-// mosaico al 45% de opacidad" (un sector angosto de calles) son dos escalas
-// geográficas completamente distintas superpuestas, y eso es justo lo que
-// se veía como "rectángulos que no corresponden". Cuatro casos, en orden:
-//   1. actual válido + siguiente válido -> crossfade normal (A×(1-peso)+B×peso).
-//   2. actual inválido + siguiente válido -> siguiente SOLO, al 100% (nunca
-//      mezclado parcialmente con la panorámica).
-//   3. actual válido + siguiente inválido (o sin crossfade en curso) ->
-//      actual solo, al 100%.
-//   4. ningún mosaico válido -> panorámica completa, sola.
-// "Válido" acá es recorteValido() -- `seleccion.actual` ya viene
-// pre-validado por seleccionarMosaico (sustituido por el último válido si
-// hacía falta), así que en la práctica casi siempre pasa; `seleccion.siguiente`
-// recién se valida acá, es la primera vez que se intenta dibujar.
+// `alphaGlobal` (default 1): exclusivo del crossfade PANORAMICA_HUECO->Z17
+// (ver dibujarCuadroVideo, CROSSFADE_HUECO_Z17_FRAMES) y del crossfade del
+// intro -- con <1, el llamador ya dibujó el fondo opaco debajo, así que
+// los tiles se componen encima como cross-dissolve estándar sobre fondo
+// opaco, sin canvas intermedio.
 //
-// `modoIntro` es la ÚNICA excepción sancionada a "nunca panorámica + mosaico
-// parcial": la secuencia de acercamiento (ver dibujarFondoIntro en
-// generarVideoRecorrido) arma a propósito una selección con actual=null,
-// siguiente=mosaico 0 -- ahí SÍ corresponde mezclar panorámica de base con
-// el mosaico entrando en crossfade, es exactamente la transición deliberada
-// y perfectamente alineada (mismo camaraZ17) que se busca. Fuera de esa
-// secuencia (seguimiento real) modoIntro siempre es false.
-// Devuelve un descriptor de texto de QUÉ SE DIBUJÓ REALMENTE -- instrumentación
-// temporal (ver el log change-gated en dibujarCuadroVideo y el overlay de
-// diagnóstico en pantalla) para poder confirmar con evidencia de ejecución,
-// no suposiciones, si el video está usando mosaicos Z17 o cayendo a la
-// panorámica de respaldo, y en qué instante exacto. No cambia ningún
-// resultado visual (mismos 4 casos, mismo orden, mismos drawImage) --
-// únicamente reporta cuál de ellos se ejecutó.
-function dibujarMosaicosSeguimiento(
+// Si un tile visible no está en `tilesResidentes` (ausente del corredor
+// preparado por Fase A, o falló la descarga): eso es un ERROR DE
+// PREPARACIÓN, nunca dispara una descarga acá (Fase B prohibido) -- se
+// rellena con el mismo color sólido que ya usa el resto del archivo para
+// tiles fallidos, y se loguea.
+function dibujarTilesZ17(
   ctx: CanvasRenderingContext2D,
-  seleccion: SeleccionMosaico,
-  mapaImgRespaldo: HTMLImageElement | null,
+  tilesResidentes: Map<string, ImageBitmap>,
   camaraZ17: { x: number; y: number },
-  escalaSeguimiento: number,
-  modoIntro = false,
-  // Multiplicador aplicado a CUALQUIER alpha que este dibujo use (crossfade
-  // interno actual/siguiente incluido) -- exclusivo del crossfade
-  // PANORAMICA_HUECO->Z17 (ver dibujarCuadroVideo y CROSSFADE_HUECO_Z17_FRAMES):
-  // con alphaGlobal<1, el llamador ya dibujó PANORAMICA_HUECO opaca debajo,
-  // así que el mosaico se compone encima como un cross-dissolve estándar
-  // sobre fondo opaco -- sin canvas intermedio. 1 (por defecto) = sin
-  // cambio de comportamiento respecto a antes de este parámetro.
+  escalaCropSeguimiento: number,
   alphaGlobal = 1,
-): string {
-  function intentarDibujar(img: ImageBitmap, meta: MosaicoSeguimientoMeta, alpha: number): boolean {
-    if (alpha <= 0) return false;
-    const r = calcularRecorteMosaico(camaraZ17, meta, escalaSeguimiento);
-    if (!recorteValido(r, meta)) return false;
-    ctx.globalAlpha = alpha * alphaGlobal;
-    ctx.drawImage(img, r.sx, r.sy, r.sWidth, r.sHeight, 0, 0, ANCHO_VIDEO, ALTO_VIDEO);
-    ctx.globalAlpha = 1;
-    return true;
-  }
-
-  if (modoIntro) {
-    if (mapaImgRespaldo) ctx.drawImage(mapaImgRespaldo, 0, 0, ANCHO_VIDEO, ALTO_VIDEO);
-    if (seleccion.siguiente && seleccion.metaSiguiente) {
-      intentarDibujar(seleccion.siguiente, seleccion.metaSiguiente, seleccion.peso);
+): { descriptor: string; tilesVisibles: number; tilesFaltantes: number } {
+  const { tileXMin, tileXMax, tileYMin, tileYMax } = rangoTilesVisibles(camaraZ17, escalaCropSeguimiento);
+  let dibujados = 0;
+  let faltantes = 0;
+  ctx.globalAlpha = alphaGlobal;
+  for (let ty = tileYMin; ty <= tileYMax; ty++) {
+    for (let tx = tileXMin; tx <= tileXMax; tx++) {
+      const pantallaX = ANCHO_VIDEO / 2 + (tx * TAM_TILE - camaraZ17.x) * escalaCropSeguimiento;
+      const pantallaY = ALTO_VIDEO / 2 + (ty * TAM_TILE - camaraZ17.y) * escalaCropSeguimiento;
+      const tam = TAM_TILE * escalaCropSeguimiento;
+      const tile = tilesResidentes.get(`${tx}/${ty}`);
+      if (!tile) {
+        faltantes++;
+        console.error(`[tile-z17] tile faltante en Fase B -- x=${tx} y=${ty} (error de preparación, no se descarga)`);
+        ctx.fillStyle = "#1a1108";
+        ctx.fillRect(pantallaX, pantallaY, tam, tam);
+        continue;
+      }
+      if (escalaCropSeguimiento === 1) {
+        ctx.drawImage(tile, pantallaX, pantallaY);
+      } else {
+        ctx.drawImage(tile, 0, 0, TAM_TILE, TAM_TILE, pantallaX, pantallaY, tam, tam);
+      }
+      dibujados++;
     }
-    return `INTRO peso=${seleccion.peso.toFixed(2)}`;
   }
-
-  const hayCrossfade = seleccion.peso > 0 && !!seleccion.siguiente && !!seleccion.metaSiguiente;
-
-  let actualOk = false;
-  if (seleccion.actual && seleccion.metaActual) {
-    actualOk = intentarDibujar(seleccion.actual, seleccion.metaActual, 1);
-  }
-
-  if (actualOk && hayCrossfade) {
-    // Caso 1: crossfade normal -- ambos representan la misma ventana real.
-    intentarDibujar(seleccion.siguiente as ImageBitmap, seleccion.metaSiguiente as MosaicoSeguimientoMeta, seleccion.peso);
-    return `CROSSFADE ${seleccion.indiceMostrado}→${seleccion.indiceActual + 1} peso=${seleccion.peso.toFixed(2)}`;
-  }
-
-  if (!actualOk && hayCrossfade) {
-    // Caso 2: "actual" no es válido -- se usa "siguiente" al 100%, no al peso
-    // parcial (eso sería exactamente la mezcla panorámica+parcial que no
-    // queremos).
-    const siguienteOk = intentarDibujar(
-      seleccion.siguiente as ImageBitmap,
-      seleccion.metaSiguiente as MosaicoSeguimientoMeta,
-      1,
-    );
-    if (siguienteOk) return `MOSAICO indice=${seleccion.indiceActual + 1} (solo siguiente -- actual invalido/recorteValido=false)`;
-  }
-
-  if (actualOk) return `MOSAICO indice=${seleccion.indiceMostrado}`; // Caso 3: ya dibujado arriba, nada más que hacer.
-
-  // Caso 4: ningún mosaico válido -- último recurso.
-  if (mapaImgRespaldo) {
-    ctx.drawImage(mapaImgRespaldo, 0, 0, ANCHO_VIDEO, ALTO_VIDEO);
-  }
-  return `PANORAMICA_FALLBACK (recorteValido=false para actual${hayCrossfade ? " y siguiente" : ""})`;
+  ctx.globalAlpha = 1;
+  return {
+    descriptor: `Z17 tiles=${dibujados}${faltantes > 0 ? ` faltantes=${faltantes}` : ""}`,
+    tilesVisibles: dibujados,
+    tilesFaltantes: faltantes,
+  };
 }
 
 function iconoDistancia(cx: number, y: number): string {
@@ -2660,16 +2341,12 @@ interface ConfigVideo {
 // "Z17 M3", "Z17 M3→M4" (crossfade), "FALLBACK PANORAMICA".
 function dibujarTextoDiagnosticoFondo(ctx: CanvasRenderingContext2D, descriptor: string): void {
   let texto = descriptor;
-  const crossfade = descriptor.match(/^CROSSFADE (\S+)→(\d+)/);
-  const crossfadeHueco = descriptor.match(/^CROSSFADE_HUECO_Z17 indice=(\S+) peso=(\S+)/);
-  const mosaico = descriptor.match(/^MOSAICO indice=(\S+)/);
-  if (crossfade) texto = `Z17 M${crossfade[1]}→M${crossfade[2]}`;
-  else if (crossfadeHueco) texto = `Z17 HUECO→M${crossfadeHueco[1]} (${crossfadeHueco[2]})`;
-  else if (mosaico) texto = `Z17 M${mosaico[1]}`;
+  const crossfadeHueco = descriptor.match(/^CROSSFADE_HUECO_Z17 peso=(\S+) Z17 tiles=(\d+)/);
+  const z17 = descriptor.match(/^Z17 tiles=(\d+)/);
+  if (crossfadeHueco) texto = `Z17 HUECO→Z17 (${crossfadeHueco[1]}) tiles=${crossfadeHueco[2]}`;
+  else if (z17) texto = `Z17 tiles=${z17[1]}`;
   else if (descriptor.startsWith("PANORAMICA_HUECO")) texto = "PANORAMICA (hueco)";
-  else if (descriptor.startsWith("PANORAMICA_FALLBACK")) texto = "FALLBACK PANORAMICA";
   else if (descriptor.startsWith("PANORAMICA_OUTRO")) texto = "PANORAMICA (outro)";
-  else if (descriptor.startsWith("INTRO")) texto = "Z17 INTRO";
 
   ctx.save();
   ctx.font = "700 20px monospace";
@@ -2678,7 +2355,7 @@ function dibujarTextoDiagnosticoFondo(ctx: CanvasRenderingContext2D, descriptor:
   const anchoCaja = ctx.measureText(texto).width + 20;
   ctx.fillStyle = "rgba(0,0,0,0.65)";
   ctx.fillRect(ANCHO_VIDEO - anchoCaja - 12, ALTO_VIDEO - 44, anchoCaja, 32);
-  ctx.fillStyle = descriptor.startsWith("PANORAMICA_FALLBACK") ? "#ff4d4d" : "#39ff6a";
+  ctx.fillStyle = descriptor.includes("faltantes=") ? "#ff4d4d" : "#39ff6a";
   ctx.fillText(texto, ANCHO_VIDEO - anchoCaja - 2, ALTO_VIDEO - 28);
   ctx.restore();
 }
@@ -2695,6 +2372,24 @@ interface DiagnosticoFrame {
   indiceBase: number | null;
   lat: number | null;
   lon: number | null;
+  // Diagnóstico temporal (investigación STALL real vs presión de memoria en
+  // Z17, ver [render-diag]/[tile-z17-frame] en el loop principal): cuánto
+  // tardó dibujar el fondo este cuadro completo (dibujarTilesZ17 y/o
+  // dibujarFondoMapaVideo, lo que haya corrido) -- línea base directa para
+  // comparar Z17 cercano contra panorámica amplia. null si por algún motivo
+  // no se llegó a medir.
+  tiempoFondoMs: number | null;
+  // Cuánto tardó ESPECÍFICAMENTE dibujarTilesZ17 (subconjunto de
+  // tiempoFondoMs) -- null cuando Z17 no se dibujó este cuadro (hueco/outro).
+  tiempoDrawTilesMs: number | null;
+  // camaraZ17/escalaCropSeguimiento de este cuadro -- null fuera de Z17.
+  camaraZ17X: number | null;
+  camaraZ17Y: number | null;
+  escalaCropSeguimiento: number | null;
+  // Tiles realmente dibujados/faltantes este cuadro (ver dibujarTilesZ17)
+  // -- null fuera de Z17.
+  tilesVisibles: number | null;
+  tilesFaltantes: number | null;
 }
 
 // Dibuja cada cuadro del video rediseñado directamente en el canvas (sin
@@ -2728,14 +2423,15 @@ function dibujarCuadroVideo(
   // del outro); irrelevante mientras haya seleccionMosaico.
   escalaInicioOutro: number,
   // Posición de cámara en píxeles globales de ZOOM_SEGUIMIENTO (ver
-  // calcularCamaraZ17) -- null fuera del tramo de seguimiento. Junto con
-  // escalaCropSeguimiento, define el recorte real de cada mosaico (ver
-  // dibujarMosaicosSeguimiento/calcularRecorteMosaico).
+  // calcularCamaraZ17) -- null fuera del tramo de seguimiento (o cuando
+  // Z17 no tiene cobertura este cuadro, ver dibujarFrame/coberturaCompletaZ17).
+  // Junto con escalaCropSeguimiento, define qué tiles se dibujan (ver
+  // dibujarTilesZ17).
   camaraZ17: { x: number; y: number } | null,
-  // Escala para calcularRecorteMosaico, YA resuelta por el llamador (ver
+  // Escala para dibujarTilesZ17, YA resuelta por el llamador (ver
   // dibujarFrame): ESCALA_SEGUIMIENTO en seguimiento normal, o
   // camara.escala/factorSeguimiento mientras la cámara sigue convergiendo
-  // tras reactivarse un mosaico Z17 (fase "convergiendo" -- ver FaseHueco).
+  // tras reactivarse Z17 (fase "convergiendo" -- ver FaseHueco).
   // Deliberadamente NO es camara.escala directo -- esa se sigue usando tal
   // cual para el translate/scale del trazo/marcador/etiquetas, sin cambios.
   escalaCropSeguimiento: number,
@@ -2744,21 +2440,24 @@ function dibujarCuadroVideo(
   // cierre real (fraccionTotal > FRACCION_TRAZO_COMPLETO), sin este flag
   // ambas situaciones caían en el mismo `else` (ver diseño aprobado).
   modoHuecoActivo = false,
-  // Cuántos cuadros lleva la fase "convergiendo" desde que Z17 se
-  // reactivó (ver EstadoHueco.cuadrosDesdeConvergencia) -- null fuera de
-  // esa ventana. Mientras sea < CROSSFADE_HUECO_Z17_FRAMES, el bloque de
-  // fondo de abajo dibuja PANORAMICA_HUECO opaca debajo del mosaico Z17
-  // con un peso creciente -- la continuidad geométrica entre ambas
-  // fuentes en este tramo ya está demostrada algebraicamente (mismo
-  // centro, misma escala), así que esto solo suaviza la diferencia de
-  // imagen satelital, no un salto de cámara.
-  cuadrosDesdeConvergencia: number | null = null,
+  // Peso (0..1) con el que se dibuja Z17 este cuadro -- null cuando
+  // camaraZ17 es null o Z17 no tiene cobertura (cae a
+  // PANORAMICA_HUECO/OUTRO). 1 es el caso normal (Z17 opaco, sin nada
+  // debajo); <1 dibuja PANORAMICA_HUECO opaca debajo primero y los tiles
+  // encima con este peso -- cubre TANTO el crossfade PANORAMICA_HUECO->Z17
+  // (ver CROSSFADE_HUECO_Z17_FRAMES) COMO el crossfade del intro
+  // (panorámica->primer tile, ver dibujarFondoIntro), con la MISMA lógica
+  // unificada -- la continuidad geométrica entre PANORAMICA_HUECO y Z17 en
+  // ese tramo ya está demostrada algebraicamente (mismo centro, misma
+  // escala), así que esto solo suaviza la diferencia de imagen satelital,
+  // no un salto de cámara.
+  pesoZ17: number | null = null,
   pulsoVelMax = 0,
   suavizadoEtiquetas: Map<number, { x: number; y: number }> = new Map(),
-  // Solo se pasa (no-null) durante el tramo de seguimiento -- ver
-  // generarVideoRecorrido. En el tramo final (panorámica + resumen) va
-  // null y el fondo sigue siendo dibujarFondoMapaVideo, sin cambios.
-  seleccionMosaico: SeleccionMosaico | null = null,
+  // Tiles Z17 residentes (ver prepararTilesZ17) -- Map vacío fuera del
+  // tramo de seguimiento (outro), sin efecto ahí porque camaraZ17/pesoZ17
+  // ya son null.
+  tilesZ17: Map<string, ImageBitmap> = new Map(),
   // Solo true durante el intro (panorámica/pausa/acercamiento, ver
   // generarVideoRecorrido): dibuja el fondo (con la cámara/mosaico que
   // corresponda) y corta ahí -- sin trazo, marcador, etiquetas, marca de
@@ -2841,23 +2540,40 @@ function dibujarCuadroVideo(
   // transformación IDENTIDAD (antes del translate/scale/translate de más
   // abajo), porque cada uno arma su propio recorte/transformación ya
   // resuelto en coordenadas finales de pantalla.
+  // Diagnóstico temporal (investigación STALL real vs presión de memoria
+  // en Z17 cercano, ver [render-diag]/[tile-z17-frame] en el loop
+  // principal): mide el bloque de fondo completo (cualquiera de las 3
+  // ramas de abajo) y, por separado, solo dibujarTilesZ17 -- línea base
+  // directa Z17 contra panorámica amplia -- sin efecto en el dibujo.
+  const tFondoDiagInicio = performance.now();
   let descriptorFondo: string | null = null;
-  if (seleccionMosaico && camaraZ17) {
-    const enCrossfadeHuecoZ17 = cuadrosDesdeConvergencia !== null && cuadrosDesdeConvergencia < CROSSFADE_HUECO_Z17_FRAMES;
-    if (enCrossfadeHuecoZ17) {
-      // PANORAMICA_HUECO opaca debajo, Z17 encima con peso creciente --
-      // cross-dissolve estándar sobre fondo opaco, sin canvas intermedio
-      // (ver alphaGlobal en dibujarMosaicosSeguimiento). null en vez de
-      // mapaDetalladoImg y 1 en vez de escalaInicioOutro: PANORAMICA_HUECO
-      // usa exclusivamente mapaImg (ver diseño aprobado -- a la escala
-      // ancha de un hueco, el detalle extra de mapaDetalladoImg no aporta
-      // nada perceptible, y evita inventar una fórmula de crossfade nueva).
+  let tiempoDrawTilesMs: number | null = null;
+  let tilesVisiblesDiag: number | null = null;
+  let tilesFaltantesDiag: number | null = null;
+  if (camaraZ17 && pesoZ17 !== null) {
+    if (pesoZ17 < 1) {
+      // PANORAMICA_HUECO (o panorámica base durante el intro) opaca
+      // debajo, Z17 encima con peso creciente -- cross-dissolve estándar
+      // sobre fondo opaco, sin canvas intermedio (ver alphaGlobal en
+      // dibujarTilesZ17). null en vez de mapaDetalladoImg y 1 en vez de
+      // escalaInicioOutro: PANORAMICA_HUECO usa exclusivamente mapaImg
+      // (ver diseño aprobado -- a la escala ancha de un hueco, el detalle
+      // extra de mapaDetalladoImg no aporta nada perceptible, y evita
+      // inventar una fórmula de crossfade nueva).
       dibujarFondoMapaVideo(ctx, mapaImg, null, factorDetalle, camara, 1);
-      const pesoZ17 = clamp((cuadrosDesdeConvergencia as number) / CROSSFADE_HUECO_Z17_FRAMES, 0, 1);
-      dibujarMosaicosSeguimiento(ctx, seleccionMosaico, mapaImg, camaraZ17, escalaCropSeguimiento, soloFondo, pesoZ17);
-      descriptorFondo = `CROSSFADE_HUECO_Z17 indice=${seleccionMosaico.indiceActual} peso=${pesoZ17.toFixed(2)}`;
+      const tTilesInicio = performance.now();
+      const resultado = dibujarTilesZ17(ctx, tilesZ17, camaraZ17, escalaCropSeguimiento, pesoZ17);
+      tiempoDrawTilesMs = performance.now() - tTilesInicio;
+      tilesVisiblesDiag = resultado.tilesVisibles;
+      tilesFaltantesDiag = resultado.tilesFaltantes;
+      descriptorFondo = `CROSSFADE_HUECO_Z17 peso=${pesoZ17.toFixed(2)} ${resultado.descriptor}`;
     } else {
-      descriptorFondo = dibujarMosaicosSeguimiento(ctx, seleccionMosaico, mapaImg, camaraZ17, escalaCropSeguimiento, soloFondo);
+      const tTilesInicio = performance.now();
+      const resultado = dibujarTilesZ17(ctx, tilesZ17, camaraZ17, escalaCropSeguimiento, 1);
+      tiempoDrawTilesMs = performance.now() - tTilesInicio;
+      tilesVisiblesDiag = resultado.tilesVisibles;
+      tilesFaltantesDiag = resultado.tilesFaltantes;
+      descriptorFondo = resultado.descriptor;
     }
   } else if (modoHuecoActivo) {
     // Camino independiente de PANORAMICA_OUTRO (ver diseño aprobado) --
@@ -2871,6 +2587,7 @@ function dibujarCuadroVideo(
     dibujarFondoMapaVideo(ctx, mapaImg, mapaDetalladoImg, factorDetalle, camara, escalaInicioOutro);
     descriptorFondo = "PANORAMICA_OUTRO";
   }
+  const tFondoDiagMs = performance.now() - tFondoDiagInicio;
 
   if (refDiagnosticoFondo) {
     // Log en consola SOLO al cambiar (evita 30 líneas por segundo); el texto
@@ -2892,6 +2609,13 @@ function dibujarCuadroVideo(
       indiceBase: frame.indiceBase,
       lat: frame.posicionActual?.lat ?? null,
       lon: frame.posicionActual?.lon ?? null,
+      tiempoFondoMs: tFondoDiagMs,
+      tiempoDrawTilesMs,
+      camaraZ17X: camaraZ17?.x ?? null,
+      camaraZ17Y: camaraZ17?.y ?? null,
+      escalaCropSeguimiento: camaraZ17 ? escalaCropSeguimiento : null,
+      tilesVisibles: tilesVisiblesDiag,
+      tilesFaltantes: tilesFaltantesDiag,
     };
   }
 
@@ -3189,7 +2913,7 @@ async function generarVideoRecorridoInterno(
   // sirviendo un bundle viejo, así que sería cache HTTP normal del
   // navegador/CDN.
   console.log(
-    `[video] build activo -- MAX_TILES_MOSAICO_SEGUIMIENTO=${MAX_TILES_MOSAICO_SEGUIMIENTO} LIMITE_CACHE_TILES_SEGUIMIENTO=${LIMITE_CACHE_TILES_SEGUIMIENTO} ZOOM_SEGUIMIENTO=${ZOOM_SEGUIMIENTO} ESCALA_SEGUIMIENTO=${ESCALA_SEGUIMIENTO} FACTOR_COBERTURA_MOSAICO=${FACTOR_COBERTURA_MOSAICO}`,
+    `[video] build activo -- arquitectura=tiles-z17 LIMITE_CACHE_TILES_SEGUIMIENTO=${LIMITE_CACHE_TILES_SEGUIMIENTO} ZOOM_SEGUIMIENTO=${ZOOM_SEGUIMIENTO} ESCALA_SEGUIMIENTO=${ESCALA_SEGUIMIENTO} LIMITE_REFERENCIA_MEMORIA_TILES_MB=${LIMITE_REFERENCIA_MEMORIA_TILES_MB}`,
   );
 
   const [logoGrandeDataUrl, mapa, avatarDataUrl] = await Promise.all([
@@ -3253,15 +2977,13 @@ async function generarVideoRecorridoInterno(
   // ya cae al respaldo vectorial completo, sin mosaicos ni escala dinámica.
   const factorSeguimiento = mapa ? 2 ** (ZOOM_SEGUIMIENTO - mapa.zoom) : 1;
 
-  // Mosaicos de la cámara de seguimiento (ver comentario largo antes de
-  // calcularMosaicosSeguimiento): se calculan sobre la ruta simplificada
-  // (mismo criterio que ya usa dividirEnTramosParaDibujo/simplificarRutaParaDibujo
-  // en el mapa en vivo, acá para que el jitter normal del GPS no arme
-  // mosaicos de más).
-  const puntosSimplificadosSeguimiento = simplificarRutaParaDibujo(datos.puntos);
-  const mosaicosSeguimiento = mapa ? calcularMosaicosSeguimiento(puntosSimplificadosSeguimiento) : [];
-  console.log(`[video] mosaicos planificados=${mosaicosSeguimiento.length}${mapa ? "" : " (sin panorámica -- mosaicos deshabilitados)"}`);
-  const ventanaMosaicos = crearVentanaMosaicos(mosaicosSeguimiento, cacheTiles);
+  // Corredor de tiles Z17 de la cámara de seguimiento (ver diseño
+  // aprobado, "Opción C -- tiles Z17 directos"): a diferencia del viejo
+  // esquema de mosaicos, esto se calcula directamente sobre datos.puntos
+  // reales (sin simplificar) -- cada tile es una descarga chica e
+  // independiente, así que no hay costo por punto que amerite reducir la
+  // resolución de la ruta primero.
+  const corredorTilesZ17 = mapa ? construirCorredorTilesZ17(datos.puntos, clasificacionTramos) : new Set<string>();
   // Instrumentación temporal: qué fondo se dibujó REALMENTE en el cuadro
   // anterior (ver dibujarCuadroVideo/dibujarTextoDiagnosticoFondo) -- para
   // loguear en consola solo al cambiar, no 30 veces por segundo.
@@ -3270,20 +2992,14 @@ async function generarVideoRecorridoInterno(
   // en el loop principal más abajo) -- snapshot mutado por dibujarCuadroVideo
   // en CADA cuadro (no solo al cambiar).
   const refDiagnosticoFrame: { valor: DiagnosticoFrame | null } = { valor: null };
-  const indiceMosaicoRef = { valor: 0 };
-  // Último mosaico válido mostrado (ver seleccionarMosaico) -- todavía
-  // ninguno al arrancar, se llena solo cuando el mosaico 0 termine de
-  // decodificar más abajo.
-  const ultimoMosaicoValidoRef: { valor: UltimoMosaicoValido | null } = { valor: null };
-  if (mosaicosSeguimiento.length > 0) {
-    // Fase A (ver diseño aprobado): prepara TODOS los mosaicos de la ruta
-    // -- no solo los primeros -- antes de dibujar el primer cuadro y bien
-    // antes de arrancar MediaRecorder (ver más abajo). Reemplaza al viejo
-    // "await mantenerVentana(ventanaMosaicos, 0, null)" que solo dejaba
-    // listo el entorno del mosaico 0 y confiaba en que el resto se fuera
-    // resolviendo en vivo durante la grabación (esa era la causa raíz de
-    // los congelamientos: ver prepararTodosLosMosaicosSeguimiento).
-    await prepararTodosLosMosaicosSeguimiento(ventanaMosaicos);
+  let tilesZ17Residentes: Map<string, ImageBitmap> = new Map();
+  if (corredorTilesZ17.size > 0) {
+    // Fase A (ver diseño aprobado): descarga y decodifica TODOS los tiles
+    // del corredor -- no solo los primeros -- antes de dibujar el primer
+    // cuadro y bien antes de arrancar MediaRecorder (ver más abajo). Nunca
+    // se descarga ni decodifica un tile durante Fase B (ver dibujarFrame):
+    // si falta uno ahí, es un error de preparación, no un fetch pendiente.
+    tilesZ17Residentes = await prepararTilesZ17(corredorTilesZ17, cacheTiles.contadores);
   }
 
   const { punto: puntoVelMax, indice: indiceVelMax, kmh: kmhVelMax } = velocidadMaximaConPunto(datos.puntos);
@@ -3304,7 +3020,6 @@ async function generarVideoRecorridoInterno(
     const siguiente = datos.puntos[Math.min(datos.puntos.length - 1, iv + 1)];
     const distKm = distanciaHaversineKm(anterior, actual);
     const dtSeg = (actual.timestamp - anterior.timestamp) / 1000;
-    const enCadenaMosaicos = puntosSimplificadosSeguimiento.includes(actual);
     console.warn(`[vel-max] indice=${iv}/${datos.puntos.length - 1} kmhReportado=${kmhVelMax.toFixed(1)}`);
     console.warn(
       `[vel-max] punto antes-del-anterior: lat=${antesDelAnterior.lat.toFixed(6)} lon=${antesDelAnterior.lon.toFixed(6)} t=${antesDelAnterior.timestamp}`,
@@ -3314,9 +3029,6 @@ async function generarVideoRecorridoInterno(
     console.warn(`[vel-max] punto siguiente: lat=${siguiente.lat.toFixed(6)} lon=${siguiente.lon.toFixed(6)} t=${siguiente.timestamp}`);
     console.warn(
       `[vel-max] anterior->actual: distancia=${distKm.toFixed(4)}km dt=${dtSeg.toFixed(2)}s velocidad=${kmhVelMax.toFixed(1)}km/h`,
-    );
-    console.warn(
-      `[vel-max] ¿"actual" pertenece a puntosSimplificadosSeguimiento (la cadena usada por calcularMosaicosSeguimiento)? ${enCadenaMosaicos}`,
     );
   } else {
     console.warn(`[vel-max] velocidadMaximaConPunto no encontró ningún tramo confiable (indiceVelMax=${indiceVelMax})`);
@@ -3489,21 +3201,18 @@ async function generarVideoRecorridoInterno(
     const frame = estadoEnFraccion(datos, distanciaAcumuladaKm, fraccionTrazo);
     const focoActual = frame.posicionActual ?? datos.puntos[datos.puntos.length - 1];
     const focoTrazandoPx = { x: x(focoActual.lon), y: y(focoActual.lat) };
-    // Tramo GPS que se está atravesando AHORA MISMO (ver indiceBase en
-    // FrameAnimado / clasificarTramos en geo.ts) -- única fuente de verdad
-    // compartida entre el selector de mosaicos y el corte del trazado.
-    const tramoConfiable =
-      frame.indiceBase === null || clasificacionTramos[frame.indiceBase + 1] !== "saltoGps";
 
     const enSeguimiento = fraccionTotal <= FRACCION_TRAZO_COMPLETO;
     let camara: EstadoCamara;
-    let seleccionMosaico: SeleccionMosaico | null = null;
     let camaraZ17: { x: number; y: number } | null = null;
-    // Escala para calcularRecorteMosaico (sites 1207/1283) -- ESCALA_SEGUIMIENTO
-    // en seguimiento normal ("ninguno"), o camara.escala/factorSeguimiento
-    // mientras la cámara sigue convergiendo tras un hueco ("convergiendo",
-    // ver más abajo). Sin efecto fuera del tramo de seguimiento (outro),
-    // donde seleccionMosaico/camaraZ17 quedan null y este valor no se usa.
+    // Peso (0..1) con el que se dibuja Z17 este cuadro -- null mientras no
+    // corresponda dibujarlo (ver dibujarCuadroVideo/dibujarTilesZ17).
+    let pesoZ17: number | null = null;
+    // Escala para dibujarTilesZ17 -- ESCALA_SEGUIMIENTO en seguimiento
+    // normal ("ninguno"), o camara.escala/factorSeguimiento mientras la
+    // cámara sigue convergiendo tras un hueco ("convergiendo", ver más
+    // abajo). Sin efecto fuera del tramo de seguimiento (outro), donde
+    // camaraZ17/pesoZ17 quedan null y este valor no se usa.
     let escalaCropSeguimiento = ESCALA_SEGUIMIENTO;
 
     if (enSeguimiento) {
@@ -3551,16 +3260,17 @@ async function generarVideoRecorridoInterno(
       camara = suavizarCamara(objetivoCrudo, camaraSuavizadaRef.valor, fraccionTotal);
       camaraSuavizadaRef.valor = { cx: camara.cx, cy: camara.cy };
 
-      // Cámara de mosaicos: solo aplica durante el trazo (nunca en el tramo
-      // final, que sigue usando la panorámica de siempre). El índice de
-      // mosaico activo (indiceMosaicoRef) es mutable y persiste entre
-      // llamadas -- seleccionarMosaico lo avanza cuando corresponde. A
-      // diferencia del esquema anterior, acá NO se dispara ningún
-      // fetch/composición/preparación de mosaicos cuando el índice avanza
-      // -- Fase A (prepararTodosLosMosaicosSeguimiento) ya dejó
-      // ventanaMosaicos.imagenes completo de antemano, así que este bloque
+      // Cámara de tiles Z17: solo aplica durante el trazo (nunca en el
+      // tramo final, que sigue usando la panorámica de siempre). A
+      // diferencia del esquema de mosaicos, acá NO hay ningún "índice
+      // activo" que avanzar -- la pregunta en cada frame es simplemente
+      // "¿están preparados todos los tiles del viewport en esta posición
+      // de cámara?" (coberturaCompletaZ17, contra el corredor planeado en
+      // Fase A). Si la respuesta es sí, se dibuja Z17; si no, se cae a la
+      // panorámica de hueco. Fase A (prepararTilesZ17) ya dejó
+      // tilesZ17Residentes completo de antemano, así que este bloque
       // (Fase B) solo lee de ahí, nunca escribe.
-      if (mosaicosSeguimiento.length > 0 && mapa) {
+      if (corredorTilesZ17.size > 0 && mapa) {
         // Cuenta cuadros de "convergiendo" para el crossfade visual
         // PANORAMICA_HUECO->Z17 (ver CROSSFADE_HUECO_Z17_FRAMES) -- se
         // incrementa acá, ANTES de que el bloque de "regresando" de abajo
@@ -3573,12 +3283,22 @@ async function generarVideoRecorridoInterno(
         // Transiciones de fase de la Opción 5, evaluadas con la cámara YA
         // calculada este mismo frame (ver diseño aprobado: mismo `camara`
         // para panorámica y para el chequeo de si Z17 ya puede reactivarse).
+        // indiceDestino es ahora un índice de datos.puntos (posición GPS
+        // real de destino), no un índice de mosaico -- ver detección más
+        // abajo.
         if (huecoRef.valor.fase === "en_hueco" && huecoRef.valor.indiceDestino !== null) {
-          const metaDestino = ventanaMosaicos.metas[huecoRef.valor.indiceDestino];
-          const gxDestino = lonAPixelX(focoActual.lon, ZOOM_SEGUIMIENTO);
-          const gyDestino = latAPixelY(focoActual.lat, ZOOM_SEGUIMIENTO);
-          const distADestino = Math.hypot(gxDestino - metaDestino.centroPxX, gyDestino - metaDestino.centroPxY);
-          if (distADestino <= metaDestino.radioLimitePx) {
+          const gxActual = lonAPixelX(focoActual.lon, ZOOM_SEGUIMIENTO);
+          const gyActual = latAPixelY(focoActual.lat, ZOOM_SEGUIMIENTO);
+          // Cobertura real en la posición GPS actual (no una distancia a un
+          // centro/radio de mosaico, que ya no existe): apenas la posición
+          // actual del recorrido tenga todos sus tiles preparados, dejamos
+          // de alejar la cámara y pasamos a "regresando".
+          const coberturaActual = coberturaCompletaZ17(
+            { x: gxActual, y: gyActual },
+            ESCALA_SEGUIMIENTO,
+            corredorTilesZ17,
+          );
+          if (coberturaActual) {
             console.log(
               `[hueco] fraccionTotal=${fraccionTotal.toFixed(3)} en_hueco -> regresando (destino=${huecoRef.valor.indiceDestino})`,
             );
@@ -3586,8 +3306,6 @@ async function generarVideoRecorridoInterno(
             diagnosticoRegresandoRef.valor = 0;
           }
         } else if (huecoRef.valor.fase === "regresando" && huecoRef.valor.indiceDestino !== null) {
-          const metaDestino = ventanaMosaicos.metas[huecoRef.valor.indiceDestino];
-          const imagenDestino = ventanaMosaicos.imagenes[huecoRef.valor.indiceDestino];
           const camaraZ17Regreso = calcularCamaraZ17(camara, mapa, factorSeguimiento);
           // escalaCropTransicion = camara.escala/factorSeguimiento -- la
           // misma escala que la panorámica de este frame representa en
@@ -3596,55 +3314,32 @@ async function generarVideoRecorridoInterno(
           // la panorámica en cualquier valor de camara.escala; con
           // camara.escala puro había un salto ×factorSeguimiento). Converge
           // sola a ESCALA_SEGUIMIENTO cuando camara.escala llega a su
-          // régimen estable -- sin umbral nuevo.
+          // régimen estable -- sin umbral nuevo. SIN CAMBIOS respecto al
+          // esquema de mosaicos -- solo cambia qué pregunta de cobertura se
+          // le hace a esta cámara/escala.
           const escalaCropTransicion = camara.escala / factorSeguimiento;
-          const recorteRegreso = calcularRecorteMosaico(camaraZ17Regreso, metaDestino, escalaCropTransicion);
-          const esRecorteValido = recorteValido(recorteRegreso, metaDestino);
+          const coberturaRegreso = coberturaCompletaZ17(camaraZ17Regreso, escalaCropTransicion, corredorTilesZ17);
 
           // Diagnóstico temporal -- NO cambia ninguna decisión, solo lee y
           // registra el estado exacto de convergencia mientras la fase
-          // "regresando" sigue esperando a recorteValido(). Throttled a cada
-          // 5 cuadros (más el primero y todo cuadro donde ya valida) para no
-          // inundar la consola en huecos largos.
+          // "regresando" sigue esperando cobertura completa. Throttled a
+          // cada 5 cuadros (más el primero y todo cuadro donde ya cubre)
+          // para no inundar la consola en huecos largos.
           diagnosticoRegresandoRef.valor++;
-          if (diagnosticoRegresandoRef.valor === 1 || diagnosticoRegresandoRef.valor % 5 === 0 || esRecorteValido) {
-            const distZ17ADestino = Math.hypot(
-              camaraZ17Regreso.x - metaDestino.centroPxX,
-              camaraZ17Regreso.y - metaDestino.centroPxY,
-            );
-            const anchoFisicoDestino = metaDestino.anchoPx * ESCALA_SALIDA_MOSAICO_SEGUIMIENTO;
-            const altoFisicoDestino = metaDestino.altoPx * ESCALA_SALIDA_MOSAICO_SEGUIMIENTO;
+          if (diagnosticoRegresandoRef.valor === 1 || diagnosticoRegresandoRef.valor % 5 === 0 || coberturaRegreso) {
+            const rango = rangoTilesVisibles(camaraZ17Regreso, escalaCropTransicion);
             console.log(
               `[hueco-diag] fraccionTotal=${fraccionTotal.toFixed(3)} restanteHastaTrazoCompleto=${(FRACCION_TRAZO_COMPLETO - fraccionTotal).toFixed(3)} destino=${huecoRef.valor.indiceDestino} ` +
                 `camara.cx=${camara.cx.toFixed(1)} camara.cy=${camara.cy.toFixed(1)} camara.escala=${camara.escala.toFixed(4)} escalaCropTransicion=${escalaCropTransicion.toFixed(4)} escalaActual=${huecoRef.valor.escalaActual?.toFixed(4)} ` +
-                `camaraZ17=(${camaraZ17Regreso.x.toFixed(1)},${camaraZ17Regreso.y.toFixed(1)}) distZ17ADestino=${distZ17ADestino.toFixed(1)} radioLimitePx=${metaDestino.radioLimitePx.toFixed(1)} ` +
-                `recorte sx=${recorteRegreso.sx.toFixed(1)} sy=${recorteRegreso.sy.toFixed(1)} sWidth=${recorteRegreso.sWidth.toFixed(1)} sHeight=${recorteRegreso.sHeight.toFixed(1)} ` +
-                `limiteFisico anchoPx=${anchoFisicoDestino.toFixed(1)} altoPx=${altoFisicoDestino.toFixed(1)} ` +
-                `imagenDestinoLista=${imagenDestino !== null} recorteValido=${esRecorteValido}`,
+                `camaraZ17=(${camaraZ17Regreso.x.toFixed(1)},${camaraZ17Regreso.y.toFixed(1)}) rangoTiles=[${rango.tileXMin},${rango.tileXMax}]x[${rango.tileYMin},${rango.tileYMax}] ` +
+                `coberturaCompleta=${coberturaRegreso}`,
             );
-            if (!esRecorteValido) {
-              const motivos: string[] = [];
-              if (recorteRegreso.sx < 0) motivos.push(`sx<0 (sx=${recorteRegreso.sx.toFixed(1)})`);
-              if (recorteRegreso.sy < 0) motivos.push(`sy<0 (sy=${recorteRegreso.sy.toFixed(1)})`);
-              if (recorteRegreso.sx + recorteRegreso.sWidth > anchoFisicoDestino) {
-                motivos.push(
-                  `sx+sWidth>anchoPx (${(recorteRegreso.sx + recorteRegreso.sWidth).toFixed(1)} > ${anchoFisicoDestino.toFixed(1)}, excede=${(recorteRegreso.sx + recorteRegreso.sWidth - anchoFisicoDestino).toFixed(1)})`,
-                );
-              }
-              if (recorteRegreso.sy + recorteRegreso.sHeight > altoFisicoDestino) {
-                motivos.push(
-                  `sy+sHeight>altoPx (${(recorteRegreso.sy + recorteRegreso.sHeight).toFixed(1)} > ${altoFisicoDestino.toFixed(1)}, excede=${(recorteRegreso.sy + recorteRegreso.sHeight - altoFisicoDestino).toFixed(1)})`,
-                );
-              }
-              console.log(`[hueco-diag] recorteValido=false -- motivo(s): ${motivos.join(", ")}`);
-            }
           }
 
-          // Única condición para reactivar Z17: el crop del mosaico destino
-          // YA es geométricamente válido con la cámara actual (misma cámara
-          // que se está usando para la panorámica este frame) Y la imagen
-          // ya terminó de decodificar. Sin umbral de escala/posición
-          // arbitrario -- recorteValido() ya combina las dos cosas.
+          // Única condición para reactivar Z17: todos los tiles del
+          // viewport YA están preparados con la cámara actual (misma
+          // cámara que se está usando para la panorámica este frame). Sin
+          // umbral de escala/posición arbitrario.
           //
           // Pasa a "convergiendo", NO a "ninguno": la fuente Z17 ya puede
           // activarse (esto), pero camara.escala todavía puede seguir
@@ -3652,130 +3347,89 @@ async function generarVideoRecorridoInterno(
           // camaraAmplia/escalaActual se conservan (no se limpian) porque
           // "convergiendo" sigue necesitando escalaActual en la selección de
           // objetivoCrudo, arriba.
-          if (imagenDestino && esRecorteValido) {
+          if (coberturaRegreso) {
             console.log(
-              `[hueco] fraccionTotal=${fraccionTotal.toFixed(3)} regresando -> convergiendo (Z17 reactivado en indice=${huecoRef.valor.indiceDestino}, escalaCropTransicion=${escalaCropTransicion.toFixed(4)})`,
+              `[hueco] fraccionTotal=${fraccionTotal.toFixed(3)} regresando -> convergiendo (Z17 reactivado, destino=${huecoRef.valor.indiceDestino}, escalaCropTransicion=${escalaCropTransicion.toFixed(4)})`,
             );
-            indiceMosaicoRef.valor = huecoRef.valor.indiceDestino;
             huecoRef.valor = { ...huecoRef.valor, fase: "convergiendo", cuadrosDesdeConvergencia: 0 };
           }
         }
 
         // "convergiendo" se trata igual que "ninguno" para todo propósito de
-        // dibujo/detección (selección de mosaico, avance de índice,
-        // detección de un hueco nuevo) -- la única diferencia entre ambas
-        // fases está arriba, en qué escala usa objetivoCrudo. Acá solo
-        // cambia qué escala le pasamos a calcularRecorteMosaico: la misma
-        // escalaCropTransicion mientras seguimos "convergiendo" (para no
-        // saltar de golpe a ESCALA_SEGUIMIENTO en el mismo frame en que se
-        // reactivó la fuente), o ESCALA_SEGUIMIENTO puro una vez que ya
-        // estamos en seguimiento normal ("ninguno"). Sin condición de salida
-        // explícita "convergiendo" -> "ninguno": esta expresión converge
-        // sola a ESCALA_SEGUIMIENTO a medida que camara.escala converge a su
+        // dibujo/detección (chequeo de cobertura, detección de un hueco
+        // nuevo) -- la única diferencia entre ambas fases está arriba, en
+        // qué escala usa objetivoCrudo. Acá solo cambia qué escala le
+        // pasamos a coberturaCompletaZ17: la misma escalaCropTransicion
+        // mientras seguimos "convergiendo" (para no saltar de golpe a
+        // ESCALA_SEGUIMIENTO en el mismo frame en que se reactivó la
+        // fuente), o ESCALA_SEGUIMIENTO puro una vez que ya estamos en
+        // seguimiento normal ("ninguno"). Sin condición de salida explícita
+        // "convergiendo" -> "ninguno": esta expresión converge sola a
+        // ESCALA_SEGUIMIENTO a medida que camara.escala converge a su
         // régimen estable (factorSeguimiento×ESCALA_SEGUIMIENTO).
         if (huecoRef.valor.fase === "ninguno" || huecoRef.valor.fase === "convergiendo") {
-          camaraZ17 = calcularCamaraZ17(camara, mapa, factorSeguimiento);
-          escalaCropSeguimiento =
+          const camaraZ17Candidata = calcularCamaraZ17(camara, mapa, factorSeguimiento);
+          const escalaCropCandidata =
             huecoRef.valor.fase === "convergiendo" ? camara.escala / factorSeguimiento : ESCALA_SEGUIMIENTO;
-          const indicePrevio = indiceMosaicoRef.valor;
-          const resultado = seleccionarMosaico(
-            focoActual,
-            camaraZ17,
-            escalaCropSeguimiento,
-            ventanaMosaicos,
-            indiceMosaicoRef,
-            ultimoMosaicoValidoRef,
-            fraccionTotal,
-            tramoConfiable,
-          );
-          seleccionMosaico = resultado;
+          const coberturaOk = coberturaCompletaZ17(camaraZ17Candidata, escalaCropCandidata, corredorTilesZ17);
 
-          if (resultado.huecoDetectado !== null) {
-            // Hueco de cobertura recién detectado (ver margenUtilPx dentro
-            // del while de seleccionarMosaico) -- indiceMosaicoRef.valor ya
-            // quedó revertido al origen (congelado) por esa misma función;
-            // acá solo se arma el encuadre amplio y se dispara el prefetch
-            // del destino. Este mismo frame se sigue dibujando con el
-            // mosaico de origen (seleccionMosaico=resultado, sin cambios
-            // visuales todavía) -- la panorámica arranca recién el frame
-            // siguiente, cuando el objetivo de cámara ya apunta a
+          if (coberturaOk) {
+            camaraZ17 = camaraZ17Candidata;
+            escalaCropSeguimiento = escalaCropCandidata;
+            pesoZ17 =
+              huecoRef.valor.fase === "convergiendo" &&
+              huecoRef.valor.cuadrosDesdeConvergencia !== null &&
+              huecoRef.valor.cuadrosDesdeConvergencia < CROSSFADE_HUECO_Z17_FRAMES
+                ? clamp(huecoRef.valor.cuadrosDesdeConvergencia / CROSSFADE_HUECO_Z17_FRAMES, 0, 1)
+                : 1;
+          } else if (huecoRef.valor.fase === "ninguno") {
+            // Hueco de cobertura recién detectado: buscamos hacia adelante,
+            // sobre los puntos GPS reales (no un índice de mosaico), el
+            // primer punto con tramo confiable (misma clasificacionTramos
+            // que ya usa el trazado) y cobertura completa de tiles en
+            // ESCALA_SEGUIMIENTO -- ese es el destino del hueco. Este mismo
+            // frame se sigue dibujando con lo que ya estaba activo (sin
+            // cambios visuales todavía) -- la panorámica arranca recién el
+            // frame siguiente, cuando el objetivo de cámara ya apunta a
             // camaraAmplia.
-            const metaOrigen = ventanaMosaicos.metas[indiceMosaicoRef.valor];
-            const metaDestino = ventanaMosaicos.metas[resultado.huecoDetectado];
-            const origenPx = z17ACanvasBase({ x: metaOrigen.centroPxX, y: metaOrigen.centroPxY }, mapa, factorSeguimiento);
-            const destinoPx = z17ACanvasBase({ x: metaDestino.centroPxX, y: metaDestino.centroPxY }, mapa, factorSeguimiento);
+            const indiceOrigen = frame.indiceBase ?? 0;
+            let indiceDestino = indiceOrigen + 1;
+            while (
+              indiceDestino < datos.puntos.length - 1 &&
+              (clasificacionTramos[indiceDestino] === "saltoGps" ||
+                !coberturaCompletaZ17(
+                  {
+                    x: lonAPixelX(datos.puntos[indiceDestino].lon, ZOOM_SEGUIMIENTO),
+                    y: latAPixelY(datos.puntos[indiceDestino].lat, ZOOM_SEGUIMIENTO),
+                  },
+                  ESCALA_SEGUIMIENTO,
+                  corredorTilesZ17,
+                ))
+            ) {
+              indiceDestino++;
+            }
+            const puntoOrigen = datos.puntos[indiceOrigen];
+            const puntoDestino = datos.puntos[indiceDestino];
+            const origenPx = { x: x(puntoOrigen.lon), y: y(puntoOrigen.lat) };
+            const destinoPx = { x: x(puntoDestino.lon), y: y(puntoDestino.lat) };
             const camaraAmplia = calcularCamaraHueco(origenPx, destinoPx, camara.escala);
             huecoRef.valor = {
               fase: "en_hueco",
-              indiceDestino: resultado.huecoDetectado,
+              indiceDestino,
               camaraAmplia,
               escalaActual: camara.escala,
               cuadrosDesdeConvergencia: null,
             };
             console.log(
-              `[hueco] fraccionTotal=${fraccionTotal.toFixed(3)} detectado -- origen=${indiceMosaicoRef.valor} destino=${resultado.huecoDetectado} camaraAmplia.escala=${camaraAmplia.escala.toFixed(3)}`,
+              `[hueco] fraccionTotal=${fraccionTotal.toFixed(3)} detectado -- origen=${indiceOrigen} destino=${indiceDestino} camaraAmplia.escala=${camaraAmplia.escala.toFixed(3)}`,
             );
-            // Con Fase A, el mosaico destino ya está preparado de antemano
-            // (ver prepararTodosLosMosaicosSeguimiento) -- no hace falta
-            // disparar nada acá. El viejo PENDIENTE sobre mantenerVentana
-            // vaciando por error el índice de origen ya no aplica: Fase A
-            // no libera ningún mosaico durante toda la generación.
-          }
-
-          if (indiceMosaicoRef.valor !== indicePrevio) {
-            console.log(
-              `[video] fraccionTotal=${fraccionTotal.toFixed(3)} indice geometrico activo: ${indicePrevio} -> ${indiceMosaicoRef.valor}`,
-            );
-          }
-
-          // Instrumentación temporal: si el while de seleccionarMosaico avanzó
-          // MÁS DE UN índice en este mismo frame (justo el patrón "1 -> 15"
-          // reportado), comparar los puntos GPS CRUDOS (no el punto
-          // interpolado) alrededor del segmento que estadoEnFraccion está
-          // usando ahora mismo -- misma búsqueda que hace estadoEnFraccion
-          // internamente (duplicada acá solo para diagnóstico, no cambia qué
-          // segmento se usa para dibujar). Objetivo: confirmar si es un
-          // outlier/salto real de GPS, y si coincide con el mismo punto que
-          // alimenta velocidadesKmh (la misma fuente de la lectura de 300+
-          // km/h ya reportada aparte).
-          if (resultado.pasosAvanzados > 1) {
-            const distObjetivoKm = fraccionTrazo * datos.distanciaKm;
-            let ib = 0;
-            while (ib < datos.puntos.length - 2 && distanciaAcumuladaKm[ib + 1] <= distObjetivoKm) ib++;
-            const anterior = datos.puntos[Math.max(0, ib - 1)];
-            const actualBase = datos.puntos[ib];
-            const siguiente = datos.puntos[Math.min(datos.puntos.length - 1, ib + 1)];
-            const distAntActualKm = distanciaHaversineKm(anterior, actualBase);
-            const distActualSigKm = distanciaHaversineKm(actualBase, siguiente);
-            const dtAntActualSeg = (actualBase.timestamp - anterior.timestamp) / 1000;
-            const dtActualSigSeg = (siguiente.timestamp - actualBase.timestamp) / 1000;
-            const velAntActual = dtAntActualSeg > 0 ? (distAntActualKm / dtAntActualSeg) * 3600 : Infinity;
-            const velActualSig = dtActualSigSeg > 0 ? (distActualSigKm / dtActualSigSeg) * 3600 : Infinity;
-            console.warn(
-              `[mosaico-salto] SALTO ANORMAL -- fraccionTotal=${fraccionTotal.toFixed(3)} pasos=${resultado.pasosAvanzados} indiceBase(datos.puntos)=${ib}/${datos.puntos.length - 1}`,
-            );
-            console.warn(
-              `[mosaico-salto] punto anterior: lat=${anterior.lat.toFixed(6)} lon=${anterior.lon.toFixed(6)} t=${anterior.timestamp}`,
-            );
-            console.warn(
-              `[mosaico-salto] punto actual (base): lat=${actualBase.lat.toFixed(6)} lon=${actualBase.lon.toFixed(6)} t=${actualBase.timestamp}`,
-            );
-            console.warn(
-              `[mosaico-salto] punto siguiente: lat=${siguiente.lat.toFixed(6)} lon=${siguiente.lon.toFixed(6)} t=${siguiente.timestamp}`,
-            );
-            console.warn(
-              `[mosaico-salto] anterior->actual: distancia=${distAntActualKm.toFixed(4)}km dt=${dtAntActualSeg.toFixed(2)}s velocidadImplicita=${velAntActual.toFixed(1)}km/h`,
-            );
-            console.warn(
-              `[mosaico-salto] actual->siguiente: distancia=${distActualSigKm.toFixed(4)}km dt=${dtActualSigSeg.toFixed(2)}s velocidadImplicita=${velActualSig.toFixed(1)}km/h`,
-            );
-            console.warn(
-              `[mosaico-salto] cruce con velocidadesKmh (misma fuente que la vel. maxima reportada): velocidadesKmh[${ib}]=${velocidadesKmh[ib]?.toFixed(1)} velocidadesKmh[${ib + 1}]=${velocidadesKmh[ib + 1]?.toFixed(1)}`,
-            );
+            // Con Fase A, todos los tiles del corredor ya están preparados
+            // de antemano (ver prepararTilesZ17) -- no hace falta disparar
+            // ningún fetch/prefetch acá.
           }
         }
-        // Si huecoRef.valor.fase es "en_hueco" o "regresando":
-        // seleccionMosaico/camaraZ17 quedan null (declarados arriba) --
+        // Si huecoRef.valor.fase es "en_hueco" o "regresando": camaraZ17
+        // queda null y pesoZ17 queda null (declarados arriba) --
         // dibujarCuadroVideo recibe modoHuecoActivo=true (ver su llamada
         // más abajo) y dibuja PANORAMICA_HUECO (mapaImg solo, camino
         // independiente de PANORAMICA_OUTRO), con la MISMA `camara` de
@@ -3867,10 +3521,10 @@ async function generarVideoRecorridoInterno(
       camaraZ17,
       escalaCropSeguimiento,
       huecoRef.valor.fase === "en_hueco" || huecoRef.valor.fase === "regresando",
-      huecoRef.valor.fase === "convergiendo" ? huecoRef.valor.cuadrosDesdeConvergencia : null,
+      pesoZ17,
       pulsoVelMax,
       suavizadoEtiquetas,
-      seleccionMosaico,
+      tilesZ17Residentes,
       false,
       refDiagnosticoFondo,
       refDiagnosticoFrame,
@@ -3911,22 +3565,8 @@ async function generarVideoRecorridoInterno(
   const camaraFinIntro = estadoCamara(0, anticipacionInicio.foco, focoCentroPx, factorSeguimiento);
   const frameIntro = estadoEnFraccion(datos, distanciaAcumuladaKm, 0);
 
-  function dibujarFondoIntro(camara: EstadoCamara, pesoMosaico: number) {
-    const camaraZ17 = mapa && mosaicosSeguimiento.length > 0 ? calcularCamaraZ17(camara, mapa, factorSeguimiento) : null;
-    const seleccion: SeleccionMosaico | null =
-      camaraZ17 && mosaicosSeguimiento.length > 0
-        ? {
-            indiceActual: 0,
-            actual: null,
-            metaActual: null,
-            indiceMostrado: null,
-            pasosAvanzados: 0,
-            huecoDetectado: null,
-            siguiente: ventanaMosaicos.imagenes[0] ?? null,
-            metaSiguiente: ventanaMosaicos.metas[0] ?? null,
-            peso: pesoMosaico,
-          }
-        : null;
+  function dibujarFondoIntro(camara: EstadoCamara, pesoZ17Intro: number) {
+    const camaraZ17 = mapa && corredorTilesZ17.size > 0 ? calcularCamaraZ17(camara, mapa, factorSeguimiento) : null;
     dibujarCuadroVideo(
       ctx!,
       datos,
@@ -3949,10 +3589,10 @@ async function generarVideoRecorridoInterno(
       camara.escala,
       // Sin huecos posibles antes de que arranque el trazo real.
       false,
-      null,
+      camaraZ17 !== null ? pesoZ17Intro : null,
       0,
       suavizadoEtiquetas,
-      seleccion,
+      tilesZ17Residentes,
       true,
       refDiagnosticoFondo,
       refDiagnosticoFrame,
@@ -4100,24 +3740,41 @@ async function generarVideoRecorridoInterno(
     const esStall = deltaDesdeAnteriorMs > UMBRAL_STALL_MS;
     dibujarFrame(fraccionTotal, false);
     onProgreso?.(fraccionTotal);
+    const diag = refDiagnosticoFrame.valor;
     if (f % INTERVALO_LOG_RENDER_DIAG_FRAMES === 0 || esStall) {
-      const diag = refDiagnosticoFrame.valor;
-      // "cuando sea posible": mosaicosEnGeneracion refleja qué índice(s)
-      // tenían una generación REAL en curso en ventanaMosaicos en el
-      // instante de este log -- si un STALL coincide con un índice acá, es
-      // la correlación directa pedida (cruzar contra los [render-diag] de
-      // generarMapaEnZoom para ESE mismo índice, mismo tAbsMs).
-      const mosaicosEnGeneracion =
-        ventanaMosaicos.mosaicosEnGeneracion.size > 0 ? [...ventanaMosaicos.mosaicosEnGeneracion].join(",") : "ninguno";
       (esStall ? console.warn : console.log)(
         `${esStall ? "[render-diag] *** STALL, la iteración anterior tardó más de lo esperado ***" : "[render-diag]"} ` +
           `frame=${f}/${totalFrames} tiempoVideoMs=${(tiempoAntesMs - tiempoInicioLoopMs).toFixed(0)} tAbsMs=${tiempoAntesMs.toFixed(0)} fraccionTotal=${fraccionTotal.toFixed(4)} ` +
-          `deltaDesdeAnteriorMs=${deltaDesdeAnteriorMs.toFixed(1)} (esperado=${intervaloMs.toFixed(1)}) mosaicosEnGeneracion=${mosaicosEnGeneracion} ` +
+          `deltaDesdeAnteriorMs=${deltaDesdeAnteriorMs.toFixed(1)} (esperado=${intervaloMs.toFixed(1)}) ` +
           `indiceBase=${diag?.indiceBase ?? "?"} lat=${diag?.lat?.toFixed(6) ?? "?"} lon=${diag?.lon?.toFixed(6) ?? "?"} ` +
           `camara.cx=${diag?.camaraCx?.toFixed(1) ?? "?"} camara.cy=${diag?.camaraCy?.toFixed(1) ?? "?"} camara.escala=${diag?.camaraEscala?.toFixed(4) ?? "?"} ` +
+          `tiempoFondoMs=${diag?.tiempoFondoMs?.toFixed(2) ?? "?"} tiempoDrawTilesMs=${diag?.tiempoDrawTilesMs?.toFixed(2) ?? "?"} ` +
+          `camaraZ17=(${diag?.camaraZ17X?.toFixed(1) ?? "?"},${diag?.camaraZ17Y?.toFixed(1) ?? "?"}) escalaCrop=${diag?.escalaCropSeguimiento?.toFixed(4) ?? "?"} ` +
+          `tilesVisibles=${diag?.tilesVisibles ?? "?"} tilesFaltantes=${diag?.tilesFaltantes ?? "?"} ` +
           `fondo=${diag?.descriptorFondo ?? "?"}`,
       );
     }
+
+    // [tile-z17-frame]: instrumentación exacta pedida en el diseño aprobado
+    // para el prototipo de tiles Z17 -- la línea informativa se loguea cada
+    // vez que dibujarTilesZ17 tarda más de 10ms (aislado de cualquier otra
+    // cosa que pase ese cuadro), y la de *** STALL *** cuando la vuelta
+    // COMPLETA del loop (dibujarFrame + espera anterior) se pasó del
+    // intervalo esperado por más de 20ms -- pueden darse las dos en el
+    // mismo cuadro, son chequeos independientes.
+    const drawTilesMs = diag?.tiempoDrawTilesMs ?? null;
+    if (drawTilesMs !== null && drawTilesMs > 10) {
+      console.log(
+        `[tile-z17-frame] frame=${f} tilesVisibles=${diag?.tilesVisibles ?? "?"} drawTilesMs=${drawTilesMs.toFixed(1)} ` +
+          `camaraZ17=(${diag?.camaraZ17X?.toFixed(1) ?? "?"},${diag?.camaraZ17Y?.toFixed(1) ?? "?"}) escalaCrop=${diag?.escalaCropSeguimiento?.toFixed(4) ?? "?"}`,
+      );
+    }
+    if (deltaDesdeAnteriorMs > intervaloMs + 20) {
+      console.warn(
+        `[tile-z17-frame] *** STALL *** frame=${f} totalFrameMs=${deltaDesdeAnteriorMs.toFixed(1)} drawTilesMs=${drawTilesMs?.toFixed(1) ?? "?"}`,
+      );
+    }
+
     tiempoFrameAnteriorMs = tiempoAntesMs;
     await new Promise((r) => setTimeout(r, intervaloMs));
 
@@ -4182,155 +3839,3 @@ async function generarVideoRecorridoInterno(
   return grabacionLista;
 }
 
-// ============================================================================
-// DIAGNÓSTICO TEMPORAL -- eliminar este bloque completo (y la página
-// frontend/src/app/debug-mosaico/page.tsx que lo consume) una vez resuelta
-// la alineación de mosaicos. No forma parte del pipeline real de
-// generarVideoRecorrido/dibujarCuadroVideo -- no se llama desde ahí.
-//
-// Prueba el sistema más chico posible: UN mosaico Z17, UNA coordenada
-// conocida, UN recorte, UN canvas 720x1280 -- sin panorámica, sin cadena de
-// mosaicos, sin cámara suavizada/dead zone/anticipación, sin crossfade, sin
-// fallback, sin intro/outro/etiquetas/estadísticas. Reutiliza
-// generarMapaEnZoom/calcularRecorteMosaico/recorteValido TAL CUAL (las
-// mismas funciones que usa la generación real), para que el diagnóstico sea
-// confiable -- no una reimplementación aparte que podría tener sus propios
-// bugs y no probar nada real.
-export interface ResultadoDiagnosticoMosaico {
-  canvas: HTMLCanvasElement;
-  texto: string;
-}
-
-// Coordenada de prueba fija (zona del club, Puerto Montt) -- no hace falta
-// una ruta real, esto prueba solo la matemática de proyección/recorte.
-const DIAG_LON = -72.9407;
-const DIAG_LAT = -41.4707;
-
-export async function generarDiagnosticoMosaico(
-  despZ17X: number,
-  despZ17Y: number,
-): Promise<ResultadoDiagnosticoMosaico> {
-  const centroPxX = lonAPixelX(DIAG_LON, ZOOM_SEGUIMIENTO);
-  const centroPxY = latAPixelY(DIAG_LAT, ZOOM_SEGUIMIENTO);
-  const anchoPx = Math.round(ANCHO_VIDEO * FACTOR_COBERTURA_MOSAICO);
-  const altoPx = Math.round(ALTO_VIDEO * FACTOR_COBERTURA_MOSAICO);
-
-  const canvas = document.createElement("canvas");
-  canvas.width = ANCHO_VIDEO;
-  canvas.height = ALTO_VIDEO;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return { canvas, texto: "ERROR: no se pudo crear el contexto 2D del canvas." };
-  ctx.fillStyle = "#000000";
-  ctx.fillRect(0, 0, ANCHO_VIDEO, ALTO_VIDEO);
-
-  const lineas: string[] = [
-    `ZOOM = ${ZOOM_SEGUIMIENTO}`,
-    `ESCALA_SALIDA_MOSAICO_SEGUIMIENTO = ${ESCALA_SALIDA_MOSAICO_SEGUIMIENTO}`,
-    `ESCALA_SEGUIMIENTO = ${ESCALA_SEGUIMIENTO}`,
-    `lon,lat prueba = ${DIAG_LON}, ${DIAG_LAT}`,
-    `mosaico.anchoPx x altoPx (lógico) = ${anchoPx} x ${altoPx}`,
-    `mosaico.centroPxX,Y (Z17) = ${centroPxX.toFixed(2)}, ${centroPxY.toFixed(2)}`,
-  ];
-
-  // OJO: acá se usa un tope de tiles mucho más alto que
-  // MAX_TILES_MOSAICO_SEGUIMIENTO (64) a propósito -- el diagnóstico
-  // encontró que 64 es insuficiente para el tamaño real del mosaico
-  // (1872x3328 requiere 112 tiles a zoom 17), así que con el tope real
-  // generarMapaEnZoom devuelve null SIEMPRE. Acá se sube solo para poder
-  // completar la verificación matemática pedida -- el tope real de
-  // producción NO se toca todavía, queda para la siguiente decisión.
-  // escalaSalida=ESCALA_SALIDA_MOSAICO_SEGUIMIENTO (no el default ESCALA):
-  // calcularRecorteMosaico/recorteValido ya asumen esa escala para los
-  // mosaicos de seguimiento (ver diseño Fase A/Fase B aprobado), así que
-  // este mosaico de prueba tiene que generarse a la misma escala física
-  // para que el recorte de abajo sea comparable con la generación real.
-  const generado = await generarMapaEnZoom(
-    centroPxX,
-    centroPxY,
-    ZOOM_SEGUIMIENTO,
-    anchoPx,
-    altoPx,
-    false,
-    200,
-    null,
-    null,
-    ESCALA_SALIDA_MOSAICO_SEGUIMIENTO,
-  );
-
-  if (!generado) {
-    lineas.push("CROP INVALIDO: generarMapaEnZoom devolvio null (fallo de red/tiles).");
-    dibujarOverlayDiagnostico(ctx, lineas, false);
-    return { canvas, texto: lineas.join("\n") };
-  }
-
-  const img = await cargarImagenDesdeSrc(generado.dataUrl).catch(() => null);
-  if (!img) {
-    lineas.push("CROP INVALIDO: la imagen del mosaico no decodifico.");
-    dibujarOverlayDiagnostico(ctx, lineas, false);
-    return { canvas, texto: lineas.join("\n") };
-  }
-
-  lineas.push(`img.naturalWidth x naturalHeight (fisico) = ${img.naturalWidth} x ${img.naturalHeight}`);
-  lineas.push(`esperado fisico = ${anchoPx * ESCALA_SALIDA_MOSAICO_SEGUIMIENTO} x ${altoPx * ESCALA_SALIDA_MOSAICO_SEGUIMIENTO}`);
-
-  const mosaico: MosaicoSeguimientoMeta = {
-    centroPxX,
-    centroPxY,
-    anchoPx,
-    altoPx,
-    radioZonaSeguraPx: 0,
-    radioLimitePx: 0,
-  };
-
-  const camaraZ17 = { x: centroPxX + despZ17X, y: centroPxY + despZ17Y };
-  const recorte = calcularRecorteMosaico(camaraZ17, mosaico, ESCALA_SEGUIMIENTO);
-  const valido = recorteValido(recorte, mosaico);
-
-  lineas.push(`desplazamiento Z17 aplicado = +${despZ17X}, +${despZ17Y}`);
-  lineas.push(`camaraZ17.x,y = ${camaraZ17.x.toFixed(2)}, ${camaraZ17.y.toFixed(2)}`);
-  lineas.push(
-    `sx,sy,sWidth,sHeight = ${recorte.sx.toFixed(2)}, ${recorte.sy.toFixed(2)}, ${recorte.sWidth.toFixed(2)}, ${recorte.sHeight.toFixed(2)}`,
-  );
-  lineas.push(`recorteValido = ${valido}`);
-
-  if (!valido) {
-    lineas.push("CROP INVALIDO: el recorte pedido cae fuera del PNG fisico del mosaico.");
-    dibujarOverlayDiagnostico(ctx, lineas, false);
-    return { canvas, texto: lineas.join("\n") };
-  }
-
-  ctx.drawImage(img, recorte.sx, recorte.sy, recorte.sWidth, recorte.sHeight, 0, 0, ANCHO_VIDEO, ALTO_VIDEO);
-  dibujarOverlayDiagnostico(ctx, lineas, true);
-  return { canvas, texto: lineas.join("\n") };
-}
-
-function dibujarOverlayDiagnostico(ctx: CanvasRenderingContext2D, lineas: string[], huboRecorte: boolean) {
-  // Cruz roja en el centro exacto del canvas (360,640) -- la coordenada de
-  // prueba (DIAG_LON/DIAG_LAT) debe caer visualmente ahí cuando
-  // despZ17X/Y = 0.
-  ctx.strokeStyle = "#ff2d2d";
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.moveTo(ANCHO_VIDEO / 2 - 24, ALTO_VIDEO / 2);
-  ctx.lineTo(ANCHO_VIDEO / 2 + 24, ALTO_VIDEO / 2);
-  ctx.moveTo(ANCHO_VIDEO / 2, ALTO_VIDEO / 2 - 24);
-  ctx.lineTo(ANCHO_VIDEO / 2, ALTO_VIDEO / 2 + 24);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.arc(ANCHO_VIDEO / 2, ALTO_VIDEO / 2, 24, 0, Math.PI * 2);
-  ctx.stroke();
-
-  if (!huboRecorte) {
-    ctx.fillStyle = "#ff2d2d";
-    ctx.font = "700 28px monospace";
-    ctx.fillText("CROP INVALIDO", 16, 300);
-  }
-
-  ctx.fillStyle = "#000000e0";
-  ctx.fillRect(0, 0, ANCHO_VIDEO, 22 * lineas.length + 16);
-  ctx.fillStyle = "#39ff6a";
-  ctx.font = "13px monospace";
-  lineas.forEach((linea, i) => ctx.fillText(linea, 10, 22 + i * 18));
-
-  console.log("[diagnostico-mosaico]", lineas.join(" | "));
-}
