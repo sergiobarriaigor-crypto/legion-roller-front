@@ -1,16 +1,37 @@
 // V2 -- Fase 1 (motor cartográfico): tiles híbridos satélite+etiquetas.
 //
-// Mismos dos servicios Esri que ya usa V1 (tarjetaRecorrido.ts) y el mapa en
-// vivo (MapaView.tsx) -- World_Imagery (foto) + Reference/World_Boundaries_
-// and_Places (calles/nombres, transparente), sin API key. Acá se componen
-// EN UN SOLO ImageBitmap por tile (no dos bitmaps separados) -- la memoria
-// residente por tile sigue siendo la de un tile 256x256 (~0.25MB), lo
-// híbrido cuesta una petición de red y una composición de canvas extra por
-// tile durante la preparación, no memoria extra en el render.
+// World_Imagery (foto, mismo servicio que ya usa V1/MapaView.tsx) + una
+// capa de etiquetas, sin API key. Acá se componen EN UN SOLO ImageBitmap
+// por tile (no dos bitmaps separados) -- la memoria residente por tile
+// sigue siendo la de un tile 256x256 (~0.25MB), lo híbrido cuesta una
+// petición de red y una composición de canvas extra por tile durante la
+// preparación, no memoria extra en el render.
 export const TILE_SATELITE_URL =
   "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+
+// Fuente de la capa de etiquetas -- ABSTRAÍDA en esta única constante a
+// propósito: cualquier reemplazo futuro es un cambio de una sola línea acá,
+// sin tocar cargarTileHibrido/prepararTilesHibridos ni ningún otro archivo.
+//
+// Se probó primero Reference/World_Boundaries_and_Places (nombres de
+// lugares/límites administrativos) -- confirmado con fetch real que
+// devuelve tiles vacíos (0 píxeles no transparentes) en Z13-Z17 en Puerto
+// Montt: es una capa de escala regional, nunca iba a tener calles a este
+// nivel de detalle.
+//
+// Reference/World_Transportation sí tiene contenido real verificado en
+// Z15/Z16/Z17 en Puerto Montt (confirmado con fetch + conteo de píxeles +
+// inspección visual: nombres de calle legibles como "Calle Gallardo",
+// "Calle Bernardo O'Higgins"). Esta ruta de prueba corta en particular
+// (zona menos densa) tiene cobertura dispareja -- 2 de 9 tiles Z17 con
+// contenido, el resto vacíos -- pero eso es la geografía real de esa zona
+// puntual, no una falla de la capa (confirmado con zonas más urbanas).
+//
+// Esri cataloga World_Transportation como servicio "mature/legacy" con
+// retiro planeado para 2028 -- si eso ocurre, reemplazar SOLO esta
+// constante por la fuente que corresponda en ese momento.
 export const TILE_ETIQUETAS_URL =
-  "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}";
+  "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}";
 
 const TAM_TILE = 256;
 const TIMEOUT_TILE_MS = 8000;

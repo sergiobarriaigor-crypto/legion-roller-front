@@ -9,7 +9,7 @@
 import { useRef, useState } from "react";
 import type { PuntoGps } from "@/lib/geo";
 import { elegirGrillaAncha } from "@/lib/video2dV2/grillaAncha";
-import { prepararTilesHibridos, crearContadoresTilesHibridos } from "@/lib/video2dV2/tilesHibridos";
+import { prepararTilesHibridos, crearContadoresTilesHibridos, cargarTileHibrido } from "@/lib/video2dV2/tilesHibridos";
 import { dibujarTilesHibridos } from "@/lib/video2dV2/renderV2";
 import {
   ANCHO_VIDEO,
@@ -34,6 +34,7 @@ import {
   type EstadoCamaraV2,
 } from "@/lib/video2dV2/camaraV2";
 import { construirTrayectoriaV2 } from "@/lib/video2dV2/trayectoriaV2";
+import { TAM_TILE } from "@/lib/video2dV2/proyeccion";
 import {
   BYTES_POR_TILE,
   PRESUPUESTO_TOTAL_BYTES_DEFECTO,
@@ -118,6 +119,12 @@ export default function DebugVideoV2Page() {
   const [rutaFase4, setRutaFase4] = useState<"corta" | "referencia">("corta");
   const [tapsFase4, setTapsFase4] = useState(0);
   const [videoUrlFase4, setVideoUrlFase4] = useState<string | null>(null);
+  // DIAGNÓSTICO TEMPORAL -- verificar si el ImageBitmap híbrido usado por
+  // Fase 4 ya contiene las etiquetas de Esri (World_Boundaries_and_Places)
+  // ANTES de cualquier render/captura/codificación -- separa "el tile ya
+  // viene sin etiquetas" (preparación) de "el tile las tiene pero se
+  // pierden después" (render/composición/captura). Sacar una vez resuelto.
+  const [diagTileEstado, setDiagTileEstado] = useState<string>("(sin probar)");
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [reproduciendo, setReproduciendo] = useState(false);
   const [tiempoSeg, setTiempoSeg] = useState(0);
@@ -579,6 +586,53 @@ export default function DebugVideoV2Page() {
     setGrabandoFase4(false);
   }
 
+  // DIAGNÓSTICO TEMPORAL -- carga UN tile híbrido Z17 real (el mismo punto
+  // de partida de la ruta seleccionada) directamente con cargarTileHibrido
+  // (la misma función que usan Fase 2/3/4, sin bifurcación de código) y lo
+  // dibuja grande en el canvas, ANTES de tocar grabarVideoV2 para nada --
+  // separa "el bitmap ya viene sin etiquetas" de "se pierden después".
+  async function verificarTileHibrido() {
+    setDiagTileEstado("cargando...");
+    const rutaGps = rutaFase4 === "corta" ? RUTA_PRUEBA_CORTA : RUTA_PRUEBA;
+    const grillaAncha = elegirGrillaAncha(rutaGps, ANCHO_VIDEO, ALTO_VIDEO);
+    const ruta = construirRutaCoreografiaV2(rutaGps, grillaAncha);
+    const punto = ruta.puntosZ17[0];
+    const tx = Math.floor(punto.x / TAM_TILE);
+    const ty = Math.floor(punto.y / TAM_TILE);
+
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    if (!canvas || !ctx) {
+      setDiagTileEstado("ERROR: no hay canvas");
+      return;
+    }
+    canvas.width = ANCHO_VIDEO;
+    canvas.height = ALTO_VIDEO;
+
+    const contadores = crearContadoresTilesHibridos();
+    const bitmap = await cargarTileHibrido(ZOOM_SEGUIMIENTO, tx, ty, contadores);
+    if (!bitmap) {
+      const msg = `SIN BITMAP -- falloSatelite=${contadores.falloSatelite} (tile z=${ZOOM_SEGUIMIENTO} tx=${tx} ty=${ty})`;
+      setDiagTileEstado(msg);
+      log(`[v2-diag-tile] ${msg}`);
+      return;
+    }
+
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, ANCHO_VIDEO, ALTO_VIDEO);
+    // Dibujado grande (3x, 768x768) para que las etiquetas -- si están --
+    // se vean con claridad en una captura de pantalla.
+    const escalaDiag = 3;
+    ctx.drawImage(bitmap, 0, 0, TAM_TILE, TAM_TILE, 0, 0, TAM_TILE * escalaDiag, TAM_TILE * escalaDiag);
+    ctx.fillStyle = "#39ff6a";
+    ctx.font = "20px monospace";
+    ctx.fillText(`tile z=${ZOOM_SEGUIMIENTO} tx=${tx} ty=${ty} escalaDiag=${escalaDiag}x`, 16, TAM_TILE * escalaDiag + 30);
+
+    const msg = `bitmap cargado -- falloSatelite=${contadores.falloSatelite} falloEtiquetas=${contadores.falloEtiquetas} (tile z=${ZOOM_SEGUIMIENTO} tx=${tx} ty=${ty})`;
+    setDiagTileEstado(msg);
+    log(`[v2-diag-tile] ${msg}`);
+  }
+
   function dibujarCuadro(
     ruta: RutaCoreografiaV2,
     ventana: VentanaCrossfade,
@@ -790,6 +844,12 @@ export default function DebugVideoV2Page() {
             />{" "}
             ruta referencia (~4km)
           </label>
+        </div>
+        <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px dashed #567" }}>
+          <button onClick={verificarTileHibrido} style={{ ...estiloBoton, background: "#5a3d0d" }}>
+            DIAG: verificar tile híbrido (¿tiene etiquetas?)
+          </button>
+          <div style={{ marginTop: 6, fontSize: 12 }}>Estado: {diagTileEstado}</div>
         </div>
       </div>
 
