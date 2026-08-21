@@ -94,6 +94,65 @@ const RUTA_PRUEBA_CORTA: PuntoGps[] = [
   { lon: -72.9081, lat: -41.4862, timestamp: 1800000 },
 ];
 
+// Ruta larga de referencia (~24.3km, N-S con zigzag) -- misma usada en la
+// prueba de estrés de Fase 3 y en la prueba larga/multisegmento de Fase 4
+// (3 segmentos, 467/465/258 tiles Z17, ya validada localmente: 3/3
+// segmentos con anchaFaltantes=0/z17Faltantes=0, guard nunca disparado).
+// Necesaria en el build desplegado para poder repetir esa misma prueba
+// desde el celular real vía Vercel -- selector de la UI, no reemplaza las
+// otras dos rutas.
+const RUTA_PRUEBA_LARGA: PuntoGps[] = [
+  { lon: -72.905, lat: -41.47, timestamp: 0 },
+  { lon: -72.9013, lat: -41.4741, timestamp: 200000 },
+  { lon: -72.8988, lat: -41.4782, timestamp: 400000 },
+  { lon: -72.898, lat: -41.4823, timestamp: 600000 },
+  { lon: -72.8993, lat: -41.4864, timestamp: 800000 },
+  { lon: -72.9023, lat: -41.4905, timestamp: 1000000 },
+  { lon: -72.9061, lat: -41.4946, timestamp: 1200000 },
+  { lon: -72.9096, lat: -41.4987, timestamp: 1400000 },
+  { lon: -72.9117, lat: -41.5028, timestamp: 1600000 },
+  { lon: -72.9118, lat: -41.5069, timestamp: 1800000 },
+  { lon: -72.9099, lat: -41.511, timestamp: 2000000 },
+  { lon: -72.9066, lat: -41.5151, timestamp: 2200000 },
+  { lon: -72.9028, lat: -41.5192, timestamp: 2400000 },
+  { lon: -72.8997, lat: -41.5233, timestamp: 2600000 },
+  { lon: -72.8981, lat: -41.5274, timestamp: 2800000 },
+  { lon: -72.8985, lat: -41.5315, timestamp: 3000000 },
+  { lon: -72.9009, lat: -41.5356, timestamp: 3200000 },
+  { lon: -72.9045, lat: -41.5397, timestamp: 3400000 },
+  { lon: -72.9082, lat: -41.5438, timestamp: 3600000 },
+  { lon: -72.911, lat: -41.5479, timestamp: 3800000 },
+  { lon: -72.912, lat: -41.552, timestamp: 4000000 },
+  { lon: -72.911, lat: -41.5561, timestamp: 4200000 },
+  { lon: -72.9081, lat: -41.5602, timestamp: 4400000 },
+  { lon: -72.9044, lat: -41.5643, timestamp: 4600000 },
+  { lon: -72.9009, lat: -41.5684, timestamp: 4800000 },
+  { lon: -72.8985, lat: -41.5725, timestamp: 5000000 },
+  { lon: -72.8981, lat: -41.5766, timestamp: 5200000 },
+  { lon: -72.8997, lat: -41.5807, timestamp: 5400000 },
+  { lon: -72.9029, lat: -41.5848, timestamp: 5600000 },
+  { lon: -72.9067, lat: -41.5889, timestamp: 5800000 },
+  { lon: -72.91, lat: -41.593, timestamp: 6000000 },
+  { lon: -72.9118, lat: -41.5971, timestamp: 6200000 },
+  { lon: -72.9116, lat: -41.6012, timestamp: 6400000 },
+  { lon: -72.9095, lat: -41.6053, timestamp: 6600000 },
+  { lon: -72.906, lat: -41.6094, timestamp: 6800000 },
+  { lon: -72.9023, lat: -41.6135, timestamp: 7000000 },
+  { lon: -72.8993, lat: -41.6176, timestamp: 7200000 },
+  { lon: -72.898, lat: -41.6217, timestamp: 7400000 },
+  { lon: -72.8988, lat: -41.6258, timestamp: 7600000 },
+  { lon: -72.9014, lat: -41.6299, timestamp: 7800000 },
+  { lon: -72.9051, lat: -41.634, timestamp: 8000000 },
+  { lon: -72.9087, lat: -41.6381, timestamp: 8200000 },
+  { lon: -72.9113, lat: -41.6422, timestamp: 8400000 },
+  { lon: -72.912, lat: -41.6463, timestamp: 8600000 },
+  { lon: -72.9106, lat: -41.6504, timestamp: 8800000 },
+  { lon: -72.9076, lat: -41.6545, timestamp: 9000000 },
+  { lon: -72.9038, lat: -41.6586, timestamp: 9200000 },
+  { lon: -72.9004, lat: -41.6627, timestamp: 9400000 },
+  { lon: -72.8983, lat: -41.6668, timestamp: 9600000 },
+];
+
 const CONCURRENCIA = 6;
 const FPS_FASE3 = 24; // FPS_DEFECTO de V1 (tarjetaRecorrido.ts) -- confirmar si V2 debe usar otro valor
 
@@ -116,7 +175,7 @@ export default function DebugVideoV2Page() {
   const [preparando, setPreparando] = useState(false);
   const [planificandoFase3, setPlanificandoFase3] = useState(false);
   const [grabandoFase4, setGrabandoFase4] = useState(false);
-  const [rutaFase4, setRutaFase4] = useState<"corta" | "referencia">("corta");
+  const [rutaFase4, setRutaFase4] = useState<"corta" | "referencia" | "larga">("corta");
   const [tapsFase4, setTapsFase4] = useState(0);
   const [videoUrlFase4, setVideoUrlFase4] = useState<string | null>(null);
   // DIAGNÓSTICO TEMPORAL -- verificar si el ImageBitmap híbrido usado por
@@ -478,7 +537,8 @@ export default function DebugVideoV2Page() {
     setLogs([]);
     setVideoUrlFase4(null);
     log("--- Fase 4: grabación real con MediaRecorder ---");
-    const rutaGps = rutaFase4 === "corta" ? RUTA_PRUEBA_CORTA : RUTA_PRUEBA;
+    const rutaGps =
+      rutaFase4 === "corta" ? RUTA_PRUEBA_CORTA : rutaFase4 === "larga" ? RUTA_PRUEBA_LARGA : RUTA_PRUEBA;
     log(`[v2-fase4] rutaSeleccionada=${rutaFase4}`);
 
     const grillaAncha = elegirGrillaAncha(rutaGps, ANCHO_VIDEO, ALTO_VIDEO);
@@ -593,7 +653,8 @@ export default function DebugVideoV2Page() {
   // separa "el bitmap ya viene sin etiquetas" de "se pierden después".
   async function verificarTileHibrido() {
     setDiagTileEstado("cargando...");
-    const rutaGps = rutaFase4 === "corta" ? RUTA_PRUEBA_CORTA : RUTA_PRUEBA;
+    const rutaGps =
+      rutaFase4 === "corta" ? RUTA_PRUEBA_CORTA : rutaFase4 === "larga" ? RUTA_PRUEBA_LARGA : RUTA_PRUEBA;
     const grillaAncha = elegirGrillaAncha(rutaGps, ANCHO_VIDEO, ALTO_VIDEO);
     const ruta = construirRutaCoreografiaV2(rutaGps, grillaAncha);
     const punto = ruta.puntosZ17[0];
@@ -843,6 +904,10 @@ export default function DebugVideoV2Page() {
               onChange={() => setRutaFase4("referencia")}
             />{" "}
             ruta referencia (~4km)
+          </label>
+          <label>
+            <input type="radio" name="rutaFase4" checked={rutaFase4 === "larga"} onChange={() => setRutaFase4("larga")} />{" "}
+            ruta larga (~24km, 3 segmentos)
           </label>
         </div>
         <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px dashed #567" }}>
