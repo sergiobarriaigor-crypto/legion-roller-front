@@ -15,6 +15,7 @@ import {
   ANCHO_VIDEO,
   ALTO_VIDEO,
   ZOOM_SEGUIMIENTO,
+  ESCALA_SEGUIMIENTO,
   calcularVentanaCrossfade,
   pesoZ17DesdeEscala,
   construirRutaCoreografiaV2,
@@ -32,6 +33,18 @@ import {
   type FaseV2,
   type EstadoCamaraV2,
 } from "@/lib/video2dV2/camaraV2";
+import { construirTrayectoriaV2 } from "@/lib/video2dV2/trayectoriaV2";
+import {
+  BYTES_POR_TILE,
+  PRESUPUESTO_TOTAL_BYTES_DEFECTO,
+  FRACCION_MAX_UN_FRAME_DEFECTO,
+  calcularPresupuestoZ17Bytes,
+  determinarVentanaEfectivaZ17,
+  planificarSegmentosZ17,
+  pesoZ17Efectivo,
+  construirCoberturaGrillaAnchaFase3,
+} from "@/lib/video2dV2/segmentacionZ17";
+import { grabarVideoV2 } from "@/lib/video2dV2/grabacionV2";
 
 // Ruta de prueba más larga que la de Fase 1 (~11km, Puerto Montt) -- una
 // ruta corta (~2km) hacía que la escala "ancha" necesaria para encuadrar
@@ -61,7 +74,27 @@ const RUTA_PRUEBA: PuntoGps[] = [
   { lon: -72.904, lat: -41.4376, timestamp: 2600000 },
 ];
 
+// Ruta corta (~2.15km) -- para la prueba puntual de Fase 4 en dispositivo
+// real (celular), pedida explícitamente antes de probar ~4km/~25km. Ya
+// validada en esta sesión: da zoomAncho=16, ventana efectiva comprimida
+// pero válida (no dispara el error de "presupuesto insuficiente" que sí
+// daba una ruta aún más corta de ~1.5km probada primero). No reemplaza
+// RUTA_PRUEBA -- Fase 4 elige entre ambas vía el selector de la UI.
+const RUTA_PRUEBA_CORTA: PuntoGps[] = [
+  { lon: -72.905, lat: -41.47, timestamp: 0 },
+  { lon: -72.9027, lat: -41.4718, timestamp: 200000 },
+  { lon: -72.9013, lat: -41.4736, timestamp: 400000 },
+  { lon: -72.9011, lat: -41.4754, timestamp: 600000 },
+  { lon: -72.9023, lat: -41.4772, timestamp: 800000 },
+  { lon: -72.9044, lat: -41.479, timestamp: 1000000 },
+  { lon: -72.9068, lat: -41.4808, timestamp: 1200000 },
+  { lon: -72.9085, lat: -41.4826, timestamp: 1400000 },
+  { lon: -72.909, lat: -41.4844, timestamp: 1600000 },
+  { lon: -72.9081, lat: -41.4862, timestamp: 1800000 },
+];
+
 const CONCURRENCIA = 6;
+const FPS_FASE3 = 24; // FPS_DEFECTO de V1 (tarjetaRecorrido.ts) -- confirmar si V2 debe usar otro valor
 
 function resimularEstadoCompleto(
   ruta: RutaCoreografiaV2,
@@ -80,6 +113,12 @@ export default function DebugVideoV2Page() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [preparando, setPreparando] = useState(false);
+  const [planificandoFase3, setPlanificandoFase3] = useState(false);
+  const [grabandoFase4, setGrabandoFase4] = useState(false);
+  const [rutaFase4, setRutaFase4] = useState<"corta" | "referencia">("corta");
+  const [tapsFase4, setTapsFase4] = useState(0);
+  const [videoUrlFase4, setVideoUrlFase4] = useState<string | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const [reproduciendo, setReproduciendo] = useState(false);
   const [tiempoSeg, setTiempoSeg] = useState(0);
   const [faseActual, setFaseActual] = useState<FaseV2 | null>(null);
@@ -195,6 +234,349 @@ export default function DebugVideoV2Page() {
 
     setPreparando(false);
     dibujarCuadro(ruta, ventana, params, 0);
+  }
+
+  // V2 -- Fase 3: planifica segmentos Z17 por presupuesto de memoria a
+  // partir de la trayectoria real de cámara, los prepara secuencialmente
+  // (liberando antes de fetchear, conservando compartidos) y verifica los
+  // 100% de los frames del video -- SIN MediaRecorder todavía. Usa sus
+  // propias variables locales (no toca rutaRef/ventanaRef/tilesAnchaRef/
+  // tilesZ17Ref, que son del flujo de Fase 2) para no interferir con el
+  // botón "Preparar tiles" existente.
+  async function planificarFase3() {
+    setPlanificandoFase3(true);
+    setLogs([]);
+    const tInicio = performance.now();
+    log("--- Fase 3: planificación y verificación de segmentos (sin grabar) ---");
+
+    const grillaAncha = elegirGrillaAncha(RUTA_PRUEBA, ANCHO_VIDEO, ALTO_VIDEO);
+    const ruta = construirRutaCoreografiaV2(RUTA_PRUEBA, grillaAncha);
+    const ventana = calcularVentanaCrossfade(grillaAncha.zoom);
+    const duracionSeguimientoAuto = calcularDuracionSeguimientoV2(ruta.distanciaTotalKm);
+    const paramsFase3 = { ...parametros(), duracionSeguimientoSeg: duracionSeguimientoAuto };
+    log(`[v2-fase3] zoomAncho=${grillaAncha.zoom} distanciaTotalKm=${ruta.distanciaTotalKm.toFixed(3)} duracionSeguimientoSeg=${duracionSeguimientoAuto.toFixed(2)}`);
+
+    // Cobertura ancha de Fase 2 (bbox + trayectoria de intro/outro con
+    // pasos fijos) -- sin cambios, se sigue calculando igual.
+    const coberturaAnchaFase2 = construirCoberturaGrillaAnchaV2(ruta, ventana, paramsFase3, ventana.factorAncho);
+    const clavesAnchaFase2 = new Set([...grillaAncha.claves, ...coberturaAnchaFase2]);
+
+    // Trayectoria completa precomputada -- única fuente de verdad para
+    // planificar Y para dibujar/verificar (Z17 y, ahora, también la
+    // cobertura ancha complementaria).
+    const trayectoria = construirTrayectoriaV2(ruta, paramsFase3, FPS_FASE3);
+    log(`[v2-fase3] trayectoria: ${trayectoria.length} frames a ${FPS_FASE3}fps (duracionTotal=${duracionTotalV2(paramsFase3).toFixed(2)}s)`);
+
+    // Presupuesto/ventana efectiva calculados con el tamaño PLANEADO de la
+    // grilla ancha de Fase 2 (antes de fetchear nada) -- la cobertura
+    // extra de abajo (Fase 3) es un AGREGADO al set final a fetchear, no
+    // debe retroalimentar esta cuenta: si lo hiciera, un puñado de tiles
+    // anchos extra podría mover la ventana efectiva y la segmentación Z17,
+    // algo que este cambio explícitamente no debe tocar.
+    const presupuestoZ17Bytes = calcularPresupuestoZ17Bytes(
+      PRESUPUESTO_TOTAL_BYTES_DEFECTO,
+      clavesAnchaFase2.size * BYTES_POR_TILE,
+      CONCURRENCIA,
+    );
+    log(
+      `[v2-fase3] presupuestoTotalMB=${(PRESUPUESTO_TOTAL_BYTES_DEFECTO / 1_048_576).toFixed(0)} presupuestoZ17MB=${(presupuestoZ17Bytes / 1_048_576).toFixed(2)} fraccionMaxUnFrame=${FRACCION_MAX_UN_FRAME_DEFECTO}`,
+    );
+
+    let ventanaEfectiva;
+    try {
+      ventanaEfectiva = determinarVentanaEfectivaZ17(trayectoria, presupuestoZ17Bytes, FRACCION_MAX_UN_FRAME_DEFECTO);
+    } catch (e) {
+      log(`[v2-fase3] ERROR: ${(e as Error).message}`);
+      setPlanificandoFase3(false);
+      return;
+    }
+    const escalaEntradaReal = trayectoria[ventanaEfectiva.frameEntrada]?.camara.escala ?? 0;
+    const escalaSalidaReal = trayectoria[ventanaEfectiva.frameSalida]?.camara.escala ?? 0;
+    const escalaViableZ17Real = Math.max(escalaEntradaReal, escalaSalidaReal);
+    log(
+      `[v2-fase3] escalaViableZ17 analítico(semilla)=${ventanaEfectiva.escalaViableZ17Analitico.toFixed(4)} ` +
+        `real(discreta)=${escalaViableZ17Real.toFixed(4)} -- frameEntrada=${ventanaEfectiva.frameEntrada} (escala=${escalaEntradaReal.toFixed(4)}) ` +
+        `frameSalida=${ventanaEfectiva.frameSalida} (escala=${escalaSalidaReal.toFixed(4)})`,
+    );
+    const anchoDeseado = ventanaEfectiva.escalaInferiorEfectiva * 2;
+    const ventanaComprimida = anchoDeseado > ESCALA_SEGUIMIENTO + 1e-9;
+    log(
+      `[v2-fase3] ventanaEfectiva escalaInferior=${ventanaEfectiva.escalaInferiorEfectiva.toFixed(4)} escalaSuperior=${ventanaEfectiva.escalaSuperiorEfectiva.toFixed(4)} ` +
+        `(ESCALA_SEGUIMIENTO=${ESCALA_SEGUIMIENTO}) ventanaComprimida=${ventanaComprimida}`,
+    );
+
+    // Frames donde Z17 quedó apagado ESPECÍFICAMENTE por presupuesto (no
+    // porque Fase 2 ya lo hubiera apagado con su propia ventana real) --
+    // escala > ventana.escalaInferior real (Fase 2 mostraría algo de Z17)
+    // pero <= escalaInferiorEfectiva (Fase 3 lo apaga por memoria).
+    const framesApagadosPorPresupuesto = trayectoria.filter(
+      (f) => f.camara.escala > ventana.escalaInferior && f.camara.escala <= ventanaEfectiva.escalaInferiorEfectiva,
+    );
+    // No necesariamente contiguos -- puede haber una franja en la entrada
+    // (acercamiento) y otra separada en la salida (alejamiento).
+    log(
+      `[v2-fase3] framesApagadosPorPresupuesto=${framesApagadosPorPresupuesto.length}` +
+        (framesApagadosPorPresupuesto.length > 0
+          ? ` (indices: ${framesApagadosPorPresupuesto.map((f) => f.indice).join(",")})`
+          : ""),
+    );
+
+    // Chequeo de monotonicidad: exactamente UNA transición apagado->encendido
+    // y UNA encendido->apagado en todo el video (nunca Z17->ANCHA->Z17).
+    let transiciones = 0;
+    let anteriorOn = false;
+    for (const frame of trayectoria) {
+      const on = pesoZ17Efectivo(frame.camara.escala, ventanaEfectiva) > 0;
+      if (on !== anteriorOn) transiciones++;
+      anteriorOn = on;
+    }
+    log(`[v2-fase3] transicionesOnOff=${transiciones} (esperado 2; si Z17 nunca se activa, 0)`);
+
+    // Cobertura ancha derivada directamente de la trayectoria real (Fase 3)
+    // -- complementa la de Fase 2 (no la reemplaza), agregando los tiles
+    // que la muestra fija de 60 pasos de Fase 2 puede saltarse en rutas
+    // largas/lentas. La unión es lo que se fetchea; construirCoberturaGrillaAnchaV2
+    // sigue calculándose igual que siempre.
+    const coberturaAnchaFase3 = construirCoberturaGrillaAnchaFase3(trayectoria, ventanaEfectiva, ventana.factorAncho);
+    const clavesAnchaFinal = new Set([...clavesAnchaFase2, ...coberturaAnchaFase3]);
+    const extraFase3 = [...coberturaAnchaFase3].filter((t) => !clavesAnchaFase2.has(t)).length;
+    log(
+      `[v2-fase3] coberturaAncha: fase2=${clavesAnchaFase2.size} fase3=${coberturaAnchaFase3.size} extraFase3=${extraFase3} final=${clavesAnchaFinal.size}`,
+    );
+
+    const segmentos = planificarSegmentosZ17(trayectoria, ventanaEfectiva, presupuestoZ17Bytes);
+    const tilesZ17UnicosTotal = new Set<string>();
+    for (const s of segmentos) for (const t of s.tiles) tilesZ17UnicosTotal.add(t);
+    log(`[v2-fase3] segmentos=${segmentos.length} tilesZ17UnicosTotal=${tilesZ17UnicosTotal.size}`);
+    let excesoPresupuesto = false;
+    segmentos.forEach((s, idx) => {
+      const memSegMB = (s.tiles.size * BYTES_POR_TILE) / 1_048_576;
+      if (s.tiles.size * BYTES_POR_TILE > presupuestoZ17Bytes) excesoPresupuesto = true;
+      log(
+        `[v2-fase3]   segmento ${idx}: frames ${s.frameInicio}-${s.frameFin} (${s.frameFin - s.frameInicio + 1} cuadros) tilesZ17=${s.tiles.size} memZ17MB=${memSegMB.toFixed(2)}`,
+      );
+    });
+    log(`[v2-fase3] algúnSegmentoExcedePresupuesto=${excesoPresupuesto}`);
+    // Corte del timer de planificación ACÁ -- todo lo de arriba es cómputo
+    // puro (sin red); lo de abajo (grilla ancha + segmentos Z17) sí
+    // fetchea de verdad, cae bajo "preparación".
+    const tPlanificacionMs = performance.now() - tInicio;
+    log(`[v2-fase3] tiempoPlanificacionMs=${tPlanificacionMs.toFixed(0)}`);
+    const tPrepInicio = performance.now();
+
+    const contAncha = crearContadoresTilesHibridos();
+    const tilesAncha = await prepararTilesHibridos(clavesAnchaFinal, grillaAncha.zoom, CONCURRENCIA, contAncha);
+    const memGrillaAnchaBytes = tilesAncha.size * BYTES_POR_TILE;
+    log(
+      `[v2-fase3] grillaAncha tiles=${tilesAncha.size}/${clavesAnchaFinal.size} memoriaMB=${(memGrillaAnchaBytes / 1_048_576).toFixed(2)} fallos(sat/etq)=${contAncha.falloSatelite}/${contAncha.falloEtiquetas}`,
+    );
+
+    // Preparar cada segmento secuencialmente: liberar lo que ya no sirve
+    // ANTES de fetchear lo nuevo (acota el pico de memoria), conservar los
+    // tiles compartidos con el segmento anterior sin re-pedirlos.
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    if (canvas) {
+      canvas.width = ANCHO_VIDEO;
+      canvas.height = ALTO_VIDEO;
+    }
+
+    const tilesZ17Residentes = new Map<string, ImageBitmap>();
+    let totalFaltantes = 0;
+    let totalFramesVerificados = 0;
+    let picoMemoriaBytes = memGrillaAnchaBytes;
+
+    for (let s = 0; s < segmentos.length; s++) {
+      const anteriorTiles = s > 0 ? segmentos[s - 1].tiles : new Set<string>();
+      const actualTiles = segmentos[s].tiles;
+      const aLiberar = [...anteriorTiles].filter((t) => !actualTiles.has(t));
+      const aFetchear = [...actualTiles].filter((t) => !anteriorTiles.has(t));
+
+      for (const t of aLiberar) {
+        tilesZ17Residentes.get(t)?.close();
+        tilesZ17Residentes.delete(t);
+      }
+
+      const contZ17 = crearContadoresTilesHibridos();
+      const nuevos = await prepararTilesHibridos(new Set(aFetchear), ZOOM_SEGUIMIENTO, CONCURRENCIA, contZ17);
+      for (const [k, v] of nuevos) tilesZ17Residentes.set(k, v);
+
+      const memoriaActual = memGrillaAnchaBytes + tilesZ17Residentes.size * BYTES_POR_TILE;
+      picoMemoriaBytes = Math.max(picoMemoriaBytes, memoriaActual);
+
+      log(
+        `[v2-fase3] segmento ${s} preparado: compartidos=${anteriorTiles.size - aLiberar.length} liberados=${aLiberar.length} nuevos=${nuevos.size} residentesZ17=${tilesZ17Residentes.size} memoriaMB=${(memoriaActual / 1_048_576).toFixed(2)} fallos=${contZ17.falloSatelite}/${contZ17.falloEtiquetas}`,
+      );
+
+      if (ctx) {
+        for (let i = segmentos[s].frameInicio; i <= segmentos[s].frameFin; i++) {
+          const frame = trayectoria[i];
+          const pesoEf = pesoZ17Efectivo(frame.camara.escala, ventanaEfectiva);
+          ctx.fillStyle = "#000";
+          ctx.fillRect(0, 0, ANCHO_VIDEO, ALTO_VIDEO);
+          const camaraAncha = { x: frame.camara.cx * ventana.factorAncho, y: frame.camara.cy * ventana.factorAncho };
+          const escalaCropAncha = frame.camara.escala / ventana.factorAncho;
+          const resAncha = dibujarTilesHibridos(ctx, tilesAncha, camaraAncha, escalaCropAncha, ANCHO_VIDEO, ALTO_VIDEO, 1);
+          let resZ17 = { tilesVisibles: 0, tilesFaltantes: 0 };
+          if (pesoEf > 0) {
+            resZ17 = dibujarTilesHibridos(
+              ctx,
+              tilesZ17Residentes,
+              { x: frame.camara.cx, y: frame.camara.cy },
+              frame.camara.escala,
+              ANCHO_VIDEO,
+              ALTO_VIDEO,
+              pesoEf,
+            );
+          }
+          totalFaltantes += resAncha.tilesFaltantes + resZ17.tilesFaltantes;
+          totalFramesVerificados++;
+          if (resAncha.tilesFaltantes > 0 || resZ17.tilesFaltantes > 0) {
+            log(
+              `[v2-fase3-faltantes] frame=${i} fase=${frame.fase} anchaFaltantes=${resAncha.tilesFaltantes} z17Faltantes=${resZ17.tilesFaltantes}`,
+            );
+          }
+        }
+      }
+    }
+
+    const tPrepMs = performance.now() - tPrepInicio;
+    const tTotalMs = performance.now() - tInicio;
+    log(
+      `[v2-fase3] VERIFICACION: ${totalFramesVerificados}/${trayectoria.length} frames dibujados, tilesFaltantes total=${totalFaltantes}`,
+    );
+    log(
+      `[v2-fase3] memoriaPico=${(picoMemoriaBytes / 1_048_576).toFixed(2)}MB (objetivo ${(PRESUPUESTO_TOTAL_BYTES_DEFECTO / 1_048_576).toFixed(0)}MB)`,
+    );
+    log(
+      `[v2-fase3] tiempoPreparacionVerificacionMs=${tPrepMs.toFixed(0)} tiempoTotalMs=${tTotalMs.toFixed(0)} (planificación=${tPlanificacionMs.toFixed(0)})`,
+    );
+
+    for (const bitmap of tilesZ17Residentes.values()) bitmap.close();
+    setPlanificandoFase3(false);
+  }
+
+  // V2 -- Fase 4: grabación real con MediaRecorder sobre la trayectoria y
+  // segmentación de Fase 3 (sin tocarlas). Repite la misma construcción de
+  // planificación que planificarFase3 (grilla ancha, trayectoria, ventana
+  // efectiva, segmentos) en vez de compartir código con ella, a propósito
+  // -- para no arriesgar tocar el comportamiento ya verificado de Fase 3
+  // al integrar la grabación.
+  async function grabarFase4() {
+    // Primerísima línea a propósito -- si esto no se ve reflejado en
+    // pantalla (contador de toques), el toque no llegó al handler; si se
+    // ve pero no aparece nada más después, entró y falló en otro lado.
+    setTapsFase4((n) => n + 1);
+    setGrabandoFase4(true);
+    setLogs([]);
+    setVideoUrlFase4(null);
+    log("--- Fase 4: grabación real con MediaRecorder ---");
+    const rutaGps = rutaFase4 === "corta" ? RUTA_PRUEBA_CORTA : RUTA_PRUEBA;
+    log(`[v2-fase4] rutaSeleccionada=${rutaFase4}`);
+
+    const grillaAncha = elegirGrillaAncha(rutaGps, ANCHO_VIDEO, ALTO_VIDEO);
+    const ruta = construirRutaCoreografiaV2(rutaGps, grillaAncha);
+    const ventana = calcularVentanaCrossfade(grillaAncha.zoom);
+    const duracionSeguimientoAuto = calcularDuracionSeguimientoV2(ruta.distanciaTotalKm);
+    const paramsFase3 = { ...parametros(), duracionSeguimientoSeg: duracionSeguimientoAuto };
+    log(
+      `[v2-fase4] zoomAncho=${grillaAncha.zoom} distanciaTotalKm=${ruta.distanciaTotalKm.toFixed(3)} duracionSeguimientoSeg=${duracionSeguimientoAuto.toFixed(2)}`,
+    );
+
+    const coberturaAnchaFase2 = construirCoberturaGrillaAnchaV2(ruta, ventana, paramsFase3, ventana.factorAncho);
+    const clavesAnchaFase2 = new Set([...grillaAncha.claves, ...coberturaAnchaFase2]);
+
+    const trayectoria = construirTrayectoriaV2(ruta, paramsFase3, FPS_FASE3);
+    log(
+      `[v2-fase4] trayectoria: ${trayectoria.length} frames a ${FPS_FASE3}fps (duracionTotal=${duracionTotalV2(paramsFase3).toFixed(2)}s)`,
+    );
+
+    const presupuestoZ17Bytes = calcularPresupuestoZ17Bytes(
+      PRESUPUESTO_TOTAL_BYTES_DEFECTO,
+      clavesAnchaFase2.size * BYTES_POR_TILE,
+      CONCURRENCIA,
+    );
+
+    let ventanaEfectiva;
+    try {
+      ventanaEfectiva = determinarVentanaEfectivaZ17(trayectoria, presupuestoZ17Bytes, FRACCION_MAX_UN_FRAME_DEFECTO);
+    } catch (e) {
+      log(`[v2-fase4] ERROR: ${(e as Error).message}`);
+      setGrabandoFase4(false);
+      return;
+    }
+    log(
+      `[v2-fase4] ventanaEfectiva escalaInferior=${ventanaEfectiva.escalaInferiorEfectiva.toFixed(4)} escalaSuperior=${ventanaEfectiva.escalaSuperiorEfectiva.toFixed(4)}`,
+    );
+
+    const coberturaAnchaFase3 = construirCoberturaGrillaAnchaFase3(trayectoria, ventanaEfectiva, ventana.factorAncho);
+    const clavesAnchaFinal = new Set([...clavesAnchaFase2, ...coberturaAnchaFase3]);
+
+    const segmentos = planificarSegmentosZ17(trayectoria, ventanaEfectiva, presupuestoZ17Bytes);
+    log(`[v2-fase4] segmentos=${segmentos.length}`);
+    segmentos.forEach((s, idx) => {
+      log(`[v2-fase4]   segmento ${idx}: frames ${s.frameInicio}-${s.frameFin} tilesZ17=${s.tiles.size}`);
+    });
+
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      log("[v2-fase4] ERROR: no hay canvas disponible.");
+      setGrabandoFase4(false);
+      return;
+    }
+
+    try {
+      const resultado = await grabarVideoV2(
+        {
+          ventana,
+          ventanaEfectiva,
+          trayectoria,
+          segmentos,
+          clavesAnchaFinal,
+          zoomAncho: grillaAncha.zoom,
+          fps: FPS_FASE3,
+          canvas,
+        },
+        log,
+      );
+      log(`[v2-fase4] Blob listo: bytes=${resultado.blob.size} mimeType=${resultado.mimeType}`);
+      log(
+        `[v2-fase4] duracionLogicaSeg=${resultado.duracionLogicaSeg.toFixed(2)} tiempoTotalMs=${resultado.tiempoTotalMs.toFixed(0)} ` +
+          `tiempoPausadoTotalMs=${resultado.tiempoPausadoTotalMs.toFixed(0)} stallsDuranteRecording=${resultado.stallsDuranteRecording}`,
+      );
+
+      const url = URL.createObjectURL(resultado.blob);
+      setVideoUrlFase4(url);
+
+      const video = videoRef.current;
+      if (video) {
+        video.src = url;
+        await new Promise<void>((resolve) => {
+          video.onloadedmetadata = () => resolve();
+          video.onerror = () => resolve();
+        });
+        let duracionArchivoSeg = video.duration;
+        if (!isFinite(duracionArchivoSeg)) {
+          // Quirk conocido de Chrome con blobs grabados por MediaRecorder:
+          // la duración no queda escrita en el contenedor -- forzar un
+          // seek al final hace que el navegador la recalcule de verdad.
+          await new Promise<void>((resolve) => {
+            video.onseeked = () => resolve();
+            video.currentTime = 1e9;
+          });
+          duracionArchivoSeg = video.duration;
+          video.currentTime = 0;
+        }
+        const diffMs = (duracionArchivoSeg - resultado.duracionLogicaSeg) * 1000;
+        log(
+          `[v2-fase4] duracionArchivoSeg=${isFinite(duracionArchivoSeg) ? duracionArchivoSeg.toFixed(3) : "N/A"} diffMs=${isFinite(diffMs) ? diffMs.toFixed(0) : "N/A"}`,
+        );
+      }
+    } catch (e) {
+      log(`[v2-fase4] ABORT: ${(e as Error).message}`);
+    }
+
+    setGrabandoFase4(false);
   }
 
   function dibujarCuadro(
@@ -338,6 +720,18 @@ export default function DebugVideoV2Page() {
 
   const duracionTotal = duracionTotalV2(parametros());
 
+  // Estilo explícito de botón -- ver comentario junto al JSX que lo usa
+  // (Tailwind Preflight deja un <button> sin esto invisible/como texto).
+  const estiloBoton = {
+    padding: "10px 16px",
+    fontSize: 14,
+    background: "#2d2d2d",
+    color: "#eee",
+    border: "1px solid #666",
+    borderRadius: 6,
+    cursor: "pointer",
+  };
+
   return (
     <div style={{ padding: 16, fontFamily: "monospace", color: "#eee", background: "#111", minHeight: "100vh" }}>
       <h1 style={{ fontSize: 16 }}>V2 Fase 2: coreografía de cámara (sin MediaRecorder)</h1>
@@ -346,12 +740,58 @@ export default function DebugVideoV2Page() {
         panorámica final, una sola cámara Z17.
       </p>
 
-      <button onClick={prepararTodo} disabled={preparando} style={{ padding: "8px 16px", fontSize: 14, marginRight: 8 }}>
-        {preparando ? "Preparando..." : "Preparar tiles"}
-      </button>
-      <button onClick={alternarReproduccion} disabled={!rutaRef.current} style={{ padding: "8px 16px", fontSize: 14 }}>
-        {reproduciendo ? "Pausar" : "Reproducir"}
-      </button>
+      {/* Estilos explícitos (background/border/color/cursor) a propósito --
+          Tailwind Preflight (globals.css hace `@import "tailwindcss"`)
+          resetea la apariencia nativa de <button> a transparente/sin
+          borde; sin esto, en un celular real un <button> con solo
+          padding/fontSize se ve indistinguible de texto plano (causa real
+          confirmada de "el botón parece texto normal" reportado desde
+          Android). */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        <button onClick={prepararTodo} disabled={preparando} style={estiloBoton}>
+          {preparando ? "Preparando..." : "Preparar tiles"}
+        </button>
+        <button onClick={alternarReproduccion} disabled={!rutaRef.current} style={estiloBoton}>
+          {reproduciendo ? "Pausar" : "Reproducir"}
+        </button>
+        <button onClick={planificarFase3} disabled={planificandoFase3} style={estiloBoton}>
+          {planificandoFase3 ? "Planificando Fase 3..." : "Fase 3: planificar y verificar segmentos (sin grabar)"}
+        </button>
+      </div>
+
+      <div
+        style={{
+          marginTop: 12,
+          padding: 12,
+          border: "2px solid #6cf",
+          borderRadius: 6,
+          background: "#0d2230",
+        }}
+      >
+        <button onClick={grabarFase4} disabled={grabandoFase4} style={{ ...estiloBoton, background: "#2a6f97", fontSize: 16 }}>
+          {grabandoFase4 ? "Grabando Fase 4..." : "Fase 4: grabar (MediaRecorder)"}
+        </button>
+        <div style={{ marginTop: 8, fontSize: 12 }}>
+          Toques detectados en este botón: <strong>{tapsFase4}</strong>
+          {" -- "}si este número no sube al tocar, el toque no está llegando al botón (revisar tamaño/superposición); si
+          sube pero no aparece nada más abajo, entró y falló en otro lado.
+        </div>
+        <div style={{ marginTop: 8, display: "flex", gap: 16, fontSize: 12 }}>
+          <label>
+            <input type="radio" name="rutaFase4" checked={rutaFase4 === "corta"} onChange={() => setRutaFase4("corta")} />{" "}
+            ruta corta (~2.15km)
+          </label>
+          <label>
+            <input
+              type="radio"
+              name="rutaFase4"
+              checked={rutaFase4 === "referencia"}
+              onChange={() => setRutaFase4("referencia")}
+            />{" "}
+            ruta referencia (~4km)
+          </label>
+        </div>
+      </div>
 
       <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 8, fontSize: 12 }}>
         <label>
@@ -420,6 +860,22 @@ export default function DebugVideoV2Page() {
       </div>
 
       <canvas ref={canvasRef} style={{ width: 360, height: 640, border: "1px solid #555", marginTop: 12 }} />
+
+      <div style={{ marginTop: 12, display: videoUrlFase4 ? "block" : "none" }}>
+        <p style={{ fontSize: 12, opacity: 0.8 }}>Resultado de Fase 4 (MediaRecorder):</p>
+        {/* Montado siempre (oculto vía CSS, no vía desmontaje condicional)
+            -- para que videoRef.current ya exista cuando grabarFase4()
+            necesita asignarle el src, sin depender de esperar un render de
+            React después de setVideoUrlFase4(). */}
+        <video ref={videoRef} controls style={{ width: 360, border: "1px solid #555" }} />
+        <div>
+          {videoUrlFase4 && (
+            <a href={videoUrlFase4} download="fase4-prueba.webm" style={{ fontSize: 12, color: "#6cf" }}>
+              descargar
+            </a>
+          )}
+        </div>
+      </div>
 
       <pre style={{ fontSize: 11, whiteSpace: "pre-wrap", marginTop: 12, maxHeight: 300, overflow: "auto" }}>{logs.join("\n")}</pre>
     </div>
