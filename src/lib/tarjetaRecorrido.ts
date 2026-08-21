@@ -1761,7 +1761,7 @@ const FRACCION_TRAZO_COMPLETO = 0.82;
 // recorrerla.
 const SEGUNDOS_POR_KM_SEGUIMIENTO = 1.8;
 const DURACION_TRAZO_MIN_SEG = 7;
-const DURACION_TRAZO_MAX_SEG = 20;
+const DURACION_TRAZO_MAX_SEG = 26;
 
 function calcularDuracionAnimSeg(distanciaKm: number): number {
   const duracionTrazoSeg = clamp(
