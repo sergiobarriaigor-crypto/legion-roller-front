@@ -3222,19 +3222,12 @@ async function generarVideoRecorridoInterno(
   // coberturaCompletaZ17 para la detección de huecos. segmentosTilesZ17 es
   // la partición de ESE MISMO corredor en trozos con solape, para decidir
   // qué se descarga/libera y cuándo -- nunca decide si Z17 puede dibujarse.
+  // La preparación REAL del segmento 0 se hace más abajo, después de
+  // calcular camaraPanoramicaIntro/camaraFinIntro, para poder sumarle la
+  // cobertura que necesita el acercamiento del intro (ver
+  // tilesIntroNecesarios).
   const segmentosTilesZ17 = mapa ? construirSegmentosTilesZ17(datos.puntos, clasificacionTramos, distanciaAcumuladaKm) : [];
   const tilesZ17Residentes: Map<string, ImageBitmap> = new Map();
-  if (segmentosTilesZ17.length > 0) {
-    console.log(`[segment-z17] segmentosPlanificados=${segmentosTilesZ17.length}`);
-    // Fase A del segmento 0 (ver diseño aprobado): descarga y decodifica
-    // solo los tiles del primer segmento -- no todo el corredor -- antes de
-    // dibujar el primer cuadro y bien antes de arrancar MediaRecorder (ver
-    // más abajo). El resto de los segmentos se preparan más adelante,
-    // durante el loop principal, con el MediaRecorder en pause(). Nunca se
-    // descarga ni decodifica un tile durante Fase B (ver dibujarFrame): si
-    // falta uno ahí, es un error de preparación, no un fetch pendiente.
-    await prepararSegmentoTilesZ17(segmentosTilesZ17[0].tiles, tilesZ17Residentes, cacheTiles.contadores, 0);
-  }
 
   const { punto: puntoVelMax, indice: indiceVelMax, kmh: kmhVelMax } = velocidadMaximaConPunto(datos.puntos);
 
@@ -3805,6 +3798,74 @@ async function generarVideoRecorridoInterno(
   const camaraFinIntro = estadoCamara(0, anticipacionInicio.foco, focoCentroPx, factorSeguimiento);
   const frameIntro = estadoEnFraccion(datos, distanciaAcumuladaKm, 0);
 
+  // Cobertura Z17 necesaria durante el acercamiento del intro (ver diseño
+  // aprobado): dibujarFondoIntro usa camara.escala (no ESCALA_SEGUIMIENTO)
+  // como escala de crop mientras la cámara interpola de
+  // camaraPanoramicaIntro a camaraFinIntro -- esa trayectoria sintética
+  // nunca fue parte del corredor real (que solo cubre vecindades de
+  // puntos GPS reales), así que sin esto Fase B encontraba tiles
+  // faltantes (rectángulos oscuros) durante el acercamiento. Se
+  // precalcula acá, ANTES de preparar el segmento 0, con la MISMA fórmula
+  // exacta que usa el loop de acercamiento real más abajo
+  // (t=suavizar(i/framesAcercamiento), interpolación de cx/cy/escala) --
+  // ningún cambio a esa fórmula, solo se evalúa de antemano para saber qué
+  // tiles agregar a la preparación inicial.
+  const LIMITE_TILES_FRAME_INTRO = 150;
+  const framesAcercamiento = Math.max(1, Math.round(DURACION_ACERCAMIENTO_INTRO_SEG * fps));
+  const tilesIntroNecesarios = new Set<string>();
+  // Índice (0-based, sobre los cuadros del acercamiento) desde el cual Z17
+  // es viable -- si algún cuadro temprano necesitara más de
+  // LIMITE_TILES_FRAME_INTRO tiles (cámara todavía muy alejada), se
+  // conserva panorámica pura hasta ahí en vez de forzar una ventana
+  // excesiva (ver el loop de acercamiento real más abajo, que usa este
+  // mismo índice para decidir si suprime el peso de Z17 ese cuadro).
+  let primerFrameIntroViableIdx = 0;
+  if (mapa && segmentosTilesZ17.length > 0) {
+    const requerimientoPorCuadro: { camaraZ17: { x: number; y: number }; escala: number; tiles: number }[] = [];
+    for (let i = 1; i <= framesAcercamiento; i++) {
+      const tPaso = suavizar(i / framesAcercamiento);
+      const camaraPaso: EstadoCamara = {
+        cx: camaraPanoramicaIntro.cx + (camaraFinIntro.cx - camaraPanoramicaIntro.cx) * tPaso,
+        cy: camaraPanoramicaIntro.cy + (camaraFinIntro.cy - camaraPanoramicaIntro.cy) * tPaso,
+        escala: camaraPanoramicaIntro.escala + (camaraFinIntro.escala - camaraPanoramicaIntro.escala) * tPaso,
+      };
+      const camaraZ17Paso = calcularCamaraZ17(camaraPaso, mapa, factorSeguimiento);
+      const rango = rangoTilesVisibles(camaraZ17Paso, camaraPaso.escala);
+      const tiles = (rango.tileXMax - rango.tileXMin + 1) * (rango.tileYMax - rango.tileYMin + 1);
+      requerimientoPorCuadro.push({ camaraZ17: camaraZ17Paso, escala: camaraPaso.escala, tiles });
+    }
+    for (let idx = requerimientoPorCuadro.length - 1; idx >= 0; idx--) {
+      if (requerimientoPorCuadro[idx].tiles > LIMITE_TILES_FRAME_INTRO) {
+        primerFrameIntroViableIdx = idx + 1;
+        break;
+      }
+    }
+    for (let idx = primerFrameIntroViableIdx; idx < requerimientoPorCuadro.length; idx++) {
+      const { camaraZ17: cz, escala: esc } = requerimientoPorCuadro[idx];
+      const rango = rangoTilesVisibles(cz, esc);
+      for (let ty = rango.tileYMin; ty <= rango.tileYMax; ty++) {
+        for (let tx = rango.tileXMin; tx <= rango.tileXMax; tx++) tilesIntroNecesarios.add(`${tx}/${ty}`);
+      }
+    }
+    console.log(
+      `[segment-z17] intro tilesIntroNecesarios=${tilesIntroNecesarios.size} primerFrameViable=${primerFrameIntroViableIdx}/${framesAcercamiento}`,
+    );
+    for (const clave of tilesIntroNecesarios) segmentosTilesZ17[0].tiles.add(clave);
+  }
+
+  if (segmentosTilesZ17.length > 0) {
+    console.log(`[segment-z17] segmentosPlanificados=${segmentosTilesZ17.length}`);
+    // Fase A del segmento 0 (ver diseño aprobado): descarga y decodifica
+    // solo los tiles del primer segmento -- ya incluye tilesIntroNecesarios
+    // (ver arriba) -- antes de dibujar el primer cuadro y bien antes de
+    // arrancar MediaRecorder (ver más abajo). El resto de los segmentos se
+    // preparan más adelante, durante el loop principal, con el
+    // MediaRecorder en pause(). Nunca se descarga ni decodifica un tile
+    // durante Fase B (ver dibujarFrame): si falta uno ahí, es un error de
+    // preparación, no un fetch pendiente.
+    await prepararSegmentoTilesZ17(segmentosTilesZ17[0].tiles, tilesZ17Residentes, cacheTiles.contadores, 0);
+  }
+
   function dibujarFondoIntro(camara: EstadoCamara, pesoZ17Intro: number) {
     const camaraZ17 = mapa && corredorTilesZ17.size > 0 ? calcularCamaraZ17(camara, mapa, factorSeguimiento) : null;
     dibujarCuadroVideo(
@@ -3944,7 +4005,6 @@ async function generarVideoRecorridoInterno(
   // fórmula que el primer cuadro real del loop de abajo (ver su comentario
   // más arriba), así que no hay salto entre el fin del intro y el arranque
   // del seguimiento.
-  const framesAcercamiento = Math.max(1, Math.round(DURACION_ACERCAMIENTO_INTRO_SEG * fps));
   for (let i = 1; i <= framesAcercamiento; i++) {
     const t = suavizar(i / framesAcercamiento);
     const camaraPaso: EstadoCamara = {
@@ -3952,7 +4012,12 @@ async function generarVideoRecorridoInterno(
       cy: camaraPanoramicaIntro.cy + (camaraFinIntro.cy - camaraPanoramicaIntro.cy) * t,
       escala: camaraPanoramicaIntro.escala + (camaraFinIntro.escala - camaraPanoramicaIntro.escala) * t,
     };
-    dibujarFondoIntro(camaraPaso, t);
+    // Si este cuadro cae antes del punto viable calculado arriba (ver
+    // tilesIntroNecesarios/primerFrameIntroViableIdx), su ventana Z17 nunca
+    // se preparó -- se suprime el peso a 0 (panorámica pura) en vez de
+    // arriesgar tiles faltantes. La posición/escala de camaraPaso NO cambian.
+    const pesoZ17Paso = i - 1 < primerFrameIntroViableIdx ? 0 : t;
+    dibujarFondoIntro(camaraPaso, pesoZ17Paso);
     await new Promise((r) => setTimeout(r, intervaloMs));
   }
 
