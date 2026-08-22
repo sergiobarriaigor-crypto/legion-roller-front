@@ -35,7 +35,13 @@ import {
 } from "@/lib/video2dV2/camaraV2";
 import { construirTrayectoriaV2 } from "@/lib/video2dV2/trayectoriaV2";
 import { construirDatosEstadisticasV2, dibujarOverlayFase5, type DatosEstadisticasV2 } from "@/lib/video2dV2/overlayFase5";
-import { cargarFotosRutaV2, construirFotosRutaV2, dibujarFotosRutaV2, type FotoRutaV2 } from "@/lib/video2dV2/overlayFase6";
+import {
+  cargarFotosRutaV2,
+  construirFotosRutaV2,
+  dibujarFotosRutaV2,
+  dibujarEtiquetaVelMaxFinalV2,
+  type FotoRutaV2,
+} from "@/lib/video2dV2/overlayFase6";
 import { TAM_TILE } from "@/lib/video2dV2/proyeccion";
 import {
   BYTES_POR_TILE,
@@ -800,6 +806,9 @@ export default function DebugVideoV2Page() {
     // evaluable acá sin generar un video cada vez. Dibujada DESPUÉS de
     // Fase 5 (mismo orden ya fijo: tiles -> Fase 5 -> Fase 6).
     dibujarFotosRutaV2(ctx, { indice: 0, tiempoSeg: t, fase: resultado.fase, camara }, ruta, params, fotosRutaRef.current);
+    if (datosEstadisticasRef.current) {
+      dibujarEtiquetaVelMaxFinalV2(ctx, { indice: 0, tiempoSeg: t, fase: resultado.fase, camara }, ruta, datosEstadisticasRef.current);
+    }
 
     // Cruz en el centro (marca camara.cx/cy siempre).
     ctx.strokeStyle = "#ff2d2d";

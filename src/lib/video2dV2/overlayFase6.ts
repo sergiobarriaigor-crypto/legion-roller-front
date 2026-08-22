@@ -10,6 +10,10 @@
 // no crear ningún acoplamiento con ese archivo congelado.
 import { ANCHO_VIDEO, ALTO_VIDEO, type EstadoCamaraV2, type ParametrosCoreografiaV2, type RutaCoreografiaV2 } from "./camaraV2";
 import type { FrameV2 } from "./trayectoriaV2";
+// Solo el TIPO -- lectura de datos.indiceVelMax/velocidadMaxima ya
+// resueltos por Fase 5 (velocidadMaximaConPunto), nunca se recalculan acá
+// ni se importa ninguna función/lógica de overlayFase5.ts.
+import type { DatosEstadisticasV2 } from "./overlayFase5";
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
@@ -358,6 +362,76 @@ export function dibujarFotosRutaV2(ctx: CanvasRenderingContext2D, frame: FrameV2
     const { visible, alpha, escala } = calcularAlphaYEscala(tDesdeEvento, foto.duracionFadeInSeg, foto.duracionHoldSeg, foto.duracionFadeOutSeg);
     if (visible) dibujarTarjetaFotoV2(ctx, foto, p.x, p.y, alpha, escala);
   }
+}
+
+// Alto del panel de resumen que Fase 5 dibuja arriba durante
+// alejamiento/panorámica final (ver dibujarBarraEstadisticas en
+// overlayFase5.ts) -- reimplementado acá como constante propia, solo para
+// no ubicar la etiqueta encima de ese panel. No es una llamada a esa
+// función ni depende de su código, solo del mismo número ya conocido.
+const ALTO_PANEL_RESUMEN_FINAL = 168;
+const COLOR_VELMAX_FINAL = "#e2453c"; // mismo rojo que la marca discreta de Fase 5, reimplementado (no importado)
+
+// Etiqueta compacta "⚡ XX km/h" durante alejamiento + panorámica final --
+// distinta de la tarjeta grande de Fase 5 (esa ya desapareció antes de
+// tD). Ancla al MISMO punto/índice que Fase 5 ya resolvió
+// (datos.indiceVelMax/velocidadMaxima, vía velocidadMaximaConPunto) --
+// nunca recalcula nada de GPS/velocidad. Se georreferencia con la cámara
+// de cada frame (tamaño en pantalla fijo, como todo lo demás acá). Deja de
+// dibujarse sola en cuanto termina panoramicaFinal, porque esta función
+// solo se llama desde el loop principal -- los beats de cierre (foto
+// final/logo) nunca la invocan.
+export function dibujarEtiquetaVelMaxFinalV2(ctx: CanvasRenderingContext2D, frame: FrameV2, ruta: RutaCoreografiaV2, datos: DatosEstadisticasV2): void {
+  if (frame.fase !== "alejamientoPaneo" && frame.fase !== "panoramicaFinal") return;
+  if (datos.indiceVelMax < 0) return;
+
+  const p = aPantalla(ruta.puntosZ17[datos.indiceVelMax], frame.camara);
+  const texto = `⚡ ${Math.round(datos.velocidadMaxima)} km/h`;
+
+  ctx.save();
+  ctx.font = "700 15px Arial, sans-serif";
+  const anchoTexto = ctx.measureText(texto).width;
+  const paddingX = 10;
+  const anchoChip = anchoTexto + paddingX * 2;
+  const altoChip = 26;
+
+  const margen = 8;
+  let arriba = true;
+  let chipY = p.y - altoChip - 16;
+  // Nunca superponerse con el panel de estadísticas de Fase 5 (arriba de
+  // todo, siempre presente en estas dos fases).
+  if (chipY < ALTO_PANEL_RESUMEN_FINAL + margen) {
+    arriba = false;
+    chipY = p.y + 16;
+  }
+  if (chipY + altoChip > ALTO_VIDEO - margen) chipY = ALTO_VIDEO - margen - altoChip;
+  const chipX = clamp(p.x - anchoChip / 2, margen, ANCHO_VIDEO - anchoChip - margen);
+
+  // Línea guía corta -- mismo criterio que la tarjeta de foto/vel. máxima,
+  // conecta el punto real (georreferenciado) con la etiqueta.
+  ctx.strokeStyle = "rgba(255,255,255,0.5)";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(p.x, p.y);
+  ctx.lineTo(chipX + anchoChip / 2, arriba ? chipY + altoChip : chipY);
+  ctx.stroke();
+
+  // Píldora compacta -- deliberadamente más chica que la tarjeta temporal
+  // (158x62) de Fase 5.
+  trazarRectRedondeado(ctx, chipX, chipY, anchoChip, altoChip, altoChip / 2);
+  ctx.fillStyle = "rgba(13,10,6,0.78)";
+  ctx.fill();
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = COLOR_VELMAX_FINAL;
+  ctx.stroke();
+
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.shadowColor = "rgba(0,0,0,0.8)";
+  ctx.shadowBlur = 4;
+  ctx.fillStyle = "#f2efe9";
+  ctx.fillText(texto, chipX + anchoChip / 2, chipY + altoChip / 2 + 1);
+  ctx.restore();
 }
 
 // --- Cierre: foto final + transición + logo/ciudad -- cuadros agregados

@@ -20,6 +20,7 @@ import {
   dibujarFondoMarcaV2,
   dibujarFotoFinalV2,
   dibujarFotosRutaV2,
+  dibujarEtiquetaVelMaxFinalV2,
   dibujarTransicionAFondoMarcaV2,
   alphaFadeIn,
   alphaFadeInHoldOut,
@@ -303,6 +304,7 @@ export async function grabarVideoV2(entrada: EntradaGrabacionV2, log: (linea: st
     dibujarFrameGrabacion(ctx, trayectoria[0], ventana, ventanaEfectiva, tilesAncha, tilesZ17);
     dibujarOverlayFase5(ctx, trayectoria[0], ruta, params, datosEstadisticas);
     dibujarFotosRutaV2(ctx, trayectoria[0], ruta, params, fotosRuta);
+    dibujarEtiquetaVelMaxFinalV2(ctx, trayectoria[0], ruta, datosEstadisticas);
 
     const mimeType = elegirMimeTypeVideoV2(log, !!grafoMusica);
     const streamVideo = canvas.captureStream(fps);
@@ -361,6 +363,7 @@ export async function grabarVideoV2(entrada: EntradaGrabacionV2, log: (linea: st
       dibujarFrameGrabacion(ctx, frame, ventana, ventanaEfectiva, tilesAncha, tilesZ17);
       dibujarOverlayFase5(ctx, frame, ruta, params, datosEstadisticas);
       dibujarFotosRutaV2(ctx, frame, ruta, params, fotosRuta);
+      dibujarEtiquetaVelMaxFinalV2(ctx, frame, ruta, datosEstadisticas);
       tiempoFrameAnteriorMs = performance.now();
       await esperar(intervaloMs);
 
