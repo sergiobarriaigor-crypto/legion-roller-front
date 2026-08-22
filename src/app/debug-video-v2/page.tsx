@@ -35,6 +35,7 @@ import {
 } from "@/lib/video2dV2/camaraV2";
 import { construirTrayectoriaV2 } from "@/lib/video2dV2/trayectoriaV2";
 import { construirDatosEstadisticasV2, dibujarOverlayFase5, type DatosEstadisticasV2 } from "@/lib/video2dV2/overlayFase5";
+import { cargarFotosRutaV2, construirFotosRutaV2, dibujarFotosRutaV2, type FotoRutaV2 } from "@/lib/video2dV2/overlayFase6";
 import { TAM_TILE } from "@/lib/video2dV2/proyeccion";
 import {
   BYTES_POR_TILE,
@@ -154,6 +155,16 @@ const RUTA_PRUEBA_LARGA: PuntoGps[] = [
   { lon: -72.8983, lat: -41.6668, timestamp: 9600000 },
 ];
 
+// Fase 6A -- imágenes de prueba (assets ya existentes en public/, no se
+// agrega ningún archivo nuevo) para validar fotos durante el recorrido +
+// foto de cierre + logo, sin depender de CompartirRecorridoModal.tsx (fuera
+// de alcance de esta fase). Mezcla deliberada de orientaciones para poder
+// verificar visualmente el manejo de vertical/horizontal (contain, nunca
+// recorta).
+const FOTOS_RUTA_PRUEBA_URLS = ["/fondo-mis-rutas.jpg", "/avatar-chat-grupal.png", "/fondo-patinadores-activos.jpg"];
+const FOTO_CIERRE_PRUEBA_URL = "/fondo-compartir-post.jpg";
+const CIUDAD_PRUEBA = "Puerto Montt";
+
 const CONCURRENCIA = 6;
 const FPS_FASE3 = 24; // FPS_DEFECTO de V1 (tarjetaRecorrido.ts) -- confirmar si V2 debe usar otro valor
 
@@ -206,6 +217,7 @@ export default function DebugVideoV2Page() {
   const rutaRef = useRef<RutaCoreografiaV2 | null>(null);
   const ventanaRef = useRef<VentanaCrossfade | null>(null);
   const datosEstadisticasRef = useRef<DatosEstadisticasV2 | null>(null);
+  const fotosRutaRef = useRef<FotoRutaV2[]>([]);
   const tilesAnchaRef = useRef<Map<string, ImageBitmap>>(new Map());
   const tilesZ17Ref = useRef<Map<string, ImageBitmap>>(new Map());
   const zoomAnchoRef = useRef(0);
@@ -246,6 +258,10 @@ export default function DebugVideoV2Page() {
     const duracionSeguimientoAuto = calcularDuracionSeguimientoV2(ruta.distanciaTotalKm);
     setDuracionD(duracionSeguimientoAuto);
     const params = { ...parametros(), duracionSeguimientoSeg: duracionSeguimientoAuto };
+
+    const fotosRutaImgs = await cargarFotosRutaV2(FOTOS_RUTA_PRUEBA_URLS, log);
+    fotosRutaRef.current = construirFotosRutaV2(fotosRutaImgs, ruta, params);
+    log(`[v2-fase6] fotosDeRutaListas(preview)=${fotosRutaRef.current.length}/${FOTOS_RUTA_PRUEBA_URLS.length}`);
 
     const corredorZ17 = construirCorredorZ17V2(ruta, ventana);
     // Cobertura real de la grilla ancha (panorámica + paneo/zoom de
@@ -615,13 +631,17 @@ export default function DebugVideoV2Page() {
           ruta,
           params: paramsFase3,
           datosEstadisticas,
+          fotosRutaUrls: FOTOS_RUTA_PRUEBA_URLS,
+          fotoCierreUrl: FOTO_CIERRE_PRUEBA_URL,
+          ciudad: CIUDAD_PRUEBA,
         },
         log,
       );
       log(`[v2-fase4] Blob listo: bytes=${resultado.blob.size} mimeType=${resultado.mimeType}`);
       log(
         `[v2-fase4] duracionLogicaSeg=${resultado.duracionLogicaSeg.toFixed(2)} tiempoTotalMs=${resultado.tiempoTotalMs.toFixed(0)} ` +
-          `tiempoPausadoTotalMs=${resultado.tiempoPausadoTotalMs.toFixed(0)} stallsDuranteRecording=${resultado.stallsDuranteRecording}`,
+          `tiempoPausadoTotalMs=${resultado.tiempoPausadoTotalMs.toFixed(0)} stallsLoopPrincipal=${resultado.stallsLoopPrincipal} ` +
+          `stallsCierre=${resultado.stallsCierre} stallsTotales=${resultado.stallsTotales}`,
       );
 
       const url = URL.createObjectURL(resultado.blob);
@@ -764,6 +784,10 @@ export default function DebugVideoV2Page() {
         datosEstadisticasRef.current,
       );
     }
+    // Fase 6A: fotos durante el recorrido -- misma capa que grabacionV2.ts,
+    // evaluable acá sin generar un video cada vez. Dibujada DESPUÉS de
+    // Fase 5 (mismo orden ya fijo: tiles -> Fase 5 -> Fase 6).
+    dibujarFotosRutaV2(ctx, { indice: 0, tiempoSeg: t, fase: resultado.fase, camara }, ruta, params, fotosRutaRef.current);
 
     // Cruz en el centro (marca camara.cx/cy siempre).
     ctx.strokeStyle = "#ff2d2d";

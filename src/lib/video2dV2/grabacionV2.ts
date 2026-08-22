@@ -12,8 +12,29 @@ import type { FrameV2 } from "./trayectoriaV2";
 import { dibujarTilesHibridos } from "./renderV2";
 import { prepararTilesHibridos, crearContadoresTilesHibridos } from "./tilesHibridos";
 import { dibujarOverlayFase5, type DatosEstadisticasV2 } from "./overlayFase5";
+import {
+  cargarFotosRutaV2,
+  cargarImagenDecodificada,
+  construirFotosRutaV2,
+  dibujarCierreLogoV2,
+  dibujarFondoMarcaV2,
+  dibujarFotoFinalV2,
+  dibujarFotosRutaV2,
+  dibujarTransicionAFondoMarcaV2,
+  alphaFadeIn,
+  alphaFadeInHoldOut,
+} from "./overlayFase6";
 
 const CONCURRENCIA = 6;
+// Fase 6A -- cierre (foto final + transición + logo/ciudad). Duraciones en
+// segundos lógicos, mismo eje que el resto del video (fps * duración =
+// cantidad de cuadros agregados DESPUÉS de trayectoria[]).
+const LOGO_URL = "/logo-legion-roller.png";
+const DURACION_FOTO_FINAL_SEG = 3;
+const FADE_FOTO_FINAL_SEG = 0.4;
+const DURACION_TRANSICION_CIERRE_SEG = 0.45;
+const DURACION_LOGO_SEG = 2.2;
+const FADE_LOGO_SEG = 0.35;
 // Reintentos por tile individual SOLO durante la preparación (nunca
 // durante recording -- el guard de abajo lo impide estructuralmente, ya
 // que este reintento ocurre siempre antes de start() o mientras
@@ -53,6 +74,16 @@ async function prepararConReintentos(
     pendientes = new Set(faltantes);
   }
   return resultado;
+}
+
+// Devuelve el delta (ms) si el frame califica como STALL (recorder
+// realmente "recording", nunca durante pausa/preparación), o null si no.
+// Reutilizado tanto por el loop principal como por los 3 sub-loops del
+// cierre -- mismo criterio exacto en los 4 lugares.
+function esStall(recorder: MediaRecorder, tAntesMs: number, tiempoFrameAnteriorMs: number, intervaloMs: number): number | null {
+  if (recorder.state !== "recording") return null;
+  const delta = tAntesMs - tiempoFrameAnteriorMs;
+  return delta > intervaloMs + 20 ? delta : null;
 }
 
 function verificarCobertura(requeridas: Set<string>, residentes: Map<string, ImageBitmap>): string[] {
@@ -128,6 +159,15 @@ export interface EntradaGrabacionV2 {
   ruta: RutaCoreografiaV2;
   params: ParametrosCoreografiaV2;
   datosEstadisticas: DatosEstadisticasV2;
+  // Fase 6A -- URLs planas (data-URL o ruta pública), ya resueltas por el
+  // llamador; la carga/decodificación de todas ellas ocurre acá adentro,
+  // siempre antes de start(). Ninguna es obligatoria: sin fotos de ruta el
+  // overlay de Fase 6 simplemente no dibuja nada durante el trazado; sin
+  // foto de cierre, ese beat se omite; el logo tiene su propio fallback de
+  // texto si falla (ver overlayFase6.ts).
+  fotosRutaUrls: string[];
+  fotoCierreUrl?: string;
+  ciudad?: string;
 }
 
 export interface ResultadoGrabacionV2 {
@@ -136,12 +176,28 @@ export interface ResultadoGrabacionV2 {
   duracionLogicaSeg: number;
   tiempoTotalMs: number;
   tiempoPausadoTotalMs: number;
-  stallsDuranteRecording: number;
+  stallsLoopPrincipal: number;
+  stallsCierre: number;
+  stallsTotales: number;
 }
 
 export async function grabarVideoV2(entrada: EntradaGrabacionV2, log: (linea: string) => void): Promise<ResultadoGrabacionV2> {
-  const { ventana, ventanaEfectiva, trayectoria, segmentos, clavesAnchaFinal, zoomAncho, fps, canvas, ruta, params, datosEstadisticas } =
-    entrada;
+  const {
+    ventana,
+    ventanaEfectiva,
+    trayectoria,
+    segmentos,
+    clavesAnchaFinal,
+    zoomAncho,
+    fps,
+    canvas,
+    ruta,
+    params,
+    datosEstadisticas,
+    fotosRutaUrls,
+    fotoCierreUrl,
+    ciudad,
+  } = entrada;
   if (trayectoria.length === 0) throw new Error("[v2-grabacion] trayectoria vacía.");
   if (segmentos.length === 0) throw new Error("[v2-grabacion] sin segmentos.");
 
@@ -175,6 +231,19 @@ export async function grabarVideoV2(entrada: EntradaGrabacionV2, log: (linea: st
     `[v2-grabacion] segmento=0 listo: tilesZ17=${tilesZ17.size} memoriaMB=${((tilesZ17.size * BYTES_POR_TILE) / 1_048_576).toFixed(2)}`,
   );
 
+  // --- Fase 6A: fotos + logo -- decodificados ANTES de start(), igual
+  // criterio que los tiles. skip (no abort) si alguna falla: se loguea y se
+  // excluye, la generación del video sigue. ---
+  const fotosRutaImgs = await cargarFotosRutaV2(fotosRutaUrls, log);
+  const fotosRuta = construirFotosRutaV2(fotosRutaImgs, ruta, params);
+  log(`[v2-fase6] fotosDeRutaListas=${fotosRuta.length}/${fotosRutaUrls.length}`);
+
+  const fotoCierreImg = fotoCierreUrl ? await cargarImagenDecodificada(fotoCierreUrl, log) : null;
+  if (fotoCierreUrl && !fotoCierreImg) log(`[v2-fase6] foto de cierre no cargó -- se omite ese beat.`);
+
+  const logoImg = await cargarImagenDecodificada(LOGO_URL, log);
+  if (!logoImg) log(`[v2-fase6] logo no cargó -- se usa fallback de texto (LEGIÓN ROLLER + ciudad).`);
+
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("[v2-grabacion] no se pudo obtener contexto 2D del canvas.");
   canvas.width = ANCHO_VIDEO;
@@ -184,6 +253,7 @@ export async function grabarVideoV2(entrada: EntradaGrabacionV2, log: (linea: st
   // principio que V1: no capturar un instante en blanco.
   dibujarFrameGrabacion(ctx, trayectoria[0], ventana, ventanaEfectiva, tilesAncha, tilesZ17);
   dibujarOverlayFase5(ctx, trayectoria[0], ruta, params, datosEstadisticas);
+  dibujarFotosRutaV2(ctx, trayectoria[0], ruta, params, fotosRuta);
 
   const mimeType = elegirMimeTypeVideoV2(log);
   const streamVideo = canvas.captureStream(fps);
@@ -204,7 +274,8 @@ export async function grabarVideoV2(entrada: EntradaGrabacionV2, log: (linea: st
   const intervaloMs = 1000 / fps;
   let segmentoActivo = 0;
   let tiempoPausadoTotalMs = 0;
-  let stallsDuranteRecording = 0;
+  let stallsLoopPrincipal = 0;
+  let stallsCierre = 0;
 
   mediaRecorder.start();
   log(`[v2-grabacion] start() frameActual=0/${totalFrames} segmentoActual=0 recorder.state=${mediaRecorder.state}`);
@@ -219,16 +290,15 @@ export async function grabarVideoV2(entrada: EntradaGrabacionV2, log: (linea: st
     // recorder.state==="paused" y se descuenta explícitamente más abajo
     // (tiempoFrameAnteriorMs se resetea justo después de resume()), para
     // no repetir el diagnóstico engañoso que tuvo V1.
-    if (mediaRecorder.state === "recording") {
-      const delta = tAntesMs - tiempoFrameAnteriorMs;
-      if (delta > intervaloMs + 20) {
-        stallsDuranteRecording++;
-        log(`[v2-grabacion] *** STALL *** frame=${i}/${totalFrames} deltaMs=${delta.toFixed(1)} esperado=${intervaloMs.toFixed(1)}`);
-      }
+    const deltaStall = esStall(mediaRecorder, tAntesMs, tiempoFrameAnteriorMs, intervaloMs);
+    if (deltaStall !== null) {
+      stallsLoopPrincipal++;
+      log(`[v2-grabacion] *** STALL *** frame=${i}/${totalFrames} deltaMs=${deltaStall.toFixed(1)} esperado=${intervaloMs.toFixed(1)}`);
     }
 
     dibujarFrameGrabacion(ctx, frame, ventana, ventanaEfectiva, tilesAncha, tilesZ17);
     dibujarOverlayFase5(ctx, frame, ruta, params, datosEstadisticas);
+    dibujarFotosRutaV2(ctx, frame, ruta, params, fotosRuta);
     tiempoFrameAnteriorMs = performance.now();
     await esperar(intervaloMs);
 
@@ -291,6 +361,53 @@ export async function grabarVideoV2(entrada: EntradaGrabacionV2, log: (linea: st
     }
   }
 
+  // --- Fase 6A: cierre -- cuadros agregados DESPUÉS del trazado real, sin
+  // volver a tocar cámara/trayectoria (fondo sólido de marca, nunca tiles).
+  // La foto final solo corre si cargó; el logo/ciudad SIEMPRE corre (con
+  // fallback de texto si el logo falló). Todo sigue grabado por el mismo
+  // MediaRecorder, así que también se mide para stalls (stallsCierre). ---
+  const framesFotoFinal = fotoCierreImg ? Math.round(DURACION_FOTO_FINAL_SEG * fps) : 0;
+  const duracionFotoFinalRealSeg = framesFotoFinal / fps;
+  for (let j = 0; j < framesFotoFinal; j++) {
+    const tAntesMs = performance.now();
+    const deltaStall = esStall(mediaRecorder, tAntesMs, tiempoFrameAnteriorMs, intervaloMs);
+    if (deltaStall !== null) {
+      stallsCierre++;
+      log(`[v2-grabacion] *** STALL (cierre: foto final) *** frame=${j}/${framesFotoFinal} deltaMs=${deltaStall.toFixed(1)}`);
+    }
+    dibujarFondoMarcaV2(ctx);
+    dibujarFotoFinalV2(ctx, fotoCierreImg as HTMLImageElement, alphaFadeInHoldOut(j / fps, duracionFotoFinalRealSeg, FADE_FOTO_FINAL_SEG));
+    tiempoFrameAnteriorMs = performance.now();
+    await esperar(intervaloMs);
+  }
+
+  const framesTransicion = Math.round(DURACION_TRANSICION_CIERRE_SEG * fps);
+  for (let j = 0; j < framesTransicion; j++) {
+    const tAntesMs = performance.now();
+    const deltaStall = esStall(mediaRecorder, tAntesMs, tiempoFrameAnteriorMs, intervaloMs);
+    if (deltaStall !== null) {
+      stallsCierre++;
+      log(`[v2-grabacion] *** STALL (cierre: transicion) *** frame=${j}/${framesTransicion} deltaMs=${deltaStall.toFixed(1)}`);
+    }
+    dibujarTransicionAFondoMarcaV2(ctx, (j + 1) / framesTransicion);
+    tiempoFrameAnteriorMs = performance.now();
+    await esperar(intervaloMs);
+  }
+
+  const framesLogo = Math.round(DURACION_LOGO_SEG * fps);
+  for (let j = 0; j < framesLogo; j++) {
+    const tAntesMs = performance.now();
+    const deltaStall = esStall(mediaRecorder, tAntesMs, tiempoFrameAnteriorMs, intervaloMs);
+    if (deltaStall !== null) {
+      stallsCierre++;
+      log(`[v2-grabacion] *** STALL (cierre: logo) *** frame=${j}/${framesLogo} deltaMs=${deltaStall.toFixed(1)}`);
+    }
+    dibujarFondoMarcaV2(ctx);
+    dibujarCierreLogoV2(ctx, logoImg, ciudad, alphaFadeIn(j / fps, FADE_LOGO_SEG));
+    tiempoFrameAnteriorMs = performance.now();
+    await esperar(intervaloMs);
+  }
+
   mediaRecorder.stop();
   log(`[v2-grabacion] stop() recorder.state=${mediaRecorder.state}`);
   const blob = await grabacionLista;
@@ -299,7 +416,20 @@ export async function grabarVideoV2(entrada: EntradaGrabacionV2, log: (linea: st
   for (const bitmap of tilesZ17.values()) bitmap.close();
 
   const tiempoTotalMs = performance.now() - tInicioTotal;
-  const duracionLogicaSeg = totalFrames / fps;
+  const duracionLogicaSeg = (totalFrames + framesFotoFinal + framesTransicion + framesLogo) / fps;
+  const stallsTotales = stallsLoopPrincipal + stallsCierre;
+  log(
+    `[v2-fase6] cierre: framesFotoFinal=${framesFotoFinal} framesTransicion=${framesTransicion} framesLogo=${framesLogo} stallsCierre=${stallsCierre}`,
+  );
 
-  return { blob, mimeType, duracionLogicaSeg, tiempoTotalMs, tiempoPausadoTotalMs, stallsDuranteRecording };
+  return {
+    blob,
+    mimeType,
+    duracionLogicaSeg,
+    tiempoTotalMs,
+    tiempoPausadoTotalMs,
+    stallsLoopPrincipal,
+    stallsCierre,
+    stallsTotales,
+  };
 }
