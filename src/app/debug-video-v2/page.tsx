@@ -26,6 +26,7 @@ import {
   calcularFaseYCamaraV2,
   crearEstadoRecursivoV2,
   pasoSeguimientoV2,
+  resolverPuntoVelMaxV2,
   type RutaCoreografiaV2,
   type VentanaCrossfade,
   type ParametrosCoreografiaV2,
@@ -220,7 +221,9 @@ export default function DebugVideoV2Page() {
   const [duracionBC, setDuracionBC] = useState(3.2);
   const [duracionD, setDuracionD] = useState(0); // se autocompleta al preparar
   const [duracionEF, setDuracionEF] = useState(3.2);
-  const [duracionG, setDuracionG] = useState(1.0);
+  // Panorámica final: hold -> zoom a velocidad máxima -> hold -> zoom-out ->
+  // hold con estadísticas (ver camaraV2.ts, PF_FRAC_*) -- 6.5s ya aprobado.
+  const [duracionG, setDuracionG] = useState(6.5);
   const [finPaneoFraccion, setFinPaneoFraccion] = useState(0.7);
   const [inicioZoomFraccion, setInicioZoomFraccion] = useState(0.55);
   const [velocidad, setVelocidad] = useState(1);
@@ -228,6 +231,7 @@ export default function DebugVideoV2Page() {
   const rutaRef = useRef<RutaCoreografiaV2 | null>(null);
   const ventanaRef = useRef<VentanaCrossfade | null>(null);
   const datosEstadisticasRef = useRef<DatosEstadisticasV2 | null>(null);
+  const puntoVelMaxRef = useRef<{ x: number; y: number } | null>(null);
   const fotosRutaRef = useRef<FotoRutaV2[]>([]);
   const tilesAnchaRef = useRef<Map<string, ImageBitmap>>(new Map());
   const tilesZ17Ref = useRef<Map<string, ImageBitmap>>(new Map());
@@ -264,6 +268,8 @@ export default function DebugVideoV2Page() {
     const ruta = construirRutaCoreografiaV2(RUTA_PRUEBA, grillaAncha);
     rutaRef.current = ruta;
     datosEstadisticasRef.current = construirDatosEstadisticasV2(RUTA_PRUEBA, ruta.distanciaTotalKm);
+    const puntoVelMax = resolverPuntoVelMaxV2(ruta, datosEstadisticasRef.current.indiceVelMax);
+    puntoVelMaxRef.current = puntoVelMax;
     const ventana = calcularVentanaCrossfade(grillaAncha.zoom);
     ventanaRef.current = ventana;
     const duracionSeguimientoAuto = calcularDuracionSeguimientoV2(ruta.distanciaTotalKm);
@@ -274,7 +280,7 @@ export default function DebugVideoV2Page() {
     // foto (ver construirFotosRutaV2) -- no es la que usa el scrubber en
     // vivo (ese sigue siendo calcularFaseYCamaraV2 incremental), es
     // simplemente la misma función pura de Fase 3 evaluada una vez acá.
-    const trayectoriaParaFotos = construirTrayectoriaV2(ruta, params, FPS_FASE3);
+    const trayectoriaParaFotos = construirTrayectoriaV2(ruta, params, FPS_FASE3, puntoVelMax);
     const fotosRutaImgs = await cargarFotosRutaV2(FOTOS_RUTA_PRUEBA_URLS, log);
     fotosRutaRef.current = construirFotosRutaV2(fotosRutaImgs, ruta, params, trayectoriaParaFotos);
     log(`[v2-fase6] fotosDeRutaListas(preview)=${fotosRutaRef.current.length}/${FOTOS_RUTA_PRUEBA_URLS.length}`);
@@ -283,7 +289,7 @@ export default function DebugVideoV2Page() {
     // Cobertura real de la grilla ancha (panorámica + paneo/zoom de
     // entrada y salida) -- se agrega al set del bbox, no lo reemplaza; el
     // zoom elegido (grillaAncha.zoom) queda intacto.
-    const coberturaAncha = construirCoberturaGrillaAnchaV2(ruta, ventana, params, ventana.factorAncho);
+    const coberturaAncha = construirCoberturaGrillaAnchaV2(ruta, ventana, params, ventana.factorAncho, puntoVelMax);
     const clavesAncha = new Set([...grillaAncha.claves, ...coberturaAncha]);
 
     const contAncha = crearContadoresTilesHibridos();
@@ -328,8 +334,8 @@ export default function DebugVideoV2Page() {
       params.duracionPanoramicaInicialSeg + params.duracionPaneoAcercamientoSeg + params.duracionSeguimientoSeg + params.duracionAlejamientoPaneoSeg,
     ];
     for (const t of fronteras) {
-      const antes = calcularFaseYCamaraV2(ruta, params, t - 0.001, crearEstadoRecursivoV2(), "resimular");
-      const despues = calcularFaseYCamaraV2(ruta, params, t + 0.001, crearEstadoRecursivoV2(), "resimular");
+      const antes = calcularFaseYCamaraV2(ruta, params, t - 0.001, crearEstadoRecursivoV2(), "resimular", puntoVelMax);
+      const despues = calcularFaseYCamaraV2(ruta, params, t + 0.001, crearEstadoRecursivoV2(), "resimular", puntoVelMax);
       const saltoPx = Math.hypot(despues.camara.cx - antes.camara.cx, despues.camara.cy - antes.camara.cy);
       const saltoEscala = Math.abs(despues.camara.escala - antes.camara.escala);
       log(
@@ -361,15 +367,23 @@ export default function DebugVideoV2Page() {
     const paramsFase3 = { ...parametros(), duracionSeguimientoSeg: duracionSeguimientoAuto };
     log(`[v2-fase3] zoomAncho=${grillaAncha.zoom} distanciaTotalKm=${ruta.distanciaTotalKm.toFixed(3)} duracionSeguimientoSeg=${duracionSeguimientoAuto.toFixed(2)}`);
 
+    // Estadísticas + punto de velocidad máxima -- misma fuente única que
+    // usan grabarFase4()/producción, para que este diagnóstico verifique
+    // la trayectoria de cámara REAL (incluida la sub-secuencia de
+    // panoramicaFinal), no una versión sin ese zoom.
+    const datosEstadisticas = construirDatosEstadisticasV2(RUTA_PRUEBA, ruta.distanciaTotalKm);
+    const puntoVelMax = resolverPuntoVelMaxV2(ruta, datosEstadisticas.indiceVelMax);
+    log(`[v2-fase3] indiceVelMax=${datosEstadisticas.indiceVelMax} puntoVelMax=${puntoVelMax ? `(${puntoVelMax.x.toFixed(1)},${puntoVelMax.y.toFixed(1)})` : "null (sin sub-secuencia)"}`);
+
     // Cobertura ancha de Fase 2 (bbox + trayectoria de intro/outro con
     // pasos fijos) -- sin cambios, se sigue calculando igual.
-    const coberturaAnchaFase2 = construirCoberturaGrillaAnchaV2(ruta, ventana, paramsFase3, ventana.factorAncho);
+    const coberturaAnchaFase2 = construirCoberturaGrillaAnchaV2(ruta, ventana, paramsFase3, ventana.factorAncho, puntoVelMax);
     const clavesAnchaFase2 = new Set([...grillaAncha.claves, ...coberturaAnchaFase2]);
 
     // Trayectoria completa precomputada -- única fuente de verdad para
     // planificar Y para dibujar/verificar (Z17 y, ahora, también la
     // cobertura ancha complementaria).
-    const trayectoria = construirTrayectoriaV2(ruta, paramsFase3, FPS_FASE3);
+    const trayectoria = construirTrayectoriaV2(ruta, paramsFase3, FPS_FASE3, puntoVelMax);
     log(`[v2-fase3] trayectoria: ${trayectoria.length} frames a ${FPS_FASE3}fps (duracionTotal=${duracionTotalV2(paramsFase3).toFixed(2)}s)`);
 
     // Presupuesto/ventana efectiva calculados con el tamaño PLANEADO de la
@@ -589,10 +603,17 @@ export default function DebugVideoV2Page() {
       `[v2-fase4] zoomAncho=${grillaAncha.zoom} distanciaTotalKm=${ruta.distanciaTotalKm.toFixed(3)} duracionSeguimientoSeg=${duracionSeguimientoAuto.toFixed(2)}`,
     );
 
-    const coberturaAnchaFase2 = construirCoberturaGrillaAnchaV2(ruta, ventana, paramsFase3, ventana.factorAncho);
+    // Estadísticas + punto de velocidad máxima ANTES de cobertura/
+    // trayectoria -- misma fuente única para cámara/overlays, nunca
+    // recalculada dos veces.
+    const datosEstadisticas = construirDatosEstadisticasV2(rutaGps, ruta.distanciaTotalKm);
+    const puntoVelMax = resolverPuntoVelMaxV2(ruta, datosEstadisticas.indiceVelMax);
+    log(`[v2-fase4] indiceVelMax=${datosEstadisticas.indiceVelMax} puntoVelMax=${puntoVelMax ? `(${puntoVelMax.x.toFixed(1)},${puntoVelMax.y.toFixed(1)})` : "null (sin sub-secuencia)"}`);
+
+    const coberturaAnchaFase2 = construirCoberturaGrillaAnchaV2(ruta, ventana, paramsFase3, ventana.factorAncho, puntoVelMax);
     const clavesAnchaFase2 = new Set([...grillaAncha.claves, ...coberturaAnchaFase2]);
 
-    const trayectoria = construirTrayectoriaV2(ruta, paramsFase3, FPS_FASE3);
+    const trayectoria = construirTrayectoriaV2(ruta, paramsFase3, FPS_FASE3, puntoVelMax);
     log(
       `[v2-fase4] trayectoria: ${trayectoria.length} frames a ${FPS_FASE3}fps (duracionTotal=${duracionTotalV2(paramsFase3).toFixed(2)}s)`,
     );
@@ -624,8 +645,6 @@ export default function DebugVideoV2Page() {
       log(`[v2-fase4]   segmento ${idx}: frames ${s.frameInicio}-${s.frameFin} tilesZ17=${s.tiles.size}`);
     });
 
-    const datosEstadisticas = construirDatosEstadisticasV2(rutaGps, ruta.distanciaTotalKm);
-
     const canvas = canvasRef.current;
     if (!canvas) {
       log("[v2-fase4] ERROR: no hay canvas disponible.");
@@ -647,6 +666,7 @@ export default function DebugVideoV2Page() {
           ruta,
           params: paramsFase3,
           datosEstadisticas,
+          puntoVelMax,
           fotosRutaUrls: FOTOS_RUTA_PRUEBA_URLS,
           fotoCierreUrl: FOTO_CIERRE_PRUEBA_URL,
           ciudad: CIUDAD_PRUEBA,
@@ -757,7 +777,7 @@ export default function DebugVideoV2Page() {
     canvas.width = ANCHO_VIDEO;
     canvas.height = ALTO_VIDEO;
 
-    const resultado = calcularFaseYCamaraV2(ruta, params, t, estadoSeguimientoRef.current, modo);
+    const resultado = calcularFaseYCamaraV2(ruta, params, t, estadoSeguimientoRef.current, modo, puntoVelMaxRef.current);
     setFaseActual(resultado.fase);
 
     if (ultimaFaseRef.current && ultimaFaseRef.current !== resultado.fase) {
@@ -800,6 +820,7 @@ export default function DebugVideoV2Page() {
         ruta,
         params,
         datosEstadisticasRef.current,
+        puntoVelMaxRef.current,
       );
     }
     // Fase 6A: fotos durante el recorrido -- misma capa que grabacionV2.ts,
@@ -807,7 +828,14 @@ export default function DebugVideoV2Page() {
     // Fase 5 (mismo orden ya fijo: tiles -> Fase 5 -> Fase 6).
     dibujarFotosRutaV2(ctx, { indice: 0, tiempoSeg: t, fase: resultado.fase, camara }, ruta, params, fotosRutaRef.current);
     if (datosEstadisticasRef.current) {
-      dibujarEtiquetaVelMaxFinalV2(ctx, { indice: 0, tiempoSeg: t, fase: resultado.fase, camara }, ruta, datosEstadisticasRef.current);
+      dibujarEtiquetaVelMaxFinalV2(
+        ctx,
+        { indice: 0, tiempoSeg: t, fase: resultado.fase, camara },
+        ruta,
+        datosEstadisticasRef.current,
+        params,
+        puntoVelMaxRef.current,
+      );
     }
 
     // Cruz en el centro (marca camara.cx/cy siempre).

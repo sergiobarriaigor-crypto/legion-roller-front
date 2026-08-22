@@ -172,6 +172,11 @@ export interface EntradaGrabacionV2 {
   ruta: RutaCoreografiaV2;
   params: ParametrosCoreografiaV2;
   datosEstadisticas: DatosEstadisticasV2;
+  // Ancla de cámara del resumen final (ver resolverPuntoVelMaxV2 en
+  // camaraV2.ts) -- el MISMO valor ya usado para construir `trayectoria`,
+  // nunca recalculado acá. null desactiva la sub-secuencia de zoom sin
+  // romper nada (panoramicaFinal queda estática, como antes de esta fase).
+  puntoVelMax: { x: number; y: number } | null;
   // Fase 6A -- URLs planas (data-URL o ruta pública), ya resueltas por el
   // llamador; la carga/decodificación de todas ellas ocurre acá adentro,
   // siempre antes de start(). Ninguna es obligatoria: sin fotos de ruta el
@@ -211,6 +216,7 @@ export async function grabarVideoV2(entrada: EntradaGrabacionV2, log: (linea: st
     ruta,
     params,
     datosEstadisticas,
+    puntoVelMax,
     fotosRutaUrls,
     fotoCierreUrl,
     ciudad,
@@ -314,9 +320,9 @@ export async function grabarVideoV2(entrada: EntradaGrabacionV2, log: (linea: st
     // Primer cuadro dibujado ANTES de captureStream()/start() -- mismo
     // principio que V1: no capturar un instante en blanco.
     dibujarFrameGrabacion(ctx, trayectoria[0], ventana, ventanaEfectiva, tilesAncha, tilesZ17);
-    dibujarOverlayFase5(ctx, trayectoria[0], ruta, params, datosEstadisticas);
+    dibujarOverlayFase5(ctx, trayectoria[0], ruta, params, datosEstadisticas, puntoVelMax);
     dibujarFotosRutaV2(ctx, trayectoria[0], ruta, params, fotosRuta);
-    dibujarEtiquetaVelMaxFinalV2(ctx, trayectoria[0], ruta, datosEstadisticas);
+    dibujarEtiquetaVelMaxFinalV2(ctx, trayectoria[0], ruta, datosEstadisticas, params, puntoVelMax);
 
     const mimeType = elegirMimeTypeVideoV2(log, !!grafoMusica);
     streamVideo = canvas.captureStream(fps);
@@ -373,9 +379,9 @@ export async function grabarVideoV2(entrada: EntradaGrabacionV2, log: (linea: st
       }
 
       dibujarFrameGrabacion(ctx, frame, ventana, ventanaEfectiva, tilesAncha, tilesZ17);
-      dibujarOverlayFase5(ctx, frame, ruta, params, datosEstadisticas);
+      dibujarOverlayFase5(ctx, frame, ruta, params, datosEstadisticas, puntoVelMax);
       dibujarFotosRutaV2(ctx, frame, ruta, params, fotosRuta);
-      dibujarEtiquetaVelMaxFinalV2(ctx, frame, ruta, datosEstadisticas);
+      dibujarEtiquetaVelMaxFinalV2(ctx, frame, ruta, datosEstadisticas, params, puntoVelMax);
       tiempoFrameAnteriorMs = performance.now();
       await esperar(intervaloMs);
 

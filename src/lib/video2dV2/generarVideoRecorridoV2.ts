@@ -21,6 +21,7 @@ import {
   construirRutaCoreografiaV2,
   construirCoberturaGrillaAnchaV2,
   calcularDuracionSeguimientoV2,
+  resolverPuntoVelMaxV2,
   type ParametrosCoreografiaV2,
 } from "./camaraV2";
 import { construirTrayectoriaV2 } from "./trayectoriaV2";
@@ -47,7 +48,11 @@ const PARAMS_DEFECTO_V2: Omit<ParametrosCoreografiaV2, "duracionSeguimientoSeg">
   duracionPanoramicaInicialSeg: 0.8,
   duracionPaneoAcercamientoSeg: 3.2,
   duracionAlejamientoPaneoSeg: 3.2,
-  duracionPanoramicaFinalSeg: 1.0,
+  // Panorámica final: hold panorámico -> zoom hacia velocidad máxima ->
+  // hold -> zoom-out -> hold con estadísticas (ver camaraV2.ts, PF_FRAC_*).
+  // ~6.5s ya aprobado; si no hay punto de velocidad máxima válido, esta
+  // fase simplemente queda estática todo el tiempo, como antes.
+  duracionPanoramicaFinalSeg: 6.5,
   finPaneoFraccion: 0.7,
   inicioZoomFraccion: 0.55,
 };
@@ -82,10 +87,17 @@ export async function generarVideoRecorridoV2(
   const duracionSeguimientoAuto = calcularDuracionSeguimientoV2(ruta.distanciaTotalKm);
   const params: ParametrosCoreografiaV2 = { ...PARAMS_DEFECTO_V2, duracionSeguimientoSeg: duracionSeguimientoAuto };
 
-  const coberturaAnchaFase2 = construirCoberturaGrillaAnchaV2(ruta, ventana, params, ventana.factorAncho);
+  // Estadísticas (incluye indiceVelMax, vía velocidadMaximaConPunto) ANTES
+  // de construir cobertura/trayectoria -- puntoVelMax se resuelve UNA sola
+  // vez acá y se reutiliza tal cual en cámara/cobertura/overlays, nunca se
+  // recalcula la velocidad en otro lado.
+  const datosEstadisticas = construirDatosEstadisticasV2(rutaGps, ruta.distanciaTotalKm);
+  const puntoVelMax = resolverPuntoVelMaxV2(ruta, datosEstadisticas.indiceVelMax);
+
+  const coberturaAnchaFase2 = construirCoberturaGrillaAnchaV2(ruta, ventana, params, ventana.factorAncho, puntoVelMax);
   const clavesAnchaFase2 = new Set([...grillaAncha.claves, ...coberturaAnchaFase2]);
 
-  const trayectoria = construirTrayectoriaV2(ruta, params, FPS_V2);
+  const trayectoria = construirTrayectoriaV2(ruta, params, FPS_V2, puntoVelMax);
 
   const presupuestoZ17Bytes = calcularPresupuestoZ17Bytes(
     PRESUPUESTO_TOTAL_BYTES_DEFECTO,
@@ -99,8 +111,6 @@ export async function generarVideoRecorridoV2(
   const clavesAnchaFinal = new Set([...clavesAnchaFase2, ...coberturaAnchaFase3]);
 
   const segmentos = planificarSegmentosZ17(trayectoria, ventanaEfectiva, presupuestoZ17Bytes);
-
-  const datosEstadisticas = construirDatosEstadisticasV2(rutaGps, ruta.distanciaTotalKm);
 
   const canvas = document.createElement("canvas");
 
@@ -141,6 +151,7 @@ export async function generarVideoRecorridoV2(
       ruta,
       params,
       datosEstadisticas,
+      puntoVelMax,
       fotosRutaUrls: fotosPinDataUrl ?? [],
       fotoCierreUrl: fotoFinalDataUrl,
       ciudad: datos.ciudad,

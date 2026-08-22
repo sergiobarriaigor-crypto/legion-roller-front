@@ -71,9 +71,38 @@ export function fraccionTrazoDeFrame(frame: FrameV2, params: ParametrosCoreograf
   return clamp((frame.tiempoSeg - tBC) / (tD - tBC), 0, 1);
 }
 
-function limitesTiempo(params: ParametrosCoreografiaV2): { tBC: number; tD: number } {
+function limitesTiempo(params: ParametrosCoreografiaV2): { tBC: number; tD: number; tEF: number } {
   const tBC = params.duracionPanoramicaInicialSeg + params.duracionPaneoAcercamientoSeg;
-  return { tBC, tD: tBC + params.duracionSeguimientoSeg };
+  const tD = tBC + params.duracionSeguimientoSeg;
+  const tEF = tD + params.duracionAlejamientoPaneoSeg;
+  return { tBC, tD, tEF };
+}
+
+// Misma división en fracciones que camaraV2.ts (PF_FRAC_*) -- reimplementada
+// acá de forma independiente (no importada, ese archivo queda congelado
+// para este overlay). Si esa división cambia alguna vez, hay que replicar
+// el cambio acá también. Solo se usa para decidir CUÁNDO mostrar la grilla
+// grande de estadísticas -- nunca para mover cámara ni recalcular nada de
+// GPS/velocidad.
+const PF_FRAC_HOLD_OVERVIEW = 0.9 / 6.5;
+const PF_FRAC_ZOOM_IN = 0.9 / 6.5;
+const PF_FRAC_HOLD_VELMAX = 1.7 / 6.5;
+const PF_FRAC_ZOOM_OUT = 0.9 / 6.5;
+
+// Durante la sub-secuencia de zoom hacia velocidad máxima (panoramicaFinal
+// con puntoVelMax válido), la grilla grande de estadísticas solo aparece en
+// el hold final, DESPUÉS del zoom-out -- mientras tanto se muestra la barra
+// chica (igual que en seguimiento), para no competir visualmente con el
+// zoom/etiqueta. Sin secuencia especial (puntoVelMax null), se comporta
+// EXACTAMENTE como antes de este cambio: grilla grande en toda
+// panoramicaFinal.
+function enHoldEstadisticasFinal(frame: FrameV2, params: ParametrosCoreografiaV2, puntoVelMax: { x: number; y: number } | null): boolean {
+  if (frame.fase !== "panoramicaFinal") return false;
+  if (!puntoVelMax || params.duracionPanoramicaFinalSeg <= 0) return true;
+  const { tEF } = limitesTiempo(params);
+  const tau = clamp((frame.tiempoSeg - tEF) / params.duracionPanoramicaFinalSeg, 0, 1);
+  const t4 = PF_FRAC_HOLD_OVERVIEW + PF_FRAC_ZOOM_IN + PF_FRAC_HOLD_VELMAX + PF_FRAC_ZOOM_OUT;
+  return tau > t4;
 }
 
 function indiceYProgresoEnDistancia(ruta: RutaCoreografiaV2, distObjetivoKm: number): { indice: number; progreso: number } {
@@ -302,13 +331,18 @@ function dibujarBarraEstadisticas(
 // Punto de entrada único de Fase 5 -- se llama DESPUÉS de dibujar los
 // tiles híbridos del frame (dibujarFrameGrabacion en grabacionV2.ts, o el
 // draw loop del preview en /debug-video-v2). Orden interno ya fijo:
-// trazado -> marca de velocidad máxima -> marcador -> estadísticas.
+// trazado -> marca de velocidad máxima -> marcador/punto final ->
+// estadísticas. `puntoVelMax` (ver resolverPuntoVelMaxV2 en camaraV2.ts) es
+// el mismo valor, ya resuelto una vez, que se le pasa a la cámara -- acá
+// solo se usa para decidir CUÁNDO mostrar la grilla grande de estadísticas
+// (nunca para recalcular nada de GPS/velocidad).
 export function dibujarOverlayFase5(
   ctx: CanvasRenderingContext2D,
   frame: FrameV2,
   ruta: RutaCoreografiaV2,
   params: ParametrosCoreografiaV2,
   datos: DatosEstadisticasV2,
+  puntoVelMax: { x: number; y: number } | null,
 ): void {
   if (frame.fase === "panoramicaInicial" || frame.fase === "paneoAcercamiento") return;
 
@@ -367,12 +401,21 @@ export function dibujarOverlayFase5(
     }
   }
 
-  // --- Marcador del patinador ---
+  // --- Marcador del patinador -- durante seguimiento, el ícono animado con
+  // halo; una vez el trazado llega al final (alejamiento/panorámica final)
+  // pasa a ser un punto simple, igual que el de inicio, para que "inicio" y
+  // "fin" se lean como un par claro de extremos del trazado -- el ícono
+  // animado (pensado para una posición EN MOVIMIENTO) queda reservado para
+  // mientras el trazado sigue avanzando de verdad. ---
   const marcadorPantalla = aPantalla(posicionActual, camara);
-  dibujarMarcadorPatinador(ctx, marcadorPantalla.x, marcadorPantalla.y);
+  if (fraccionTrazo >= 1) {
+    dibujarPuntoSimple(ctx, marcadorPantalla.x, marcadorPantalla.y, 7, COLOR_DORADO);
+  } else {
+    dibujarMarcadorPatinador(ctx, marcadorPantalla.x, marcadorPantalla.y);
+  }
 
   // --- Estadísticas ---
-  const enResumenFinal = frame.fase === "alejamientoPaneo" || frame.fase === "panoramicaFinal";
+  const enResumenFinal = frame.fase === "alejamientoPaneo" || enHoldEstadisticasFinal(frame, params, puntoVelMax);
   const distanciaMostrarKm = enResumenFinal ? datos.distanciaTotalKm : distObjetivoKm;
   const tiempoMostrarSeg = enResumenFinal ? datos.duracionTotalSeg : fraccionTrazo * datos.duracionTotalSeg;
   dibujarBarraEstadisticas(ctx, datos, distanciaMostrarKm, tiempoMostrarSeg, enResumenFinal);

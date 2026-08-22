@@ -77,9 +77,10 @@ export interface FotoRutaV2 {
   arriba: boolean;
 }
 
-function limitesTiempoSeguimiento(params: ParametrosCoreografiaV2): { tBC: number; tD: number } {
+function limitesTiempoSeguimiento(params: ParametrosCoreografiaV2): { tBC: number; tD: number; tEF: number } {
   const tBC = params.duracionPanoramicaInicialSeg + params.duracionPaneoAcercamientoSeg;
-  return { tBC, tD: tBC + params.duracionSeguimientoSeg };
+  const tD = tBC + params.duracionSeguimientoSeg;
+  return { tBC, tD, tEF: tD + params.duracionAlejamientoPaneoSeg };
 }
 
 function indiceYProgresoEnDistancia(ruta: RutaCoreografiaV2, distObjetivoKm: number): { indice: number; progreso: number } {
@@ -372,28 +373,64 @@ export function dibujarFotosRutaV2(ctx: CanvasRenderingContext2D, frame: FrameV2
 const ALTO_PANEL_RESUMEN_FINAL = 168;
 const COLOR_VELMAX_FINAL = "#e2453c"; // mismo rojo que la marca discreta de Fase 5, reimplementado (no importado)
 
-// Etiqueta compacta "⚡ XX km/h" durante alejamiento + panorámica final --
-// distinta de la tarjeta grande de Fase 5 (esa ya desapareció antes de
-// tD). Ancla al MISMO punto/índice que Fase 5 ya resolvió
-// (datos.indiceVelMax/velocidadMaxima, vía velocidadMaximaConPunto) --
-// nunca recalcula nada de GPS/velocidad. Se georreferencia con la cámara
-// de cada frame (tamaño en pantalla fijo, como todo lo demás acá). Deja de
-// dibujarse sola en cuanto termina panoramicaFinal, porque esta función
-// solo se llama desde el loop principal -- los beats de cierre (foto
-// final/logo) nunca la invocan.
-export function dibujarEtiquetaVelMaxFinalV2(ctx: CanvasRenderingContext2D, frame: FrameV2, ruta: RutaCoreografiaV2, datos: DatosEstadisticasV2): void {
+// Sub-etapa "hold en velocidad máxima" dentro de panoramicaFinal -- misma
+// división en fracciones que camaraV2.ts (PF_FRAC_*), reimplementada acá de
+// forma independiente (tercera copia, mismo criterio que ALTO_PANEL_RESUMEN_FINAL
+// más abajo: si esa división cambia, hay que replicar el cambio acá
+// también). Solo decide si mostrar la variante de 2 líneas -- nunca mueve
+// cámara ni recalcula velocidad/GPS.
+const PF_FRAC_HOLD_OVERVIEW = 0.9 / 6.5;
+const PF_FRAC_ZOOM_IN = 0.9 / 6.5;
+const PF_FRAC_HOLD_VELMAX = 1.7 / 6.5;
+
+function enHoldVelMaxFinal(frame: FrameV2, params: ParametrosCoreografiaV2, puntoVelMax: { x: number; y: number } | null): boolean {
+  if (frame.fase !== "panoramicaFinal" || !puntoVelMax || params.duracionPanoramicaFinalSeg <= 0) return false;
+  const { tEF } = limitesTiempoSeguimiento(params);
+  const tau = clamp((frame.tiempoSeg - tEF) / params.duracionPanoramicaFinalSeg, 0, 1);
+  const t2 = PF_FRAC_HOLD_OVERVIEW + PF_FRAC_ZOOM_IN;
+  const t3 = t2 + PF_FRAC_HOLD_VELMAX;
+  return tau > t2 && tau <= t3;
+}
+
+// Etiqueta "⚡ XX km/h" durante alejamiento + panorámica final -- distinta
+// de la tarjeta grande de Fase 5 (esa ya desapareció antes de tD). Ancla al
+// MISMO punto/índice que Fase 5 ya resolvió (datos.indiceVelMax/
+// velocidadMaxima, vía velocidadMaximaConPunto) -- nunca recalcula nada de
+// GPS/velocidad. `puntoVelMax` es el mismo valor ya resuelto (ver
+// resolverPuntoVelMaxV2 en camaraV2.ts) que recibió la cámara -- acá solo
+// para saber si la sub-secuencia de zoom está realmente activa (si es
+// null, la cámara nunca se acercó, así que tampoco corresponde la variante
+// de 2 líneas). Se georreferencia con la cámara de cada frame (tamaño en
+// pantalla fijo, como todo lo demás acá). Deja de dibujarse sola en cuanto
+// termina panoramicaFinal, porque esta función solo se llama desde el loop
+// principal -- los beats de cierre (foto final/logo) nunca la invocan.
+export function dibujarEtiquetaVelMaxFinalV2(
+  ctx: CanvasRenderingContext2D,
+  frame: FrameV2,
+  ruta: RutaCoreografiaV2,
+  datos: DatosEstadisticasV2,
+  params: ParametrosCoreografiaV2,
+  puntoVelMax: { x: number; y: number } | null,
+): void {
   if (frame.fase !== "alejamientoPaneo" && frame.fase !== "panoramicaFinal") return;
   if (datos.indiceVelMax < 0) return;
 
   const p = aPantalla(ruta.puntosZ17[datos.indiceVelMax], frame.camara);
+  const destacado = enHoldVelMaxFinal(frame, params, puntoVelMax);
   const texto = `⚡ ${Math.round(datos.velocidadMaxima)} km/h`;
+  const textoSecundario = "VELOCIDAD MÁXIMA";
 
   ctx.save();
-  ctx.font = "700 15px Arial, sans-serif";
+  ctx.font = destacado ? "800 17px Arial, sans-serif" : "700 15px Arial, sans-serif";
   const anchoTexto = ctx.measureText(texto).width;
-  const paddingX = 10;
-  const anchoChip = anchoTexto + paddingX * 2;
-  const altoChip = 26;
+  let anchoTextoSecundario = 0;
+  if (destacado) {
+    ctx.font = "700 12px Arial, sans-serif";
+    anchoTextoSecundario = ctx.measureText(textoSecundario).width;
+  }
+  const paddingX = 12;
+  const anchoChip = Math.max(anchoTexto, anchoTextoSecundario) + paddingX * 2;
+  const altoChip = destacado ? 46 : 26;
 
   const margen = 8;
   let arriba = true;
@@ -416,9 +453,9 @@ export function dibujarEtiquetaVelMaxFinalV2(ctx: CanvasRenderingContext2D, fram
   ctx.lineTo(chipX + anchoChip / 2, arriba ? chipY + altoChip : chipY);
   ctx.stroke();
 
-  // Píldora compacta -- deliberadamente más chica que la tarjeta temporal
-  // (158x62) de Fase 5.
-  trazarRectRedondeado(ctx, chipX, chipY, anchoChip, altoChip, altoChip / 2);
+  // Píldora -- deliberadamente más chica que la tarjeta temporal (158x62)
+  // de Fase 5, incluso en su variante destacada de 2 líneas.
+  trazarRectRedondeado(ctx, chipX, chipY, anchoChip, altoChip, destacado ? 14 : altoChip / 2);
   ctx.fillStyle = "rgba(13,10,6,0.78)";
   ctx.fill();
   ctx.lineWidth = 1.5;
@@ -429,8 +466,18 @@ export function dibujarEtiquetaVelMaxFinalV2(ctx: CanvasRenderingContext2D, fram
   ctx.textBaseline = "middle";
   ctx.shadowColor = "rgba(0,0,0,0.8)";
   ctx.shadowBlur = 4;
-  ctx.fillStyle = "#f2efe9";
-  ctx.fillText(texto, chipX + anchoChip / 2, chipY + altoChip / 2 + 1);
+  if (destacado) {
+    ctx.font = "800 17px Arial, sans-serif";
+    ctx.fillStyle = COLOR_VELMAX_FINAL;
+    ctx.fillText(texto, chipX + anchoChip / 2, chipY + altoChip / 2 - 10);
+    ctx.font = "700 12px Arial, sans-serif";
+    ctx.fillStyle = "#f2efe9";
+    ctx.fillText(textoSecundario, chipX + anchoChip / 2, chipY + altoChip / 2 + 11);
+  } else {
+    ctx.font = "700 15px Arial, sans-serif";
+    ctx.fillStyle = "#f2efe9";
+    ctx.fillText(texto, chipX + anchoChip / 2, chipY + altoChip / 2 + 1);
+  }
   ctx.restore();
 }
 
