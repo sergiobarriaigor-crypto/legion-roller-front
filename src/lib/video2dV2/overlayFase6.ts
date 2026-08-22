@@ -192,7 +192,11 @@ export function construirFotosRutaV2(
   });
 
   return base.map((foto, i) => {
-    const siguienteTiempoSeg = i + 1 < base.length ? base[i + 1].tiempoEventoSeg : Infinity;
+    // La última foto no tiene "siguiente foto" contra qué recortarse -- su
+    // límite pasa a ser tD (fin de seguimiento), para garantizar que
+    // ninguna tarjeta de foto sobreviva a alejamiento/panorámica final
+    // (esa fase le pertenece al resumen de Fase 5 y a la foto de cierre).
+    const siguienteTiempoSeg = i + 1 < base.length ? base[i + 1].tiempoEventoSeg : tD;
     const disponibleSeg = siguienteTiempoSeg - foto.tiempoEventoSeg - SEPARACION_MIN_ENTRE_FOTOS_SEG;
 
     let hold = HOLD_FOTO_NOMINAL_SEG;
