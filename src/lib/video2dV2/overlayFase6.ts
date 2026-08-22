@@ -129,23 +129,26 @@ function buscarFrameCercano(trayectoria: FrameV2[], tiempoSeg: number): FrameV2 
 }
 
 const PADDING_TARJETA_FOTO = 16;
-const ALTO_MAX_TARJETA_FOTO = ALTO_VIDEO * 0.55;
 const ANCHO_TARJETA_FOTO = ANCHO_VIDEO * 0.6;
+const ALTO_TARJETA_FOTO = 480;
 
-// Tamaño de la tarjeta -- ancho FIJO (~60% del video, dentro de 55-65%),
-// alto según la orientación real de la imagen (contain, nunca recorta),
-// tope de alto para fotos muy verticales. Depende solo de la imagen, nunca
-// de la cámara -- por eso es seguro llamarla tanto al congelar la posición
-// (una vez) como al dibujar (cada frame): siempre da el mismo resultado.
+// Tamaño de la tarjeta -- ancho y alto FIJOS E IDÉNTICOS para las 3 fotos
+// (ancho ~60% del video, dentro de 55-65%), independientemente de la
+// orientación real de cada imagen. La foto se ajusta con "contain" DENTRO
+// de esa caja fija (nunca la agranda más allá de sus dimensiones
+// originales ni la recorta ni la deforma) -- una foto panorámica deja
+// franjas arriba/abajo, una foto vertical deja franjas a los costados,
+// pero el contenedor (y sus bordes redondeados) siempre miden lo mismo.
+// Depende solo de la imagen, nunca de la cámara -- por eso es seguro
+// llamarla tanto al congelar la posición (una vez) como al dibujar (cada
+// frame): siempre da el mismo resultado para la misma imagen.
 function calcularTamanoTarjetaFoto(img: HTMLImageElement): { anchoCard: number; altoCard: number; anchoImg: number; altoImg: number } {
   const cajaInteriorAncho = ANCHO_TARJETA_FOTO - PADDING_TARJETA_FOTO * 2;
-  const relacion = img.naturalWidth / img.naturalHeight || 1;
-  const altoIdealSegunAncho = cajaInteriorAncho / relacion;
-  const cajaInteriorAlto = Math.min(altoIdealSegunAncho, ALTO_MAX_TARJETA_FOTO - PADDING_TARJETA_FOTO * 2);
+  const cajaInteriorAlto = ALTO_TARJETA_FOTO - PADDING_TARJETA_FOTO * 2;
   const escalaContain = Math.min(cajaInteriorAncho / img.naturalWidth, cajaInteriorAlto / img.naturalHeight);
   const anchoImg = img.naturalWidth * escalaContain;
   const altoImg = img.naturalHeight * escalaContain;
-  return { anchoCard: ANCHO_TARJETA_FOTO, altoCard: altoImg + PADDING_TARJETA_FOTO * 2, anchoImg, altoImg };
+  return { anchoCard: ANCHO_TARJETA_FOTO, altoCard: ALTO_TARJETA_FOTO, anchoImg, altoImg };
 }
 
 // Elige arriba/abajo + clampea contra los bordes -- misma lógica de
@@ -293,7 +296,7 @@ function dibujarTarjetaFotoV2(ctx: CanvasRenderingContext2D, foto: FotoRutaV2, p
   ctx.translate(-cx, -cy);
 
   trazarRectRedondeado(ctx, cardX, cardY, anchoCard, altoCard, 14);
-  ctx.fillStyle = "rgba(13,10,6,0.8)";
+  ctx.fillStyle = "rgba(13,10,6,0.75)";
   ctx.fill();
   ctx.lineWidth = 2;
   ctx.strokeStyle = "rgba(224,178,78,0.55)";
