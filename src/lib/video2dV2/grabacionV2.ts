@@ -24,6 +24,7 @@ import {
   alphaFadeIn,
   alphaFadeInHoldOut,
 } from "./overlayFase6";
+import { cargarBufferMusicaV2, construirGrafoMusicaV2, liberarMusicaV2, programarFadeOutMusicaV2, type GrafoMusicaV2 } from "./musicaV2";
 
 const CONCURRENCIA = 6;
 // Fase 6A -- cierre (foto final + transición + logo/ciudad). Duraciones en
@@ -104,19 +105,30 @@ const CANDIDATOS_MIME_VIDEO = [
   "video/mp4;codecs=avc1",
   "video/mp4",
 ];
+// Variantes con codec de audio explícito -- solo se usan cuando hay
+// música, igual criterio que V1 (elegirMimeTypeVideo(conAudio)).
+const CANDIDATOS_MIME_VIDEO_CON_AUDIO = [
+  "video/webm;codecs=vp9,opus",
+  "video/webm;codecs=vp8,opus",
+  "video/webm",
+  "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
+  "video/mp4;codecs=avc1,mp4a.40.2",
+  "video/mp4",
+];
 
-function elegirMimeTypeVideoV2(log: (linea: string) => void): string {
+function elegirMimeTypeVideoV2(log: (linea: string) => void, conAudio: boolean): string {
   if (typeof MediaRecorder === "undefined") {
     throw new Error("[v2-grabacion] MediaRecorder no está disponible en este navegador.");
   }
-  const soportados = CANDIDATOS_MIME_VIDEO.filter((c) => MediaRecorder.isTypeSupported(c));
-  log(`[v2-grabacion] candidatosMime=${CANDIDATOS_MIME_VIDEO.join(",")}`);
+  const candidatos = conAudio ? CANDIDATOS_MIME_VIDEO_CON_AUDIO : CANDIDATOS_MIME_VIDEO;
+  const soportados = candidatos.filter((c) => MediaRecorder.isTypeSupported(c));
+  log(`[v2-grabacion] candidatosMime(conAudio=${conAudio})=${candidatos.join(",")}`);
   log(`[v2-grabacion] userAgent=${typeof navigator !== "undefined" ? navigator.userAgent : "(sin navigator)"}`);
   log(`[v2-grabacion] mimeSoportados=${soportados.length ? soportados.join(",") : "(ninguno)"}`);
   if (soportados.length === 0) {
     throw new Error(
       `[v2-grabacion] ningún mimeType de video fue confirmado por MediaRecorder.isTypeSupported() en este navegador. ` +
-        `Candidatos probados: ${CANDIDATOS_MIME_VIDEO.join(", ")}`,
+        `Candidatos probados: ${candidatos.join(", ")}`,
     );
   }
   const elegido = soportados[0];
@@ -168,6 +180,10 @@ export interface EntradaGrabacionV2 {
   fotosRutaUrls: string[];
   fotoCierreUrl?: string;
   ciudad?: string;
+  // Fase 6B -- música de fondo, opcional. Sin musicaUrl el video queda
+  // mudo, exactamente como hoy (cero cambios de comportamiento).
+  musicaUrl?: string;
+  musicaInicioSeg?: number;
 }
 
 export interface ResultadoGrabacionV2 {
@@ -197,6 +213,8 @@ export async function grabarVideoV2(entrada: EntradaGrabacionV2, log: (linea: st
     fotosRutaUrls,
     fotoCierreUrl,
     ciudad,
+    musicaUrl,
+    musicaInicioSeg,
   } = entrada;
   if (trayectoria.length === 0) throw new Error("[v2-grabacion] trayectoria vacía.");
   if (segmentos.length === 0) throw new Error("[v2-grabacion] sin segmentos.");
@@ -244,192 +262,301 @@ export async function grabarVideoV2(entrada: EntradaGrabacionV2, log: (linea: st
   const logoImg = await cargarImagenDecodificada(LOGO_URL, log);
   if (!logoImg) log(`[v2-fase6] logo no cargó -- se usa fallback de texto (LEGIÓN ROLLER + ciudad).`);
 
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("[v2-grabacion] no se pudo obtener contexto 2D del canvas.");
-  canvas.width = ANCHO_VIDEO;
-  canvas.height = ALTO_VIDEO;
+  // --- Fase 6B: música -- decodificada ANTES de start(), igual criterio
+  // que tiles/fotos/logo. Nunca aborta el video: cualquier falla (red,
+  // decode, navegador sin Web Audio) deja grafoMusica=null y el video
+  // sigue mudo. audioCtx se deja en "running" ACÁ (resuelto antes del
+  // bloque crítico de arranque, nunca después) para que fuenteMusica.start()
+  // más abajo sea puramente síncrono. ---
+  let grafoMusica: GrafoMusicaV2 | null = null;
+  if (musicaUrl) {
+    try {
+      const audioCtx = new AudioContext();
+      if (audioCtx.state !== "running") {
+        await audioCtx.resume();
+      }
+      const buffer = await cargarBufferMusicaV2(musicaUrl, audioCtx, log);
+      if (buffer) {
+        grafoMusica = construirGrafoMusicaV2(audioCtx, buffer);
+        log(
+          `[v2-musica] musica lista duracionBufferSeg=${buffer.duration.toFixed(2)} musicaInicioSeg=${(musicaInicioSeg ?? 0).toFixed(2)} ` +
+            `audioCtx.state=${audioCtx.state}`,
+        );
+      } else {
+        await audioCtx.close().catch(() => {});
+        log(`[v2-musica] no se pudo decodificar la música -- video sin música.`);
+      }
+    } catch (e) {
+      log(`[v2-musica] ERROR preparando música: ${(e as Error).message ?? e} -- video sin música.`);
+      grafoMusica = null;
+    }
+  }
 
-  // Primer cuadro dibujado ANTES de captureStream()/start() -- mismo
-  // principio que V1: no capturar un instante en blanco.
-  dibujarFrameGrabacion(ctx, trayectoria[0], ventana, ventanaEfectiva, tilesAncha, tilesZ17);
-  dibujarOverlayFase5(ctx, trayectoria[0], ruta, params, datosEstadisticas);
-  dibujarFotosRutaV2(ctx, trayectoria[0], ruta, params, fotosRuta);
+  try {
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("[v2-grabacion] no se pudo obtener contexto 2D del canvas.");
+    canvas.width = ANCHO_VIDEO;
+    canvas.height = ALTO_VIDEO;
 
-  const mimeType = elegirMimeTypeVideoV2(log);
-  const streamVideo = canvas.captureStream(fps);
-  const mediaRecorder = new MediaRecorder(streamVideo, { mimeType, videoBitsPerSecond: 5_000_000 });
-  const chunks: BlobPart[] = [];
-  mediaRecorder.ondataavailable = (e) => {
-    if (e.data.size > 0) chunks.push(e.data);
-  };
-  const grabacionLista = new Promise<Blob>((resolve, reject) => {
-    mediaRecorder.onstop = () => resolve(new Blob(chunks, { type: mimeType }));
-    mediaRecorder.onerror = (ev) => {
-      const detalle = (ev as unknown as { error?: unknown }).error;
-      reject(new Error(`[v2-grabacion] error de MediaRecorder: ${detalle ? String(detalle) : String(ev)}`));
+    // Primer cuadro dibujado ANTES de captureStream()/start() -- mismo
+    // principio que V1: no capturar un instante en blanco.
+    dibujarFrameGrabacion(ctx, trayectoria[0], ventana, ventanaEfectiva, tilesAncha, tilesZ17);
+    dibujarOverlayFase5(ctx, trayectoria[0], ruta, params, datosEstadisticas);
+    dibujarFotosRutaV2(ctx, trayectoria[0], ruta, params, fotosRuta);
+
+    const mimeType = elegirMimeTypeVideoV2(log, !!grafoMusica);
+    const streamVideo = canvas.captureStream(fps);
+    const stream = grafoMusica
+      ? new MediaStream([...streamVideo.getVideoTracks(), ...grafoMusica.destinoMusica.stream.getAudioTracks()])
+      : streamVideo;
+    const mediaRecorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 5_000_000 });
+    const chunks: BlobPart[] = [];
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) chunks.push(e.data);
     };
-  });
+    const grabacionLista = new Promise<Blob>((resolve, reject) => {
+      mediaRecorder.onstop = () => resolve(new Blob(chunks, { type: mimeType }));
+      mediaRecorder.onerror = (ev) => {
+        const detalle = (ev as unknown as { error?: unknown }).error;
+        reject(new Error(`[v2-grabacion] error de MediaRecorder: ${detalle ? String(detalle) : String(ev)}`));
+      };
+    });
 
-  const totalFrames = trayectoria.length;
-  const intervaloMs = 1000 / fps;
-  let segmentoActivo = 0;
-  let tiempoPausadoTotalMs = 0;
-  let stallsLoopPrincipal = 0;
-  let stallsCierre = 0;
+    const totalFrames = trayectoria.length;
+    const intervaloMs = 1000 / fps;
+    let segmentoActivo = 0;
+    let tiempoPausadoTotalMs = 0;
+    let stallsLoopPrincipal = 0;
+    let stallsCierre = 0;
 
-  mediaRecorder.start();
-  log(`[v2-grabacion] start() frameActual=0/${totalFrames} segmentoActual=0 recorder.state=${mediaRecorder.state}`);
+    // --- Bloque crítico: CERO await entre estas dos líneas -- todo lo
+    // async (decode de música, audioCtx.resume()) ya se resolvió arriba,
+    // así que el único desfase posible acá es el costo puramente síncrono
+    // de estas dos llamadas. ---
+    const tAntesInicioMs = performance.now();
+    grafoMusica?.fuenteMusica.start(0, musicaInicioSeg ?? 0);
+    mediaRecorder.start();
+    const tiempoEntreAudioYRecorderMs = performance.now() - tAntesInicioMs;
+    log(
+      `[v2-grabacion] start() frameActual=0/${totalFrames} segmentoActual=0 recorder.state=${mediaRecorder.state}` +
+        (grafoMusica ? ` tiempoEntreAudioYRecorderMs=${tiempoEntreAudioYRecorderMs.toFixed(2)}` : " (sin música)"),
+    );
 
-  let tiempoFrameAnteriorMs = performance.now();
+    let tiempoFrameAnteriorMs = performance.now();
 
-  for (let i = 0; i < totalFrames; i++) {
-    const frame = trayectoria[i];
-    const tAntesMs = performance.now();
-    // Solo cuenta como STALL si de verdad estábamos "recording" -- el
-    // tiempo real que tarda la preparación entre segmentos ocurre con
-    // recorder.state==="paused" y se descuenta explícitamente más abajo
-    // (tiempoFrameAnteriorMs se resetea justo después de resume()), para
-    // no repetir el diagnóstico engañoso que tuvo V1.
-    const deltaStall = esStall(mediaRecorder, tAntesMs, tiempoFrameAnteriorMs, intervaloMs);
-    if (deltaStall !== null) {
-      stallsLoopPrincipal++;
-      log(`[v2-grabacion] *** STALL *** frame=${i}/${totalFrames} deltaMs=${deltaStall.toFixed(1)} esperado=${intervaloMs.toFixed(1)}`);
-    }
-
-    dibujarFrameGrabacion(ctx, frame, ventana, ventanaEfectiva, tilesAncha, tilesZ17);
-    dibujarOverlayFase5(ctx, frame, ruta, params, datosEstadisticas);
-    dibujarFotosRutaV2(ctx, frame, ruta, params, fotosRuta);
-    tiempoFrameAnteriorMs = performance.now();
-    await esperar(intervaloMs);
-
-    const segmentoEsteFrame = segmentos[segmentoActivo];
-    const hayMasSegmentos = segmentoActivo < segmentos.length - 1;
-    if (hayMasSegmentos && i === segmentoEsteFrame.frameFin) {
-      const tPausaInicioMs = performance.now();
-      const siguiente = segmentos[segmentoActivo + 1];
-
-      log(
-        `[v2-grabacion] frameActual=${i}/${totalFrames} segmentoActual=${segmentoActivo} recorder.state(antes de pause)=${mediaRecorder.state}`,
-      );
-      mediaRecorder.pause();
-      log(`[v2-grabacion] pause() confirmado recorder.state=${mediaRecorder.state}`);
-
-      const memAntesMB = ((tilesAncha.size + tilesZ17.size) * BYTES_POR_TILE) / 1_048_576;
-
-      const aLiberar = [...tilesZ17.keys()].filter((k) => !siguiente.tiles.has(k));
-      for (const k of aLiberar) {
-        tilesZ17.get(k)?.close();
-        tilesZ17.delete(k);
-      }
-      const aFetchear = [...siguiente.tiles].filter((k) => !tilesZ17.has(k));
-      log(`[v2-grabacion] liberados=${aLiberar.length} compartidos=${siguiente.tiles.size - aFetchear.length} aFetchear=${aFetchear.length}`);
-
-      // Guard duro: nunca se debe llegar acá con el recorder grabando.
-      if (mediaRecorder.state !== "paused") {
-        throw new Error(
-          `[v2-grabacion] GUARD: se intentó preparar tiles con recorder.state=${mediaRecorder.state}, se esperaba "paused".`,
-        );
+    for (let i = 0; i < totalFrames; i++) {
+      const frame = trayectoria[i];
+      const tAntesMs = performance.now();
+      // Solo cuenta como STALL si de verdad estábamos "recording" -- el
+      // tiempo real que tarda la preparación entre segmentos ocurre con
+      // recorder.state==="paused" y se descuenta explícitamente más abajo
+      // (tiempoFrameAnteriorMs se resetea justo después de resume()), para
+      // no repetir el diagnóstico engañoso que tuvo V1.
+      const deltaStall = esStall(mediaRecorder, tAntesMs, tiempoFrameAnteriorMs, intervaloMs);
+      if (deltaStall !== null) {
+        stallsLoopPrincipal++;
+        log(`[v2-grabacion] *** STALL *** frame=${i}/${totalFrames} deltaMs=${deltaStall.toFixed(1)} esperado=${intervaloMs.toFixed(1)}`);
       }
 
-      const nuevos = await prepararConReintentos(new Set(aFetchear), ZOOM_SEGUIMIENTO, log, `segmento${segmentoActivo + 1}`);
-      for (const [k, v] of nuevos) tilesZ17.set(k, v);
-
-      const faltantesZ17 = verificarCobertura(siguiente.tiles, tilesZ17);
-      const faltantesAncha = verificarCobertura(clavesAnchaFinal, tilesAncha);
-      log(`[v2-grabacion] cobertura antes de resume: anchaFaltantes=${faltantesAncha.length} z17Faltantes=${faltantesZ17.length}`);
-      if (faltantesZ17.length > 0 || faltantesAncha.length > 0) {
-        throw new Error(
-          `[v2-grabacion] ABORT antes de resume(): cobertura incompleta (anchaFaltantes=${faltantesAncha.length} ` +
-            `z17Faltantes=${faltantesZ17.length}) para el segmento ${segmentoActivo + 1}.`,
-        );
-      }
-
-      const memDespuesMB = ((tilesAncha.size + tilesZ17.size) * BYTES_POR_TILE) / 1_048_576;
-      log(`[v2-grabacion] memoria antes=${memAntesMB.toFixed(2)}MB despues=${memDespuesMB.toFixed(2)}MB`);
-
-      mediaRecorder.resume();
-      log(
-        `[v2-grabacion] resume() confirmado frameActual=${i + 1}/${totalFrames} segmentoActual=${segmentoActivo + 1} recorder.state=${mediaRecorder.state}`,
-      );
-
-      // Reset -- lo de arriba (pause..resume) no debe contar como delta
-      // de frame en la próxima medición de STALL.
+      dibujarFrameGrabacion(ctx, frame, ventana, ventanaEfectiva, tilesAncha, tilesZ17);
+      dibujarOverlayFase5(ctx, frame, ruta, params, datosEstadisticas);
+      dibujarFotosRutaV2(ctx, frame, ruta, params, fotosRuta);
       tiempoFrameAnteriorMs = performance.now();
-      tiempoPausadoTotalMs += tiempoFrameAnteriorMs - tPausaInicioMs;
+      await esperar(intervaloMs);
 
-      segmentoActivo++;
+      const segmentoEsteFrame = segmentos[segmentoActivo];
+      const hayMasSegmentos = segmentoActivo < segmentos.length - 1;
+      if (hayMasSegmentos && i === segmentoEsteFrame.frameFin) {
+        const tPausaInicioMs = performance.now();
+        const siguiente = segmentos[segmentoActivo + 1];
+
+        log(
+          `[v2-grabacion] frameActual=${i}/${totalFrames} segmentoActual=${segmentoActivo} recorder.state(antes de pause)=${mediaRecorder.state}`,
+        );
+        const tRecorderPauseMs = performance.now();
+        mediaRecorder.pause();
+        log(`[v2-grabacion] pause() confirmado recorder.state=${mediaRecorder.state}`);
+
+        // --- Fase 6B: congelar la música exactamente donde está -- se
+        // aísla la grabación PRIMERO (pause(), instantáneo) y recién
+        // DESPUÉS se congela el audio (suspend(), async), nunca al revés:
+        // así lo que pase con el audio durante ese pequeño intervalo no
+        // afecta nada, porque el recorder ya dejó de grabar. ---
+        let tAudioSuspendedMs = tRecorderPauseMs;
+        if (grafoMusica) {
+          const estadoAntes = grafoMusica.audioCtx.state;
+          try {
+            await grafoMusica.audioCtx.suspend();
+          } catch (e) {
+            log(`[v2-musica] ERROR audioCtx.suspend(): ${(e as Error).message ?? e}`);
+          }
+          tAudioSuspendedMs = performance.now();
+          log(`[v2-musica] audioCtx.suspend() estadoAntes=${estadoAntes} estadoDespues=${grafoMusica.audioCtx.state}`);
+        }
+
+        const memAntesMB = ((tilesAncha.size + tilesZ17.size) * BYTES_POR_TILE) / 1_048_576;
+
+        const aLiberar = [...tilesZ17.keys()].filter((k) => !siguiente.tiles.has(k));
+        for (const k of aLiberar) {
+          tilesZ17.get(k)?.close();
+          tilesZ17.delete(k);
+        }
+        const aFetchear = [...siguiente.tiles].filter((k) => !tilesZ17.has(k));
+        log(`[v2-grabacion] liberados=${aLiberar.length} compartidos=${siguiente.tiles.size - aFetchear.length} aFetchear=${aFetchear.length}`);
+
+        // Guard duro: nunca se debe llegar acá con el recorder grabando.
+        if (mediaRecorder.state !== "paused") {
+          throw new Error(
+            `[v2-grabacion] GUARD: se intentó preparar tiles con recorder.state=${mediaRecorder.state}, se esperaba "paused".`,
+          );
+        }
+
+        const nuevos = await prepararConReintentos(new Set(aFetchear), ZOOM_SEGUIMIENTO, log, `segmento${segmentoActivo + 1}`);
+        for (const [k, v] of nuevos) tilesZ17.set(k, v);
+
+        const faltantesZ17 = verificarCobertura(siguiente.tiles, tilesZ17);
+        const faltantesAncha = verificarCobertura(clavesAnchaFinal, tilesAncha);
+        log(`[v2-grabacion] cobertura antes de resume: anchaFaltantes=${faltantesAncha.length} z17Faltantes=${faltantesZ17.length}`);
+        if (faltantesZ17.length > 0 || faltantesAncha.length > 0) {
+          throw new Error(
+            `[v2-grabacion] ABORT antes de resume(): cobertura incompleta (anchaFaltantes=${faltantesAncha.length} ` +
+              `z17Faltantes=${faltantesZ17.length}) para el segmento ${segmentoActivo + 1}.`,
+          );
+        }
+
+        const memDespuesMB = ((tilesAncha.size + tilesZ17.size) * BYTES_POR_TILE) / 1_048_576;
+        log(`[v2-grabacion] memoria antes=${memAntesMB.toFixed(2)}MB despues=${memDespuesMB.toFixed(2)}MB`);
+
+        // --- Fase 6B: reanudar el audio ANTES que el recorder -- si lo
+        // hiciéramos al revés, el instante entre resume()s quedaría
+        // grabado como silencio (un corte feo). Esperando a que el audio
+        // esté confirmado "running" primero, lo único que se pierde es el
+        // propio costo de conmutación del AudioContext (milisegundos),
+        // nunca los segundos que tardó la búsqueda de tiles. ---
+        let tAudioResumedMs = tAudioSuspendedMs;
+        if (grafoMusica) {
+          const estadoAntes = grafoMusica.audioCtx.state;
+          try {
+            await grafoMusica.audioCtx.resume();
+          } catch (e) {
+            log(`[v2-musica] ERROR audioCtx.resume(): ${(e as Error).message ?? e}`);
+          }
+          tAudioResumedMs = performance.now();
+          log(`[v2-musica] audioCtx.resume() estadoAntes=${estadoAntes} estadoDespues=${grafoMusica.audioCtx.state}`);
+        }
+
+        mediaRecorder.resume();
+        const tRecorderResumeMs = performance.now();
+        log(
+          `[v2-grabacion] resume() confirmado frameActual=${i + 1}/${totalFrames} segmentoActual=${segmentoActivo + 1} recorder.state=${mediaRecorder.state}`,
+        );
+
+        if (grafoMusica) {
+          const tiempoPausaRecorderMs = tRecorderResumeMs - tRecorderPauseMs;
+          const tiempoPausaAudioMs = tAudioResumedMs - tAudioSuspendedMs;
+          const gapEntradaMs = tAudioSuspendedMs - tRecorderPauseMs;
+          const gapSalidaMs = tRecorderResumeMs - tAudioResumedMs;
+          const diferenciaPausaMs = tiempoPausaRecorderMs - tiempoPausaAudioMs;
+          log(
+            `[v2-musica] segmento=${segmentoActivo} gapEntradaMs=${gapEntradaMs.toFixed(1)} gapSalidaMs=${gapSalidaMs.toFixed(1)} ` +
+              `tiempoPausaRecorderMs=${tiempoPausaRecorderMs.toFixed(1)} tiempoPausaAudioMs=${tiempoPausaAudioMs.toFixed(1)} ` +
+              `diferenciaPausaMs=${diferenciaPausaMs.toFixed(1)}`,
+          );
+        }
+
+        // Reset -- lo de arriba (pause..resume) no debe contar como delta
+        // de frame en la próxima medición de STALL.
+        tiempoFrameAnteriorMs = performance.now();
+        tiempoPausadoTotalMs += tiempoFrameAnteriorMs - tPausaInicioMs;
+
+        segmentoActivo++;
+      }
     }
-  }
 
-  // --- Fase 6A: cierre -- cuadros agregados DESPUÉS del trazado real, sin
-  // volver a tocar cámara/trayectoria (fondo sólido de marca, nunca tiles).
-  // La foto final solo corre si cargó; el logo/ciudad SIEMPRE corre (con
-  // fallback de texto si el logo falló). Todo sigue grabado por el mismo
-  // MediaRecorder, así que también se mide para stalls (stallsCierre). ---
-  const framesFotoFinal = fotoCierreImg ? Math.round(DURACION_FOTO_FINAL_SEG * fps) : 0;
-  const duracionFotoFinalRealSeg = framesFotoFinal / fps;
-  for (let j = 0; j < framesFotoFinal; j++) {
-    const tAntesMs = performance.now();
-    const deltaStall = esStall(mediaRecorder, tAntesMs, tiempoFrameAnteriorMs, intervaloMs);
-    if (deltaStall !== null) {
-      stallsCierre++;
-      log(`[v2-grabacion] *** STALL (cierre: foto final) *** frame=${j}/${framesFotoFinal} deltaMs=${deltaStall.toFixed(1)}`);
+    // --- Fase 6A: cierre -- cuadros agregados DESPUÉS del trazado real, sin
+    // volver a tocar cámara/trayectoria (fondo sólido de marca, nunca tiles).
+    // La foto final solo corre si cargó; el logo/ciudad SIEMPRE corre (con
+    // fallback de texto si el logo falló). Todo sigue grabado por el mismo
+    // MediaRecorder, así que también se mide para stalls (stallsCierre). ---
+    const framesFotoFinal = fotoCierreImg ? Math.round(DURACION_FOTO_FINAL_SEG * fps) : 0;
+    const duracionFotoFinalRealSeg = framesFotoFinal / fps;
+    for (let j = 0; j < framesFotoFinal; j++) {
+      const tAntesMs = performance.now();
+      const deltaStall = esStall(mediaRecorder, tAntesMs, tiempoFrameAnteriorMs, intervaloMs);
+      if (deltaStall !== null) {
+        stallsCierre++;
+        log(`[v2-grabacion] *** STALL (cierre: foto final) *** frame=${j}/${framesFotoFinal} deltaMs=${deltaStall.toFixed(1)}`);
+      }
+      dibujarFondoMarcaV2(ctx);
+      dibujarFotoFinalV2(ctx, fotoCierreImg as HTMLImageElement, alphaFadeInHoldOut(j / fps, duracionFotoFinalRealSeg, FADE_FOTO_FINAL_SEG));
+      tiempoFrameAnteriorMs = performance.now();
+      await esperar(intervaloMs);
     }
-    dibujarFondoMarcaV2(ctx);
-    dibujarFotoFinalV2(ctx, fotoCierreImg as HTMLImageElement, alphaFadeInHoldOut(j / fps, duracionFotoFinalRealSeg, FADE_FOTO_FINAL_SEG));
-    tiempoFrameAnteriorMs = performance.now();
-    await esperar(intervaloMs);
-  }
 
-  const framesTransicion = Math.round(DURACION_TRANSICION_CIERRE_SEG * fps);
-  for (let j = 0; j < framesTransicion; j++) {
-    const tAntesMs = performance.now();
-    const deltaStall = esStall(mediaRecorder, tAntesMs, tiempoFrameAnteriorMs, intervaloMs);
-    if (deltaStall !== null) {
-      stallsCierre++;
-      log(`[v2-grabacion] *** STALL (cierre: transicion) *** frame=${j}/${framesTransicion} deltaMs=${deltaStall.toFixed(1)}`);
+    const framesTransicion = Math.round(DURACION_TRANSICION_CIERRE_SEG * fps);
+    for (let j = 0; j < framesTransicion; j++) {
+      const tAntesMs = performance.now();
+      const deltaStall = esStall(mediaRecorder, tAntesMs, tiempoFrameAnteriorMs, intervaloMs);
+      if (deltaStall !== null) {
+        stallsCierre++;
+        log(`[v2-grabacion] *** STALL (cierre: transicion) *** frame=${j}/${framesTransicion} deltaMs=${deltaStall.toFixed(1)}`);
+      }
+      dibujarTransicionAFondoMarcaV2(ctx, (j + 1) / framesTransicion);
+      tiempoFrameAnteriorMs = performance.now();
+      await esperar(intervaloMs);
     }
-    dibujarTransicionAFondoMarcaV2(ctx, (j + 1) / framesTransicion);
-    tiempoFrameAnteriorMs = performance.now();
-    await esperar(intervaloMs);
-  }
 
-  const framesLogo = Math.round(DURACION_LOGO_SEG * fps);
-  for (let j = 0; j < framesLogo; j++) {
-    const tAntesMs = performance.now();
-    const deltaStall = esStall(mediaRecorder, tAntesMs, tiempoFrameAnteriorMs, intervaloMs);
-    if (deltaStall !== null) {
-      stallsCierre++;
-      log(`[v2-grabacion] *** STALL (cierre: logo) *** frame=${j}/${framesLogo} deltaMs=${deltaStall.toFixed(1)}`);
+    // --- Fase 6B: fade-out -- programado en el instante exacto en que
+    // arranca el beat de logo/ciudad, nunca antes (durante recorrido,
+    // fotos, panorámica final o foto final la música se mantiene al
+    // volumen normal). ---
+    if (grafoMusica) {
+      programarFadeOutMusicaV2(grafoMusica, DURACION_LOGO_SEG);
+      log(`[v2-musica] fade-out programado duracionSeg=${DURACION_LOGO_SEG}`);
     }
-    dibujarFondoMarcaV2(ctx);
-    dibujarCierreLogoV2(ctx, logoImg, ciudad, alphaFadeIn(j / fps, FADE_LOGO_SEG));
-    tiempoFrameAnteriorMs = performance.now();
-    await esperar(intervaloMs);
+
+    const framesLogo = Math.round(DURACION_LOGO_SEG * fps);
+    for (let j = 0; j < framesLogo; j++) {
+      const tAntesMs = performance.now();
+      const deltaStall = esStall(mediaRecorder, tAntesMs, tiempoFrameAnteriorMs, intervaloMs);
+      if (deltaStall !== null) {
+        stallsCierre++;
+        log(`[v2-grabacion] *** STALL (cierre: logo) *** frame=${j}/${framesLogo} deltaMs=${deltaStall.toFixed(1)}`);
+      }
+      dibujarFondoMarcaV2(ctx);
+      dibujarCierreLogoV2(ctx, logoImg, ciudad, alphaFadeIn(j / fps, FADE_LOGO_SEG));
+      tiempoFrameAnteriorMs = performance.now();
+      await esperar(intervaloMs);
+    }
+
+    mediaRecorder.stop();
+    log(`[v2-grabacion] stop() recorder.state=${mediaRecorder.state}`);
+    const blob = await grabacionLista;
+
+    for (const bitmap of tilesAncha.values()) bitmap.close();
+    for (const bitmap of tilesZ17.values()) bitmap.close();
+
+    const tiempoTotalMs = performance.now() - tInicioTotal;
+    const duracionLogicaSeg = (totalFrames + framesFotoFinal + framesTransicion + framesLogo) / fps;
+    const stallsTotales = stallsLoopPrincipal + stallsCierre;
+    log(
+      `[v2-fase6] cierre: framesFotoFinal=${framesFotoFinal} framesTransicion=${framesTransicion} framesLogo=${framesLogo} stallsCierre=${stallsCierre}`,
+    );
+
+    return {
+      blob,
+      mimeType,
+      duracionLogicaSeg,
+      tiempoTotalMs,
+      tiempoPausadoTotalMs,
+      stallsLoopPrincipal,
+      stallsCierre,
+      stallsTotales,
+    };
+  } finally {
+    // Fase 6B -- libera SIEMPRE los recursos de audio (stop/disconnect/
+    // close del AudioContext), incluso si algo de arriba tiró un ABORT.
+    // No-op si nunca hubo música.
+    await liberarMusicaV2(grafoMusica, log);
   }
-
-  mediaRecorder.stop();
-  log(`[v2-grabacion] stop() recorder.state=${mediaRecorder.state}`);
-  const blob = await grabacionLista;
-
-  for (const bitmap of tilesAncha.values()) bitmap.close();
-  for (const bitmap of tilesZ17.values()) bitmap.close();
-
-  const tiempoTotalMs = performance.now() - tInicioTotal;
-  const duracionLogicaSeg = (totalFrames + framesFotoFinal + framesTransicion + framesLogo) / fps;
-  const stallsTotales = stallsLoopPrincipal + stallsCierre;
-  log(
-    `[v2-fase6] cierre: framesFotoFinal=${framesFotoFinal} framesTransicion=${framesTransicion} framesLogo=${framesLogo} stallsCierre=${stallsCierre}`,
-  );
-
-  return {
-    blob,
-    mimeType,
-    duracionLogicaSeg,
-    tiempoTotalMs,
-    tiempoPausadoTotalMs,
-    stallsLoopPrincipal,
-    stallsCierre,
-    stallsTotales,
-  };
 }

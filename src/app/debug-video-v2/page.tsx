@@ -164,6 +164,10 @@ const RUTA_PRUEBA_LARGA: PuntoGps[] = [
 const FOTOS_RUTA_PRUEBA_URLS = ["/fondo-mis-rutas.jpg", "/avatar-chat-grupal.png", "/fondo-patinadores-activos.jpg"];
 const FOTO_CIERRE_PRUEBA_URL = "/fondo-compartir-post.jpg";
 const CIUDAD_PRUEBA = "Puerto Montt";
+// Fase 6B -- pista real del catálogo ya existente (public/musica/), solo
+// para validar el mecanismo de mezcla/sincronización en este debug page.
+const MUSICA_PRUEBA_URL = "/musica/legion/01-legion-roller.mp3";
+const MUSICA_PRUEBA_INICIO_SEG = 0;
 
 const CONCURRENCIA = 6;
 const FPS_FASE3 = 24; // FPS_DEFECTO de V1 (tarjetaRecorrido.ts) -- confirmar si V2 debe usar otro valor
@@ -188,6 +192,7 @@ export default function DebugVideoV2Page() {
   const [planificandoFase3, setPlanificandoFase3] = useState(false);
   const [grabandoFase4, setGrabandoFase4] = useState(false);
   const [rutaFase4, setRutaFase4] = useState<"corta" | "referencia" | "larga">("corta");
+  const [conMusicaFase4, setConMusicaFase4] = useState(true);
   const [tapsFase4, setTapsFase4] = useState(0);
   const [videoUrlFase4, setVideoUrlFase4] = useState<string | null>(null);
   // DIAGNÓSTICO TEMPORAL -- verificar si el ImageBitmap híbrido usado por
@@ -639,6 +644,8 @@ export default function DebugVideoV2Page() {
           fotosRutaUrls: FOTOS_RUTA_PRUEBA_URLS,
           fotoCierreUrl: FOTO_CIERRE_PRUEBA_URL,
           ciudad: CIUDAD_PRUEBA,
+          musicaUrl: conMusicaFase4 ? MUSICA_PRUEBA_URL : undefined,
+          musicaInicioSeg: MUSICA_PRUEBA_INICIO_SEG,
         },
         log,
       );
@@ -926,6 +933,10 @@ export default function DebugVideoV2Page() {
       <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8, fontSize: 12 }}>
         <input type="checkbox" checked={modoDebug} onChange={(e) => setModoDebug(e.target.checked)} />
         Modo debug (texto verde de diagnóstico Fase 2 sobre el mapa -- nunca aparece en el video grabado)
+      </label>
+      <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4, fontSize: 12 }}>
+        <input type="checkbox" checked={conMusicaFase4} onChange={(e) => setConMusicaFase4(e.target.checked)} />
+        Fase 6B: incluir música de prueba ({MUSICA_PRUEBA_URL}) en la grabación de Fase 4
       </label>
 
       <div
