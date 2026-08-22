@@ -36,6 +36,26 @@ export const TILE_ETIQUETAS_URL =
 const TAM_TILE = 256;
 const TIMEOUT_TILE_MS = 8000;
 
+// Refuerzo de legibilidad SOLO para el zoom de seguimiento cercano (Z17,
+// mismo valor que ZOOM_SEGUIMIENTO en camaraV2.ts -- reimplementado acá
+// como constante local a propósito, mismo criterio que el resto del
+// proyecto, para no cruzar un import hacia camaraV2.ts desde este archivo
+// puramente de tiles). Diagnóstico real (fetch + análisis de píxeles de
+// tiles Z17 con contenido): World_Transportation ya se compone casi
+// opaco (alpha~230-255 en su núcleo) -- el problema de legibilidad en
+// Z17 es de CONTRASTE de color (trazo oscuro sobre foto satelital),
+// no de opacidad. Un halo claro detrás del trazo (drop-shadow, que usa
+// el alfa del propio bitmap) lo resuelve sin tocar posición, geometría
+// ni fuente de las etiquetas. Valor elegido tras comparar 3 intensidades
+// sobre tiles reales exigentes (calles sobre techos/asfalto oscuros y
+// sobre vegetación densa): 3px/alpha 0.55 ya despega el texto del fondo
+// oscuro sin generar un brillo blanco visible en calles sobre fondos
+// claros (a diferencia de una versión más fuerte, descartada por eso).
+// La grilla ancha/panorámica no lo necesitaba (ver diagnóstico) y queda
+// sin cambios.
+const ZOOM_SEGUIMIENTO_V2 = 17;
+const HALO_ETIQUETAS_Z17 = "drop-shadow(0px 0px 3px rgba(255,255,255,0.55))";
+
 export function urlTile(plantilla: string, zoom: number, x: number, y: number): string {
   return plantilla.replace("{z}", String(zoom)).replace("{y}", String(y)).replace("{x}", String(x));
 }
@@ -116,7 +136,16 @@ export async function cargarTileHibrido(
   const ctx = canvas.getContext("2d");
   if (!ctx) return bitmapSat;
   ctx.drawImage(bitmapSat, 0, 0);
-  if (bitmapEtq) ctx.drawImage(bitmapEtq, 0, 0);
+  if (bitmapEtq) {
+    if (zoom === ZOOM_SEGUIMIENTO_V2) {
+      ctx.save();
+      ctx.filter = HALO_ETIQUETAS_Z17;
+      ctx.drawImage(bitmapEtq, 0, 0);
+      ctx.restore();
+    } else {
+      ctx.drawImage(bitmapEtq, 0, 0);
+    }
+  }
   bitmapSat.close();
   bitmapEtq?.close();
   return createImageBitmap(canvas);
