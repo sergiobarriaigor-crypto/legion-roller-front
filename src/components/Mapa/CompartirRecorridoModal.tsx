@@ -21,6 +21,8 @@ import {
   DURACION_VIDEO_ESTIMADA_SEG,
   type DatosTarjetaRecorrido,
 } from "@/lib/tarjetaRecorrido";
+import { generarVideoRecorridoV2, type EtapaVideoRecorridoV2 } from "@/lib/video2dV2/generarVideoRecorridoV2";
+import { verificarCompatibilidadV2 } from "@/lib/video2dV2/compatibilidadV2";
 import { EditorEncuadreFoto } from "@/components/EditorEncuadreFoto";
 import {
   solicitarFlyover,
@@ -38,6 +40,12 @@ import type { CancionHistoria } from "@/lib/musicaHistorias";
 
 type Estado = "editando" | "publicando";
 type Tab = "imagen" | "video" | "video3d";
+
+const ETIQUETAS_ETAPA_VIDEO: Record<EtapaVideoRecorridoV2, string> = {
+  preparando: "Preparando recorrido...",
+  generando: "Generando video...",
+  finalizando: "Finalizando...",
+};
 
 export function CompartirRecorridoModal({
   datos,
@@ -89,19 +97,26 @@ export function CompartirRecorridoModal({
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [videoBlob, setVideoBlob] = useState<Blob | null>(null);
   const [generandoVideo, setGenerandoVideo] = useState(false);
-  const [progresoVideo, setProgresoVideo] = useState(0);
+  // Etapa simple de progreso (Preparando/Generando/Finalizando) -- ver
+  // generarVideoRecorridoV2.ts. El motor clásico (V1, usado como fallback)
+  // no reporta etapas propias, así que para ese camino se deja fija en
+  // "generando" durante toda la espera.
+  const [etapaVideo, setEtapaVideo] = useState<EtapaVideoRecorridoV2>("preparando");
   const [errorVideo, setErrorVideo] = useState("");
   const videoBlobUrlRef = useRef<string | null>(null);
   // Fotos opcionales del video (nunca obligatorias, ver tarjetaRecorrido.ts)
   // -- se eligen ANTES de generar, en la pantalla de configuración de la
   // pestaña "Video". Las dos secciones son independientes entre sí (se puede
-  // elegir una, la otra, ambas, o ninguna): "Foto de cierre" (0 o 1, a
-  // pantalla completa en el cuadro final) y "Fotos en el mapa" (0 a 3, pines
-  // repartidos por distancia). Cada foto elegida pasa primero por un editor
-  // de encuadre (arrastrar/zoom, ver EditorEncuadreFoto) antes de sumarse --
-  // archivoEditandoFoto es el File crudo mientras ese editor está abierto,
-  // tipoFotoEditando indica a cuál de las dos secciones pertenece (define el
-  // aspecto del recorte: vertical para la de cierre, circular para el pin).
+  // elegir una, la otra, ambas, o ninguna) pero ya no comparten el mismo
+  // camino: "Foto de cierre" (0 o 1, a pantalla completa en el cuadro final)
+  // sigue pasando por el editor de encuadre (arrastrar/zoom, ver
+  // EditorEncuadreFoto, aspecto "vertical") antes de sumarse --
+  // archivoEditandoFoto/tipoFotoEditando son del File crudo mientras ese
+  // editor está abierto, ver manejarSeleccionFotoFinal/confirmarFotoEditada.
+  // "Fotos en el mapa" (0 a 3) en cambio se leen directo como data URL (ver
+  // manejarSeleccionFotoPin) sin pasar por ningún editor ni recorte
+  // circular -- Video 2D V2 las dibuja con "contain" respetando su
+  // proporción original.
   const [fotoFinalDataUrl, setFotoFinalDataUrl] = useState<string | null>(null);
   const [fotosPinDataUrl, setFotosPinDataUrl] = useState<string[]>([]);
   const [archivoEditandoFoto, setArchivoEditandoFoto] = useState<File | null>(null);
@@ -247,21 +262,45 @@ export function CompartirRecorridoModal({
     }
   }
 
+  // Motor V2 (Video 2D V2, laboratorio /debug-video-v2 ya validado en
+  // celular real) como motor activo, con V1 (tarjetaRecorrido.ts) como
+  // respaldo temporal. Regla de fallback: si el preflight de compatibilidad
+  // detecta algo incompatible ANTES de empezar (o si se pidió música y no
+  // hay una combinación de video+audio realmente soportada), se usa V1
+  // directamente y de forma transparente. Si en cambio V2 ya arrancó y
+  // falla a mitad de generación, se muestra el error y el usuario puede
+  // tocar "Generar video" de nuevo para reintentar V2 -- nunca se cae a V1
+  // automáticamente después de un intento de V2 ya iniciado.
   async function generarVideo() {
     if (videoBlob || generandoVideo) return;
     setGenerandoVideo(true);
     setErrorVideo("");
-    setProgresoVideo(0);
+    setEtapaVideo("preparando");
     try {
-      const nuevoBlob = await generarVideoRecorrido(datos, {
-        onProgreso: setProgresoVideo,
-        fotoFinalDataUrl: fotoFinalDataUrl ?? undefined,
-        fotosPinDataUrl: fotosPinDataUrl.length ? fotosPinDataUrl : undefined,
-        avatarUrl: miFotoUrl,
-        nombreUsuario: sesion?.nombre,
-        musicaUrl: musicaElegida?.cancion.archivo,
-        musicaInicioSeg: musicaElegida?.inicioSeg,
-      });
+      const conMusica = !!musicaElegida;
+      const preflight = verificarCompatibilidadV2(conMusica);
+      let nuevoBlob: Blob;
+      if (preflight.compatible) {
+        const resultado = await generarVideoRecorridoV2(datos, {
+          fotoFinalDataUrl: fotoFinalDataUrl ?? undefined,
+          fotosPinDataUrl: fotosPinDataUrl.length ? fotosPinDataUrl : undefined,
+          musicaUrl: musicaElegida?.cancion.archivo,
+          musicaInicioSeg: musicaElegida?.inicioSeg,
+          onEtapa: setEtapaVideo,
+        });
+        nuevoBlob = resultado.blob;
+      } else {
+        console.warn("[video-v2] preflight incompatible, usando V1:", preflight.motivo);
+        setEtapaVideo("generando");
+        nuevoBlob = await generarVideoRecorrido(datos, {
+          fotoFinalDataUrl: fotoFinalDataUrl ?? undefined,
+          fotosPinDataUrl: fotosPinDataUrl.length ? fotosPinDataUrl : undefined,
+          avatarUrl: miFotoUrl,
+          nombreUsuario: sesion?.nombre,
+          musicaUrl: musicaElegida?.cancion.archivo,
+          musicaInicioSeg: musicaElegida?.inicioSeg,
+        });
+      }
       if (videoBlobUrlRef.current) URL.revokeObjectURL(videoBlobUrlRef.current);
       const url = URL.createObjectURL(nuevoBlob);
       videoBlobUrlRef.current = url;
@@ -295,12 +334,25 @@ export function CompartirRecorridoModal({
     setArchivoEditandoFoto(archivo);
   }
 
+  // A diferencia de la foto de cierre, esta ya NO pasa por
+  // EditorEncuadreFoto -- Video 2D V2 dibuja estas fotos con "contain"
+  // dentro de una tarjeta fija de proporción propia (ver overlayFase6.ts),
+  // respetando la orientación real de cada una; forzarlas antes a un
+  // cuadrado 480x480 con máscara circular (pensado para el pin circular de
+  // V1) le rompía la proporción a V2. V1 sigue funcionando igual con la
+  // foto original sin tocar, porque dibujarPinFoto ya hace su propio
+  // cover + clip circular en tiempo de dibujo (tarjetaRecorrido.ts).
   function manejarSeleccionFotoPin(e: React.ChangeEvent<HTMLInputElement>) {
     const archivo = e.target.files?.[0];
     e.target.value = "";
     if (!archivo) return;
-    setTipoFotoEditando("pin");
-    setArchivoEditandoFoto(archivo);
+    const lector = new FileReader();
+    lector.onload = () => {
+      const dataUrl = lector.result;
+      if (typeof dataUrl !== "string") return;
+      setFotosPinDataUrl((prev) => (prev.length >= 3 ? prev : [...prev, dataUrl].slice(0, 3)));
+    };
+    lector.readAsDataURL(archivo);
   }
 
   function confirmarFotoEditada(dataUrl: string) {
@@ -535,9 +587,7 @@ export function CompartirRecorridoModal({
           {tab === "video" && (
             <>
               {generandoVideo && (
-                <p className="px-6 text-center text-xs text-text-secondary">
-                  Generando video... {Math.round(progresoVideo * 100)}%
-                </p>
+                <p className="px-6 text-center text-xs text-text-secondary">{ETIQUETAS_ETAPA_VIDEO[etapaVideo]}</p>
               )}
               {!generandoVideo && videoUrl && (
                 <>

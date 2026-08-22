@@ -222,78 +222,90 @@ export async function grabarVideoV2(entrada: EntradaGrabacionV2, log: (linea: st
 
   const tInicioTotal = performance.now();
 
-  // --- Grilla ancha completa (residente todo el video) -- reintentos +
-  // verificación de cobertura ANTES de crear el MediaRecorder. ---
-  const tilesAncha = await prepararConReintentos(clavesAnchaFinal, zoomAncho, log, "grillaAncha");
-  const faltantesAnchaInicial = verificarCobertura(clavesAnchaFinal, tilesAncha);
-  if (faltantesAnchaInicial.length > 0) {
-    throw new Error(
-      `[v2-grabacion] ABORT antes de start(): grilla ancha con ${faltantesAnchaInicial.length} tiles obligatorios ` +
-        `faltantes tras ${MAX_REINTENTOS_TILE} reintentos (ej. ${faltantesAnchaInicial.slice(0, 5).join(",")}).`,
-    );
-  }
-  log(
-    `[v2-grabacion] grillaAncha lista: ${tilesAncha.size} tiles memoriaMB=${((tilesAncha.size * BYTES_POR_TILE) / 1_048_576).toFixed(2)}`,
-  );
-
-  // --- Segmento 0 -- mismo criterio: reintentos + verificación antes de
-  // start(). ---
-  const tilesZ17 = await prepararConReintentos(segmentos[0].tiles, ZOOM_SEGUIMIENTO, log, "segmento0");
-  const faltantesZ17Inicial = verificarCobertura(segmentos[0].tiles, tilesZ17);
-  if (faltantesZ17Inicial.length > 0) {
-    throw new Error(
-      `[v2-grabacion] ABORT antes de start(): segmento 0 con ${faltantesZ17Inicial.length} tiles Z17 obligatorios ` +
-        `faltantes tras ${MAX_REINTENTOS_TILE} reintentos (ej. ${faltantesZ17Inicial.slice(0, 5).join(",")}).`,
-    );
-  }
-  log(
-    `[v2-grabacion] segmento=0 listo: tilesZ17=${tilesZ17.size} memoriaMB=${((tilesZ17.size * BYTES_POR_TILE) / 1_048_576).toFixed(2)}`,
-  );
-
-  // --- Fase 6A: fotos + logo -- decodificados ANTES de start(), igual
-  // criterio que los tiles. skip (no abort) si alguna falla: se loguea y se
-  // excluye, la generación del video sigue. ---
-  const fotosRutaImgs = await cargarFotosRutaV2(fotosRutaUrls, log);
-  const fotosRuta = construirFotosRutaV2(fotosRutaImgs, ruta, params, trayectoria);
-  log(`[v2-fase6] fotosDeRutaListas=${fotosRuta.length}/${fotosRutaUrls.length}`);
-
-  const fotoCierreImg = fotoCierreUrl ? await cargarImagenDecodificada(fotoCierreUrl, log) : null;
-  if (fotoCierreUrl && !fotoCierreImg) log(`[v2-fase6] foto de cierre no cargó -- se omite ese beat.`);
-
-  const logoImg = await cargarImagenDecodificada(LOGO_URL, log);
-  if (!logoImg) log(`[v2-fase6] logo no cargó -- se usa fallback de texto (LEGIÓN ROLLER + ciudad).`);
-
-  // --- Fase 6B: música -- decodificada ANTES de start(), igual criterio
-  // que tiles/fotos/logo. Nunca aborta el video: cualquier falla (red,
-  // decode, navegador sin Web Audio) deja grafoMusica=null y el video
-  // sigue mudo. audioCtx se deja en "running" ACÁ (resuelto antes del
-  // bloque crítico de arranque, nunca después) para que fuenteMusica.start()
-  // más abajo sea puramente síncrono. ---
+  // Contenedores mutables para los recursos que deben liberarse SIEMPRE
+  // (ImageBitmaps, tracks de video/audio, AudioContext), sin importar si la
+  // función termina con éxito o por una excepción -- ver finally al final.
+  // Excepción autorizada puntualmente para esto: no cambia timing, pause()/
+  // resume(), segmentación, cámara, trayectoria, overlays, tiles/render ni
+  // música/sincronización -- solo CUÁNDO se liberan estos recursos.
+  const tilesAncha = new Map<string, ImageBitmap>();
+  const tilesZ17 = new Map<string, ImageBitmap>();
   let grafoMusica: GrafoMusicaV2 | null = null;
-  if (musicaUrl) {
-    try {
-      const audioCtx = new AudioContext();
-      if (audioCtx.state !== "running") {
-        await audioCtx.resume();
-      }
-      const buffer = await cargarBufferMusicaV2(musicaUrl, audioCtx, log);
-      if (buffer) {
-        grafoMusica = construirGrafoMusicaV2(audioCtx, buffer);
-        log(
-          `[v2-musica] musica lista duracionBufferSeg=${buffer.duration.toFixed(2)} musicaInicioSeg=${(musicaInicioSeg ?? 0).toFixed(2)} ` +
-            `audioCtx.state=${audioCtx.state}`,
-        );
-      } else {
-        await audioCtx.close().catch(() => {});
-        log(`[v2-musica] no se pudo decodificar la música -- video sin música.`);
-      }
-    } catch (e) {
-      log(`[v2-musica] ERROR preparando música: ${(e as Error).message ?? e} -- video sin música.`);
-      grafoMusica = null;
-    }
-  }
+  let streamVideo: MediaStream | null = null;
 
   try {
+    // --- Grilla ancha completa (residente todo el video) -- reintentos +
+    // verificación de cobertura ANTES de crear el MediaRecorder. ---
+    const cargadosAncha = await prepararConReintentos(clavesAnchaFinal, zoomAncho, log, "grillaAncha");
+    for (const [clave, bitmap] of cargadosAncha) tilesAncha.set(clave, bitmap);
+    const faltantesAnchaInicial = verificarCobertura(clavesAnchaFinal, tilesAncha);
+    if (faltantesAnchaInicial.length > 0) {
+      throw new Error(
+        `[v2-grabacion] ABORT antes de start(): grilla ancha con ${faltantesAnchaInicial.length} tiles obligatorios ` +
+          `faltantes tras ${MAX_REINTENTOS_TILE} reintentos (ej. ${faltantesAnchaInicial.slice(0, 5).join(",")}).`,
+      );
+    }
+    log(
+      `[v2-grabacion] grillaAncha lista: ${tilesAncha.size} tiles memoriaMB=${((tilesAncha.size * BYTES_POR_TILE) / 1_048_576).toFixed(2)}`,
+    );
+
+    // --- Segmento 0 -- mismo criterio: reintentos + verificación antes de
+    // start(). ---
+    const cargadosZ17 = await prepararConReintentos(segmentos[0].tiles, ZOOM_SEGUIMIENTO, log, "segmento0");
+    for (const [clave, bitmap] of cargadosZ17) tilesZ17.set(clave, bitmap);
+    const faltantesZ17Inicial = verificarCobertura(segmentos[0].tiles, tilesZ17);
+    if (faltantesZ17Inicial.length > 0) {
+      throw new Error(
+        `[v2-grabacion] ABORT antes de start(): segmento 0 con ${faltantesZ17Inicial.length} tiles Z17 obligatorios ` +
+          `faltantes tras ${MAX_REINTENTOS_TILE} reintentos (ej. ${faltantesZ17Inicial.slice(0, 5).join(",")}).`,
+      );
+    }
+    log(
+      `[v2-grabacion] segmento=0 listo: tilesZ17=${tilesZ17.size} memoriaMB=${((tilesZ17.size * BYTES_POR_TILE) / 1_048_576).toFixed(2)}`,
+    );
+
+    // --- Fase 6A: fotos + logo -- decodificados ANTES de start(), igual
+    // criterio que los tiles. skip (no abort) si alguna falla: se loguea y se
+    // excluye, la generación del video sigue. ---
+    const fotosRutaImgs = await cargarFotosRutaV2(fotosRutaUrls, log);
+    const fotosRuta = construirFotosRutaV2(fotosRutaImgs, ruta, params, trayectoria);
+    log(`[v2-fase6] fotosDeRutaListas=${fotosRuta.length}/${fotosRutaUrls.length}`);
+
+    const fotoCierreImg = fotoCierreUrl ? await cargarImagenDecodificada(fotoCierreUrl, log) : null;
+    if (fotoCierreUrl && !fotoCierreImg) log(`[v2-fase6] foto de cierre no cargó -- se omite ese beat.`);
+
+    const logoImg = await cargarImagenDecodificada(LOGO_URL, log);
+    if (!logoImg) log(`[v2-fase6] logo no cargó -- se usa fallback de texto (LEGIÓN ROLLER + ciudad).`);
+
+    // --- Fase 6B: música -- decodificada ANTES de start(), igual criterio
+    // que tiles/fotos/logo. Nunca aborta el video: cualquier falla (red,
+    // decode, navegador sin Web Audio) deja grafoMusica=null y el video
+    // sigue mudo. audioCtx se deja en "running" ACÁ (resuelto antes del
+    // bloque crítico de arranque, nunca después) para que fuenteMusica.start()
+    // más abajo sea puramente síncrono. ---
+    if (musicaUrl) {
+      try {
+        const audioCtx = new AudioContext();
+        if (audioCtx.state !== "running") {
+          await audioCtx.resume();
+        }
+        const buffer = await cargarBufferMusicaV2(musicaUrl, audioCtx, log);
+        if (buffer) {
+          grafoMusica = construirGrafoMusicaV2(audioCtx, buffer);
+          log(
+            `[v2-musica] musica lista duracionBufferSeg=${buffer.duration.toFixed(2)} musicaInicioSeg=${(musicaInicioSeg ?? 0).toFixed(2)} ` +
+              `audioCtx.state=${audioCtx.state}`,
+          );
+        } else {
+          await audioCtx.close().catch(() => {});
+          log(`[v2-musica] no se pudo decodificar la música -- video sin música.`);
+        }
+      } catch (e) {
+        log(`[v2-musica] ERROR preparando música: ${(e as Error).message ?? e} -- video sin música.`);
+        grafoMusica = null;
+      }
+    }
+
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("[v2-grabacion] no se pudo obtener contexto 2D del canvas.");
     canvas.width = ANCHO_VIDEO;
@@ -307,7 +319,7 @@ export async function grabarVideoV2(entrada: EntradaGrabacionV2, log: (linea: st
     dibujarEtiquetaVelMaxFinalV2(ctx, trayectoria[0], ruta, datosEstadisticas);
 
     const mimeType = elegirMimeTypeVideoV2(log, !!grafoMusica);
-    const streamVideo = canvas.captureStream(fps);
+    streamVideo = canvas.captureStream(fps);
     const stream = grafoMusica
       ? new MediaStream([...streamVideo.getVideoTracks(), ...grafoMusica.destinoMusica.stream.getAudioTracks()])
       : streamVideo;
@@ -536,9 +548,6 @@ export async function grabarVideoV2(entrada: EntradaGrabacionV2, log: (linea: st
     log(`[v2-grabacion] stop() recorder.state=${mediaRecorder.state}`);
     const blob = await grabacionLista;
 
-    for (const bitmap of tilesAncha.values()) bitmap.close();
-    for (const bitmap of tilesZ17.values()) bitmap.close();
-
     const tiempoTotalMs = performance.now() - tInicioTotal;
     const duracionLogicaSeg = (totalFrames + framesFotoFinal + framesTransicion + framesLogo) / fps;
     const stallsTotales = stallsLoopPrincipal + stallsCierre;
@@ -557,9 +566,47 @@ export async function grabarVideoV2(entrada: EntradaGrabacionV2, log: (linea: st
       stallsTotales,
     };
   } finally {
-    // Fase 6B -- libera SIEMPRE los recursos de audio (stop/disconnect/
-    // close del AudioContext), incluso si algo de arriba tiró un ABORT.
-    // No-op si nunca hubo música.
+    // Liberación de recursos SIEMPRE, éxito o excepción (ABORT en
+    // cualquier punto de arriba): ImageBitmaps de ambas grillas, tracks de
+    // video del canvas y tracks de audio de la música, y por último el
+    // propio grafo de audio (stop/disconnect/close del AudioContext, ya
+    // existente desde Fase 6B). Cada bitmap/track ya cerrado y quitado del
+    // Map durante la reproducción normal (ver aLiberar en el loop
+    // principal) simplemente no aparece acá -- no hay doble-close.
+    for (const bitmap of tilesAncha.values()) {
+      try {
+        bitmap.close();
+      } catch {
+        /* noop */
+      }
+    }
+    tilesAncha.clear();
+    for (const bitmap of tilesZ17.values()) {
+      try {
+        bitmap.close();
+      } catch {
+        /* noop */
+      }
+    }
+    tilesZ17.clear();
+    if (streamVideo) {
+      for (const track of streamVideo.getVideoTracks()) {
+        try {
+          track.stop();
+        } catch {
+          /* noop */
+        }
+      }
+    }
+    if (grafoMusica) {
+      for (const track of grafoMusica.destinoMusica.stream.getAudioTracks()) {
+        try {
+          track.stop();
+        } catch {
+          /* noop */
+        }
+      }
+    }
     await liberarMusicaV2(grafoMusica, log);
   }
 }
