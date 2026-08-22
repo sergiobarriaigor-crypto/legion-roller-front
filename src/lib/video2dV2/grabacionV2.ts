@@ -6,11 +6,12 @@
 // CompartirRecorridoModal.tsx -- mecanismo de pause()/resume() re-derivado
 // del mismo patrón ya validado en dispositivo real por V1 (ver
 // tarjetaRecorrido.ts líneas ~4125-4156), no uno nuevo sin probar.
-import { ANCHO_VIDEO, ALTO_VIDEO, ZOOM_SEGUIMIENTO, type VentanaCrossfade } from "./camaraV2";
+import { ANCHO_VIDEO, ALTO_VIDEO, ZOOM_SEGUIMIENTO, type VentanaCrossfade, type ParametrosCoreografiaV2, type RutaCoreografiaV2 } from "./camaraV2";
 import { BYTES_POR_TILE, pesoZ17Efectivo, type VentanaEfectivaZ17, type SegmentoZ17 } from "./segmentacionZ17";
 import type { FrameV2 } from "./trayectoriaV2";
 import { dibujarTilesHibridos } from "./renderV2";
 import { prepararTilesHibridos, crearContadoresTilesHibridos } from "./tilesHibridos";
+import { dibujarOverlayFase5, type DatosEstadisticasV2 } from "./overlayFase5";
 
 const CONCURRENCIA = 6;
 // Reintentos por tile individual SOLO durante la preparación (nunca
@@ -124,6 +125,9 @@ export interface EntradaGrabacionV2 {
   zoomAncho: number;
   fps: number;
   canvas: HTMLCanvasElement;
+  ruta: RutaCoreografiaV2;
+  params: ParametrosCoreografiaV2;
+  datosEstadisticas: DatosEstadisticasV2;
 }
 
 export interface ResultadoGrabacionV2 {
@@ -136,7 +140,8 @@ export interface ResultadoGrabacionV2 {
 }
 
 export async function grabarVideoV2(entrada: EntradaGrabacionV2, log: (linea: string) => void): Promise<ResultadoGrabacionV2> {
-  const { ventana, ventanaEfectiva, trayectoria, segmentos, clavesAnchaFinal, zoomAncho, fps, canvas } = entrada;
+  const { ventana, ventanaEfectiva, trayectoria, segmentos, clavesAnchaFinal, zoomAncho, fps, canvas, ruta, params, datosEstadisticas } =
+    entrada;
   if (trayectoria.length === 0) throw new Error("[v2-grabacion] trayectoria vacía.");
   if (segmentos.length === 0) throw new Error("[v2-grabacion] sin segmentos.");
 
@@ -178,6 +183,7 @@ export async function grabarVideoV2(entrada: EntradaGrabacionV2, log: (linea: st
   // Primer cuadro dibujado ANTES de captureStream()/start() -- mismo
   // principio que V1: no capturar un instante en blanco.
   dibujarFrameGrabacion(ctx, trayectoria[0], ventana, ventanaEfectiva, tilesAncha, tilesZ17);
+  dibujarOverlayFase5(ctx, trayectoria[0], ruta, params, datosEstadisticas);
 
   const mimeType = elegirMimeTypeVideoV2(log);
   const streamVideo = canvas.captureStream(fps);
@@ -222,6 +228,7 @@ export async function grabarVideoV2(entrada: EntradaGrabacionV2, log: (linea: st
     }
 
     dibujarFrameGrabacion(ctx, frame, ventana, ventanaEfectiva, tilesAncha, tilesZ17);
+    dibujarOverlayFase5(ctx, frame, ruta, params, datosEstadisticas);
     tiempoFrameAnteriorMs = performance.now();
     await esperar(intervaloMs);
 

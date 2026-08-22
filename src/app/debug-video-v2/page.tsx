@@ -34,6 +34,7 @@ import {
   type EstadoCamaraV2,
 } from "@/lib/video2dV2/camaraV2";
 import { construirTrayectoriaV2 } from "@/lib/video2dV2/trayectoriaV2";
+import { construirDatosEstadisticasV2, dibujarOverlayFase5, type DatosEstadisticasV2 } from "@/lib/video2dV2/overlayFase5";
 import { TAM_TILE } from "@/lib/video2dV2/proyeccion";
 import {
   BYTES_POR_TILE,
@@ -188,6 +189,10 @@ export default function DebugVideoV2Page() {
   const [reproduciendo, setReproduciendo] = useState(false);
   const [tiempoSeg, setTiempoSeg] = useState(0);
   const [faseActual, setFaseActual] = useState<FaseV2 | null>(null);
+  // Apagado por defecto -- el texto verde de diagnóstico de Fase 2 (fase/
+  // cx/cy/escala/tiles visibles-faltantes) ya no debe aparecer sobre el
+  // mapa al evaluar Fase 5 visualmente; solo se muestra si se activa acá.
+  const [modoDebug, setModoDebug] = useState(false);
 
   const [duracionA, setDuracionA] = useState(0.8);
   const [duracionBC, setDuracionBC] = useState(3.2);
@@ -200,6 +205,7 @@ export default function DebugVideoV2Page() {
 
   const rutaRef = useRef<RutaCoreografiaV2 | null>(null);
   const ventanaRef = useRef<VentanaCrossfade | null>(null);
+  const datosEstadisticasRef = useRef<DatosEstadisticasV2 | null>(null);
   const tilesAnchaRef = useRef<Map<string, ImageBitmap>>(new Map());
   const tilesZ17Ref = useRef<Map<string, ImageBitmap>>(new Map());
   const zoomAnchoRef = useRef(0);
@@ -234,6 +240,7 @@ export default function DebugVideoV2Page() {
     zoomAnchoRef.current = grillaAncha.zoom;
     const ruta = construirRutaCoreografiaV2(RUTA_PRUEBA, grillaAncha);
     rutaRef.current = ruta;
+    datosEstadisticasRef.current = construirDatosEstadisticasV2(RUTA_PRUEBA, ruta.distanciaTotalKm);
     const ventana = calcularVentanaCrossfade(grillaAncha.zoom);
     ventanaRef.current = ventana;
     const duracionSeguimientoAuto = calcularDuracionSeguimientoV2(ruta.distanciaTotalKm);
@@ -585,6 +592,8 @@ export default function DebugVideoV2Page() {
       log(`[v2-fase4]   segmento ${idx}: frames ${s.frameInicio}-${s.frameFin} tilesZ17=${s.tiles.size}`);
     });
 
+    const datosEstadisticas = construirDatosEstadisticasV2(rutaGps, ruta.distanciaTotalKm);
+
     const canvas = canvasRef.current;
     if (!canvas) {
       log("[v2-fase4] ERROR: no hay canvas disponible.");
@@ -603,6 +612,9 @@ export default function DebugVideoV2Page() {
           zoomAncho: grillaAncha.zoom,
           fps: FPS_FASE3,
           canvas,
+          ruta,
+          params: paramsFase3,
+          datosEstadisticas,
         },
         log,
       );
@@ -738,17 +750,20 @@ export default function DebugVideoV2Page() {
       );
     }
 
-    // Trazo de la ruta completa, transformado con la MISMA cámara Z17.
-    ctx.strokeStyle = "#ffcc33";
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ruta.puntosZ17.forEach((p, i) => {
-      const sx = ANCHO_VIDEO / 2 + (p.x - camara.cx) * camara.escala;
-      const sy = ALTO_VIDEO / 2 + (p.y - camara.cy) * camara.escala;
-      if (i === 0) ctx.moveTo(sx, sy);
-      else ctx.lineTo(sx, sy);
-    });
-    ctx.stroke();
+    // Fase 5: trazado progresivo + marcador + marca vel. máxima +
+    // estadísticas -- misma capa que grabacionV2.ts, evaluable acá sin
+    // generar un video cada vez. Reemplaza el trazo de ruta completa fijo
+    // que usaba este preview antes de Fase 5 (ese era solo un diagnóstico
+    // de Fase 2, redundante con el trazado real de acá).
+    if (datosEstadisticasRef.current) {
+      dibujarOverlayFase5(
+        ctx,
+        { indice: 0, tiempoSeg: t, fase: resultado.fase, camara },
+        ruta,
+        params,
+        datosEstadisticasRef.current,
+      );
+    }
 
     // Cruz en el centro (marca camara.cx/cy siempre).
     ctx.strokeStyle = "#ff2d2d";
@@ -760,16 +775,21 @@ export default function DebugVideoV2Page() {
     ctx.lineTo(ANCHO_VIDEO / 2, ALTO_VIDEO / 2 + 20);
     ctx.stroke();
 
-    ctx.fillStyle = "#39ff6a";
-    ctx.font = "24px monospace";
-    const lineas = [
-      `fase=${resultado.fase} t=${t.toFixed(2)}s${resultado.fraccionTrazo !== null ? ` fraccionTrazo=${resultado.fraccionTrazo.toFixed(3)}` : ""}`,
-      `cx=${camara.cx.toFixed(1)} cy=${camara.cy.toFixed(1)} escala=${camara.escala.toFixed(5)}`,
-      `pesoZ17=${peso.toFixed(3)}`,
-      `ancha: visibles=${resAncha.tilesVisibles} faltantes=${resAncha.tilesFaltantes}`,
-      `z17: visibles=${resZ17.tilesVisibles} faltantes=${resZ17.tilesFaltantes}`,
-    ];
-    lineas.forEach((linea, i) => ctx.fillText(linea, 16, 40 + i * 30));
+    // Diagnóstico de Fase 2 -- NUNCA debe aparecer en el canvas grabado ni
+    // en el resultado final; acá en el preview queda detrás de un toggle
+    // "modo debug" (apagado por defecto), en vez de dibujarse siempre.
+    if (modoDebug) {
+      ctx.fillStyle = "#39ff6a";
+      ctx.font = "20px monospace";
+      const lineas = [
+        `fase=${resultado.fase} t=${t.toFixed(2)}s${resultado.fraccionTrazo !== null ? ` fraccionTrazo=${resultado.fraccionTrazo.toFixed(3)}` : ""}`,
+        `cx=${camara.cx.toFixed(1)} cy=${camara.cy.toFixed(1)} escala=${camara.escala.toFixed(5)}`,
+        `pesoZ17=${peso.toFixed(3)}`,
+        `ancha: visibles=${resAncha.tilesVisibles} faltantes=${resAncha.tilesFaltantes}`,
+        `z17: visibles=${resZ17.tilesVisibles} faltantes=${resZ17.tilesFaltantes}`,
+      ];
+      lineas.forEach((linea, i) => ctx.fillText(linea, 16, 178 + i * 26));
+    }
 
     if (resAncha.tilesFaltantes > 0 || resZ17.tilesFaltantes > 0) {
       log(`[v2-faltantes] t=${t.toFixed(2)}s fase=${resultado.fase} anchaFaltantes=${resAncha.tilesFaltantes} z17Faltantes=${resZ17.tilesFaltantes}`);
@@ -873,6 +893,11 @@ export default function DebugVideoV2Page() {
           {planificandoFase3 ? "Planificando Fase 3..." : "Fase 3: planificar y verificar segmentos (sin grabar)"}
         </button>
       </div>
+
+      <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8, fontSize: 12 }}>
+        <input type="checkbox" checked={modoDebug} onChange={(e) => setModoDebug(e.target.checked)} />
+        Modo debug (texto verde de diagnóstico Fase 2 sobre el mapa -- nunca aparece en el video grabado)
+      </label>
 
       <div
         style={{
