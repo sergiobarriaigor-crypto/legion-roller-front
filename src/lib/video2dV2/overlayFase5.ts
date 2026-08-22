@@ -185,21 +185,22 @@ function trazarRectRedondeado(ctx: CanvasRenderingContext2D, x: number, y: numbe
 }
 
 // Tarjeta temporal del evento "velocidad máxima" -- aparece asociada al
-// punto real (línea guía + tarjeta), sin tapar el trazado completo.
-// `marcadorY` es la posición en pantalla del marcador del patinador EN ESTE
-// frame -- justo al alcanzar el punto real, ambos casi coinciden, así que
-// la tarjeta se ancla por encima del más alto de los dos (punto real o
-// marcador) para no quedar tapada por el propio marcador.
-function dibujarTarjetaVelMax(ctx: CanvasRenderingContext2D, px: number, py: number, marcadorY: number, kmh: number): void {
+// punto real (línea guía + tarjeta), sin tapar el trazado completo. Se
+// ancla EXCLUSIVAMENTE a (px,py) -- la proyección de ese punto real con la
+// cámara del frame actual -- nunca a la posición del marcador: si se usara
+// la posición del marcador (que sigue avanzando mientras la tarjeta está
+// visible) para reubicarla, la tarjeta parecería "perseguir" al marcador
+// en vez de quedar fija sobre el punto geográfico donde ocurrió el evento.
+// Único ajuste que sí se permite: no salirse de los bordes del canvas.
+function dibujarTarjetaVelMax(ctx: CanvasRenderingContext2D, px: number, py: number, kmh: number): void {
   const ancho = 158;
   const alto = 62;
   const margen = 8;
-  const referenciaY = Math.min(py, marcadorY);
   let arriba = true;
-  let cardY = referenciaY - alto - 24;
+  let cardY = py - alto - 24;
   if (cardY < margen) {
     arriba = false;
-    cardY = Math.max(py, marcadorY) + 24;
+    cardY = py + 24;
   }
   if (cardY + alto > ALTO_VIDEO - margen) cardY = ALTO_VIDEO - margen - alto;
   const cardX = clamp(px - ancho / 2, margen, ANCHO_VIDEO - ancho - margen);
@@ -351,28 +352,23 @@ export function dibujarOverlayFase5(
   const inicioPantalla = aPantalla(ruta.puntosZ17[0], camara);
   dibujarPuntoSimple(ctx, inicioPantalla.x, inicioPantalla.y, 7, COLOR_INICIO);
 
-  // Posición en pantalla del marcador -- calculada acá (antes de dibujarse)
-  // porque la tarjeta de velocidad máxima la necesita para no superponerse
-  // con el marcador cuando ambos coinciden justo al alcanzar el punto. El
-  // orden de DIBUJO real (trazado -> marca vel. máxima -> marcador ->
-  // estadísticas) no cambia: el marcador se sigue pintando después.
-  const marcadorPantalla = aPantalla(posicionActual, camara);
-
   // --- Evento de velocidad máxima: la marca discreta aparece apenas el
   // progreso alcanza ese punto real (mismo índice de
   // velocidadMaximaConPunto, sin recalcular nada de GPS) y queda
   // permanente; la tarjeta con el valor solo se muestra los primeros
-  // segundos lógicos después de alcanzarlo. ---
+  // segundos lógicos después de alcanzarlo, anclada exclusivamente a la
+  // proyección de ESE punto (nunca a la posición del marcador). ---
   if (datos.indiceVelMax >= 0 && distObjetivoKm >= ruta.distanciaAcumuladaKm[datos.indiceVelMax]) {
     const p = aPantalla(ruta.puntosZ17[datos.indiceVelMax], camara);
     dibujarMarcaVelMaxDiscreta(ctx, p.x, p.y);
     const tEvento = tiempoEventoVelMax(ruta, params, datos);
     if (frame.tiempoSeg < tEvento + DURACION_TARJETA_VELMAX_SEG) {
-      dibujarTarjetaVelMax(ctx, p.x, p.y, marcadorPantalla.y, datos.velocidadMaxima);
+      dibujarTarjetaVelMax(ctx, p.x, p.y, datos.velocidadMaxima);
     }
   }
 
   // --- Marcador del patinador ---
+  const marcadorPantalla = aPantalla(posicionActual, camara);
   dibujarMarcadorPatinador(ctx, marcadorPantalla.x, marcadorPantalla.y);
 
   // --- Estadísticas ---
