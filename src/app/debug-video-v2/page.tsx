@@ -259,8 +259,13 @@ export default function DebugVideoV2Page() {
     setDuracionD(duracionSeguimientoAuto);
     const params = { ...parametros(), duracionSeguimientoSeg: duracionSeguimientoAuto };
 
+    // trayectoria propia SOLO para congelar la posición de las tarjetas de
+    // foto (ver construirFotosRutaV2) -- no es la que usa el scrubber en
+    // vivo (ese sigue siendo calcularFaseYCamaraV2 incremental), es
+    // simplemente la misma función pura de Fase 3 evaluada una vez acá.
+    const trayectoriaParaFotos = construirTrayectoriaV2(ruta, params, FPS_FASE3);
     const fotosRutaImgs = await cargarFotosRutaV2(FOTOS_RUTA_PRUEBA_URLS, log);
-    fotosRutaRef.current = construirFotosRutaV2(fotosRutaImgs, ruta, params);
+    fotosRutaRef.current = construirFotosRutaV2(fotosRutaImgs, ruta, params, trayectoriaParaFotos);
     log(`[v2-fase6] fotosDeRutaListas(preview)=${fotosRutaRef.current.length}/${FOTOS_RUTA_PRUEBA_URLS.length}`);
 
     const corredorZ17 = construirCorredorZ17V2(ruta, ventana);

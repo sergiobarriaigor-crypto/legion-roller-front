@@ -235,7 +235,7 @@ export async function grabarVideoV2(entrada: EntradaGrabacionV2, log: (linea: st
   // criterio que los tiles. skip (no abort) si alguna falla: se loguea y se
   // excluye, la generación del video sigue. ---
   const fotosRutaImgs = await cargarFotosRutaV2(fotosRutaUrls, log);
-  const fotosRuta = construirFotosRutaV2(fotosRutaImgs, ruta, params);
+  const fotosRuta = construirFotosRutaV2(fotosRutaImgs, ruta, params, trayectoria);
   log(`[v2-fase6] fotosDeRutaListas=${fotosRuta.length}/${fotosRutaUrls.length}`);
 
   const fotoCierreImg = fotoCierreUrl ? await cargarImagenDecodificada(fotoCierreUrl, log) : null;

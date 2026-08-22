@@ -66,6 +66,11 @@ export interface FotoRutaV2 {
   duracionFadeInSeg: number;
   duracionHoldSeg: number;
   duracionFadeOutSeg: number;
+  // Posición de pantalla CONGELADA al construir (no se recalcula por frame)
+  // -- ver comentario en construirFotosRutaV2 sobre por qué y cómo.
+  cardX: number;
+  cardY: number;
+  arriba: boolean;
 }
 
 function limitesTiempoSeguimiento(params: ParametrosCoreografiaV2): { tBC: number; tD: number } {
@@ -99,12 +104,79 @@ export function fraccionTrazoDeFrameV2(frame: FrameV2, params: ParametrosCoreogr
   return clamp((frame.tiempoSeg - tBC) / (tD - tBC), 0, 1);
 }
 
+function aPantalla(punto: { x: number; y: number }, camara: EstadoCamaraV2): { x: number; y: number } {
+  return {
+    x: ANCHO_VIDEO / 2 + (punto.x - camara.cx) * camara.escala,
+    y: ALTO_VIDEO / 2 + (punto.y - camara.cy) * camara.escala,
+  };
+}
+
+// Frame de trayectoria[] cuyo tiempoSeg está más cerca del buscado --
+// búsqueda lineal (trayectoria tiene a lo sumo unos cientos de elementos,
+// se llama una vez por foto, nunca por frame de video). Determinista: solo
+// lee el array ya precomputado por Fase 3, ningún reloj real de por medio.
+function buscarFrameCercano(trayectoria: FrameV2[], tiempoSeg: number): FrameV2 {
+  let mejor = trayectoria[0];
+  let mejorDelta = Math.abs(trayectoria[0].tiempoSeg - tiempoSeg);
+  for (let i = 1; i < trayectoria.length; i++) {
+    const delta = Math.abs(trayectoria[i].tiempoSeg - tiempoSeg);
+    if (delta < mejorDelta) {
+      mejor = trayectoria[i];
+      mejorDelta = delta;
+    }
+  }
+  return mejor;
+}
+
+const PADDING_TARJETA_FOTO = 16;
+const ALTO_MAX_TARJETA_FOTO = ALTO_VIDEO * 0.55;
+const ANCHO_TARJETA_FOTO = ANCHO_VIDEO * 0.6;
+
+// Tamaño de la tarjeta -- ancho FIJO (~60% del video, dentro de 55-65%),
+// alto según la orientación real de la imagen (contain, nunca recorta),
+// tope de alto para fotos muy verticales. Depende solo de la imagen, nunca
+// de la cámara -- por eso es seguro llamarla tanto al congelar la posición
+// (una vez) como al dibujar (cada frame): siempre da el mismo resultado.
+function calcularTamanoTarjetaFoto(img: HTMLImageElement): { anchoCard: number; altoCard: number; anchoImg: number; altoImg: number } {
+  const cajaInteriorAncho = ANCHO_TARJETA_FOTO - PADDING_TARJETA_FOTO * 2;
+  const relacion = img.naturalWidth / img.naturalHeight || 1;
+  const altoIdealSegunAncho = cajaInteriorAncho / relacion;
+  const cajaInteriorAlto = Math.min(altoIdealSegunAncho, ALTO_MAX_TARJETA_FOTO - PADDING_TARJETA_FOTO * 2);
+  const escalaContain = Math.min(cajaInteriorAncho / img.naturalWidth, cajaInteriorAlto / img.naturalHeight);
+  const anchoImg = img.naturalWidth * escalaContain;
+  const altoImg = img.naturalHeight * escalaContain;
+  return { anchoCard: ANCHO_TARJETA_FOTO, altoCard: altoImg + PADDING_TARJETA_FOTO * 2, anchoImg, altoImg };
+}
+
+// Elige arriba/abajo + clampea contra los bordes -- misma lógica de
+// siempre, pero evaluada UNA sola vez (al congelar), no por frame.
+function calcularPosicionTarjeta(px: number, py: number, anchoCard: number, altoCard: number): { cardX: number; cardY: number; arriba: boolean } {
+  const margen = 10;
+  let arriba = true;
+  let cardY = py - altoCard - 26;
+  if (cardY < margen) {
+    arriba = false;
+    cardY = py + 26;
+  }
+  if (cardY + altoCard > ALTO_VIDEO - margen) cardY = ALTO_VIDEO - margen - altoCard;
+  const cardX = clamp(px - anchoCard / 2, margen, ANCHO_VIDEO - anchoCard - margen);
+  return { cardX, cardY, arriba };
+}
+
 // Construye los eventos de foto -- calcula distancia/punto/tiempo objetivo
-// de cada una y recorta hold/fade-out (nunca el fade-in) para que la
-// tarjeta de una foto SIEMPRE termine antes de que empiece la siguiente.
-// No mueve fracciones ni recalcula posiciones -- solo acorta la ventana
-// temporal de la tarjeta cuando el hueco entre eventos es chico.
-export function construirFotosRutaV2(imagenes: HTMLImageElement[], ruta: RutaCoreografiaV2, params: ParametrosCoreografiaV2): FotoRutaV2[] {
+// de cada una, recorta hold/fade-out (nunca el fade-in) para que la
+// tarjeta de una foto SIEMPRE termine antes de que empiece la siguiente, y
+// CONGELA la posición de pantalla de la tarjeta (cardX/cardY/arriba) en el
+// frame de trayectoria[] más cercano al instante en que el evento arranca.
+// Esa posición queda fija durante todo el evento -- el punto GPS (px,py)
+// se sigue reproyectando con la cámara actual en cada frame (para la línea
+// guía), pero la tarjeta ya no. No mueve fracciones de aparición.
+export function construirFotosRutaV2(
+  imagenes: HTMLImageElement[],
+  ruta: RutaCoreografiaV2,
+  params: ParametrosCoreografiaV2,
+  trayectoria: FrameV2[],
+): FotoRutaV2[] {
   const fracciones = fraccionesFotosRuta(imagenes.length);
   const { tBC, tD } = limitesTiempoSeguimiento(params);
 
@@ -138,20 +210,21 @@ export function construirFotosRutaV2(imagenes: HTMLImageElement[], ruta: RutaCor
       }
     }
 
+    const frameEvento = buscarFrameCercano(trayectoria, foto.tiempoEventoSeg);
+    const pantallaEnElEvento = aPantalla(foto.punto, frameEvento.camara);
+    const { anchoCard, altoCard } = calcularTamanoTarjetaFoto(foto.img);
+    const { cardX, cardY, arriba } = calcularPosicionTarjeta(pantallaEnElEvento.x, pantallaEnElEvento.y, anchoCard, altoCard);
+
     return {
       ...foto,
       duracionFadeInSeg: FADE_IN_FOTO_SEG,
       duracionHoldSeg: hold,
       duracionFadeOutSeg: fadeOut,
+      cardX,
+      cardY,
+      arriba,
     };
   });
-}
-
-function aPantalla(punto: { x: number; y: number }, camara: EstadoCamaraV2): { x: number; y: number } {
-  return {
-    x: ANCHO_VIDEO / 2 + (punto.x - camara.cx) * camara.escala,
-    y: ALTO_VIDEO / 2 + (punto.y - camara.cy) * camara.escala,
-  };
 }
 
 function trazarRectRedondeado(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
@@ -190,37 +263,23 @@ function dibujarMarcaFotoDiscreta(ctx: CanvasRenderingContext2D, cx: number, cy:
 // alto para fotos muy verticales. Alpha y escala de entrada ya vienen
 // resueltos por el llamador (fade-in/hold/fade-out).
 function dibujarTarjetaFotoV2(ctx: CanvasRenderingContext2D, foto: FotoRutaV2, px: number, py: number, alpha: number, escala: number): void {
-  const anchoCard = ANCHO_VIDEO * 0.6;
-  const padding = 16;
-  const altoMaxCard = ALTO_VIDEO * 0.55;
-
-  const cajaInteriorAncho = anchoCard - padding * 2;
-  const relacion = foto.img.naturalWidth / foto.img.naturalHeight || 1;
-  const altoIdealSegunAncho = cajaInteriorAncho / relacion;
-  const cajaInteriorAlto = Math.min(altoIdealSegunAncho, altoMaxCard - padding * 2);
-  const escalaContain = Math.min(cajaInteriorAncho / foto.img.naturalWidth, cajaInteriorAlto / foto.img.naturalHeight);
-  const anchoImg = foto.img.naturalWidth * escalaContain;
-  const altoImg = foto.img.naturalHeight * escalaContain;
-  const altoCard = altoImg + padding * 2;
-
-  const margen = 10;
-  let arriba = true;
-  let cardY = py - altoCard - 26;
-  if (cardY < margen) {
-    arriba = false;
-    cardY = py + 26;
-  }
-  if (cardY + altoCard > ALTO_VIDEO - margen) cardY = ALTO_VIDEO - margen - altoCard;
-  const cardX = clamp(px - anchoCard / 2, margen, ANCHO_VIDEO - anchoCard - margen);
+  const { anchoCard, altoCard, anchoImg, altoImg } = calcularTamanoTarjetaFoto(foto.img);
+  // Posición CONGELADA -- (px,py) es el punto GPS reproyectado con la
+  // cámara de ESTE frame (se sigue moviendo), pero la tarjeta usa siempre
+  // el mismo cardX/cardY/arriba calculados una vez en construirFotosRutaV2.
+  const { cardX, cardY, arriba } = foto;
 
   ctx.save();
   ctx.globalAlpha = alpha;
 
+  // Línea guía dinámica: del punto real actual (px,py, se mueve con la
+  // cámara) al borde fijo de la tarjeta -- largo/ángulo cambian con el
+  // paneo, la tarjeta no.
   ctx.strokeStyle = "rgba(255,255,255,0.5)";
   ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.moveTo(px, py);
-  ctx.lineTo(px, arriba ? cardY + altoCard : cardY);
+  ctx.lineTo(cardX + anchoCard / 2, arriba ? cardY + altoCard : cardY);
   ctx.stroke();
 
   const cx = cardX + anchoCard / 2;
