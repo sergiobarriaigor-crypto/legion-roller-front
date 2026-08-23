@@ -179,6 +179,10 @@ function registrarDiagnosticoGps(
     motivoRechazo: "indeterminado",
   };
   diagnosticoFixes.push(registro);
+  // DIAGNÓSTICO TEMPORAL -- confirma si registrarDiagnosticoGps() realmente
+  // se ejecuta y acumula durante la grabación real. BORRAR junto con el
+  // resto de la instrumentación de diagnosticoGps.
+  log(`FRONT diag acumulado=${diagnosticoFixes.length}`);
 
   if (!grabacionActiva) {
     return; // no debería ocurrir en uso normal -- queda como "indeterminado"

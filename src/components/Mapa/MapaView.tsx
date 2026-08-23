@@ -1083,6 +1083,9 @@ export function MapaView() {
     // limpiarDiagnosticoGps() y el campo diagnosticoGps del body de abajo
     // una vez cerrada la investigación GPS.
     const diagnosticoGps = obtenerDiagnosticoGps();
+    // DIAGNÓSTICO TEMPORAL -- confirma cuántos fixes había en el snapshot
+    // justo antes del POST. BORRAR junto con el resto de la instrumentación.
+    console.log(`[MapaView] FRONT diag antes POST=${diagnosticoGps.length}`);
     // Único lugar donde el watcher real se apaga -- ver grabacionGps.ts.
     // Devuelve los puntos ya confirmados (incluye el descarte de cualquier
     // punto pendiente de confirmar, mismo criterio de siempre: si la sesión
