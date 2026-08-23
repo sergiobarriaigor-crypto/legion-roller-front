@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { Capacitor } from "@capacitor/core";
+import { elegirVariasDeGaleriaNativa } from "@/lib/camaraNativa";
 import { IconMapPin, IconShare, IconUsers, IconVideo, IconHeart, IconHeartFilled, IconCrop } from "@tabler/icons-react";
 import { AjustarEncuadreFoto } from "@/components/AjustarEncuadreFoto";
 import { useSession } from "@/context/SessionContext";
@@ -303,12 +305,15 @@ export default function PostPage() {
     }
   }
 
-  // El selector nativo permite elegir hasta 3 fotos de una sola vez (atributo
-  // `multiple`) — se suben todas en paralelo y se agregan al array apenas
-  // terminan, sin paso de recorte (a diferencia de ImageUploadCrop, pensado
-  // para una sola foto a la vez).
-  async function onFotosElegidas(e: React.ChangeEvent<HTMLInputElement>) {
-    const elegidos = Array.from(e.target.files ?? []);
+  // En la app nativa (Capacitor), elegirFotosNativo() usa
+  // Camera.chooseFromGallery con `limit` = cupos restantes -- en Android
+  // 13+/iOS eso bloquea la selección en la propia pantalla del picker. En
+  // el navegador se mantiene el <input multiple> de siempre, que no puede
+  // limitar ahí (por eso el recorte + aviso de acá abajo sigue como
+  // respaldo en los dos casos). Ambas vías terminan en
+  // procesarFotosElegidas, que sube todo en paralelo sin paso de recorte
+  // (a diferencia de ImageUploadCrop, pensado para una sola foto a la vez).
+  async function procesarFotosElegidas(elegidos: File[]) {
     if (elegidos.length === 0 || !token) return;
     setError("");
 
@@ -331,6 +336,16 @@ export default function PostPage() {
       setSubiendoFotos(false);
       if (fotoInputRef.current) fotoInputRef.current.value = "";
     }
+  }
+
+  async function onFotosElegidas(e: React.ChangeEvent<HTMLInputElement>) {
+    await procesarFotosElegidas(Array.from(e.target.files ?? []));
+  }
+
+  async function elegirFotosNativo() {
+    const espacioDisponible = MAX_FOTOS_POR_POST - fotos.length;
+    if (espacioDisponible <= 0) return;
+    await procesarFotosElegidas(await elegirVariasDeGaleriaNativa(espacioDisponible));
   }
 
   function quitarFoto(i: number) {
@@ -524,7 +539,7 @@ export default function PostPage() {
                         <button
                           type="button"
                           disabled={subiendoFotos}
-                          onClick={() => fotoInputRef.current?.click()}
+                          onClick={() => (Capacitor.isNativePlatform() ? elegirFotosNativo() : fotoInputRef.current?.click())}
                           className="rounded-app border border-border px-4 py-2 text-sm text-text-secondary disabled:opacity-60"
                         >
                           {subiendoFotos

@@ -2,6 +2,8 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { IconX, IconTrash, IconPlus } from "@tabler/icons-react";
+import { Capacitor } from "@capacitor/core";
+import { elegirVariasDeGaleriaNativa } from "@/lib/camaraNativa";
 import { apiUpload, ApiError } from "@/lib/api";
 import {
   listarGaleria,
@@ -76,8 +78,15 @@ export function GaleriaPerfil({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [miembroId, token]);
 
-  async function onFotosElegidas(e: React.ChangeEvent<HTMLInputElement>) {
-    const elegidos = Array.from(e.target.files ?? []);
+  // En la app nativa (Capacitor), elegirFotosNativo() usa
+  // Camera.chooseFromGallery con `limit` = cupos restantes (bloquea la
+  // selección en pantalla en Android 13+/iOS); en el navegador se
+  // mantiene el <input multiple>, que no puede limitar ahí (por eso el
+  // recorte + aviso de acá abajo sigue como respaldo en los dos casos).
+  // Ambas vías terminan en procesarFotosElegidas -- incluida la foto
+  // única, que sigue ofreciendo el editor de filtro sin importar de dónde
+  // vino.
+  async function procesarFotosElegidas(elegidos: File[]) {
     if (elegidos.length === 0 || !token) return;
     setError("");
 
@@ -113,6 +122,16 @@ export function GaleriaPerfil({
       setSubiendo(false);
       if (inputRef.current) inputRef.current.value = "";
     }
+  }
+
+  async function onFotosElegidas(e: React.ChangeEvent<HTMLInputElement>) {
+    await procesarFotosElegidas(Array.from(e.target.files ?? []));
+  }
+
+  async function elegirFotosNativo() {
+    const espacioDisponible = MAX_FOTOS_GALERIA - fotos.length;
+    if (espacioDisponible <= 0) return;
+    await procesarFotosElegidas(await elegirVariasDeGaleriaNativa(espacioDisponible));
   }
 
   function cancelarFiltro() {
@@ -226,7 +245,7 @@ export function GaleriaPerfil({
             <button
               type="button"
               disabled={subiendo}
-              onClick={() => inputRef.current?.click()}
+              onClick={() => (Capacitor.isNativePlatform() ? elegirFotosNativo() : inputRef.current?.click())}
               aria-label="Agregar foto"
               className="relative flex aspect-square items-center justify-center border border-dashed border-border bg-surface-2 text-text-secondary disabled:opacity-60"
             >

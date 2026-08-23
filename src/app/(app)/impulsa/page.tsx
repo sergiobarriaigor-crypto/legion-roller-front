@@ -3,6 +3,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { Capacitor } from "@capacitor/core";
+import { elegirVariasDeGaleriaNativa } from "@/lib/camaraNativa";
 import {
   IconShare,
   IconUsers,
@@ -256,10 +258,13 @@ export default function ImpulsaPage() {
     }
   }
 
-  // Mismo criterio que onFotosElegidas en post/page.tsx: selector nativo con
-  // `multiple`, sube todo en paralelo sin paso de recorte.
-  async function onFotosElegidas(e: React.ChangeEvent<HTMLInputElement>) {
-    const elegidos = Array.from(e.target.files ?? []);
+  // Mismo criterio que post/page.tsx: en la app nativa,
+  // elegirFotosNativo() usa Camera.chooseFromGallery con `limit` = cupos
+  // restantes (bloquea la selección en pantalla en Android 13+/iOS); en el
+  // navegador se mantiene el <input multiple>, que no puede limitar ahí
+  // (por eso el recorte + aviso de procesarFotosElegidas sigue como
+  // respaldo en los dos casos).
+  async function procesarFotosElegidas(elegidos: File[]) {
     if (elegidos.length === 0 || !token) return;
     setError("");
 
@@ -281,6 +286,16 @@ export default function ImpulsaPage() {
       setSubiendoFotos(false);
       if (fotoInputRef.current) fotoInputRef.current.value = "";
     }
+  }
+
+  async function onFotosElegidas(e: React.ChangeEvent<HTMLInputElement>) {
+    await procesarFotosElegidas(Array.from(e.target.files ?? []));
+  }
+
+  async function elegirFotosNativo() {
+    const espacioDisponible = MAX_FOTOS_EMPRENDEDOR - fotos.length;
+    if (espacioDisponible <= 0) return;
+    await procesarFotosElegidas(await elegirVariasDeGaleriaNativa(espacioDisponible));
   }
 
   async function agregarAnuncio() {
@@ -657,7 +672,7 @@ export default function ImpulsaPage() {
                 <button
                   type="button"
                   disabled={subiendoFotos}
-                  onClick={() => fotoInputRef.current?.click()}
+                  onClick={() => (Capacitor.isNativePlatform() ? elegirFotosNativo() : fotoInputRef.current?.click())}
                   className="rounded-app border border-border px-4 py-2 text-sm text-text-secondary disabled:opacity-60"
                 >
                   {subiendoFotos
