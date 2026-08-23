@@ -65,6 +65,54 @@ let puntoPendienteConfirmar: PuntoGps | null = null;
 // pub/sub completo para este caso.
 let callbackPosicionActual: ((pos: PosicionSimple) => void) | null = null;
 
+// --- DIAGNÓSTICO TEMPORAL (fase previa a implementar la capa de
+// recuperación GPS) -- SOLO observa y logea; nunca decide qué punto se
+// acepta/rechaza (eso sigue siendo exclusivamente alRecibirPosicion/
+// registrarPuntoGrabado, sin ningún cambio de comportamiento). Los dos
+// umbrales de acá (30s/1s) son los valores CANDIDATOS para la futura capa
+// de recuperación -- se usan acá ÚNICAMENTE para etiquetar el log y poder
+// leerlo más fácil, nunca para descartar ni modificar ningún punto. Sacar
+// todo este bloque (constantes + estado + logDiagnosticoFix + su llamado
+// en alRecibirPosicion) una vez cerrada la investigación.
+const UMBRAL_HUECO_DIAGNOSTICO_SEG = 30;
+const UMBRAL_RAFAGA_SEG = 1;
+const FIXES_A_ETIQUETAR_POST_HUECO = 10;
+
+let ultimoFixRecibidoDiag: PosicionSimple | null = null;
+let fixesRestantesEtiquetarPostHueco = 0;
+
+function logDiagnosticoFix(pos: PosicionSimple): void {
+  const horaRecepcion = Date.now();
+  const retrasoMs = pos.time !== null ? horaRecepcion - pos.time : null;
+  const anterior = ultimoFixRecibidoDiag;
+  const dtRealSeg =
+    anterior && anterior.time !== null && pos.time !== null ? (pos.time - anterior.time) / 1000 : null;
+
+  const etiquetas: string[] = [];
+  if (dtRealSeg !== null && dtRealSeg > UMBRAL_HUECO_DIAGNOSTICO_SEG) {
+    etiquetas.push(`HUECO_DETECTADO(candidato>${UMBRAL_HUECO_DIAGNOSTICO_SEG}s)`);
+    fixesRestantesEtiquetarPostHueco = FIXES_A_ETIQUETAR_POST_HUECO;
+  } else if (fixesRestantesEtiquetarPostHueco > 0) {
+    etiquetas.push(
+      `POST_HUECO(#${FIXES_A_ETIQUETAR_POST_HUECO - fixesRestantesEtiquetarPostHueco + 1}/${FIXES_A_ETIQUETAR_POST_HUECO})`,
+    );
+    fixesRestantesEtiquetarPostHueco--;
+  }
+  if (dtRealSeg !== null && dtRealSeg >= 0 && dtRealSeg < UMBRAL_RAFAGA_SEG) {
+    etiquetas.push(`RAFAGA(candidato<${UMBRAL_RAFAGA_SEG}s entre fixes)`);
+  }
+
+  log(
+    `DIAG-FIX horaRecepcion=${horaRecepcion} fix.time=${pos.time ?? "null"} retrasoMs=${retrasoMs ?? "null"} ` +
+      `lat=${pos.lat.toFixed(6)} lon=${pos.lon.toFixed(6)} accuracy=${pos.accuracy.toFixed(1)} ` +
+      `speed=${pos.speed ?? "null"} simulated=${pos.simulated ?? "null"} ` +
+      `dtReal=${dtRealSeg !== null ? `${dtRealSeg.toFixed(3)}s` : "null(sin fix.time o primer fix de la sesión)"}` +
+      (etiquetas.length ? ` [${etiquetas.join(" ")}]` : ""),
+  );
+
+  ultimoFixRecibidoDiag = pos;
+}
+
 function kmhEntre(a: PuntoGps, b: PuntoGps): number {
   const dtSeg = (b.timestamp - a.timestamp) / 1000;
   if (dtSeg <= 0) return 0;
@@ -115,6 +163,8 @@ function registrarPuntoGrabado(puntoNuevo: PuntoGps): void {
 // cruda a quien esté suscripto, para cámara/broadcast/rodada -- igual que
 // antes.
 function alRecibirPosicion(pos: PosicionSimple): void {
+  logDiagnosticoFix(pos);
+
   if (grabacionActiva && pos.accuracy <= PRECISION_MAXIMA_PUNTO_GRABADO_M) {
     const puntoGrabado: PuntoGps = { lat: pos.lat, lon: pos.lon, timestamp: Date.now() };
     const ultimoGrabado = grabacionActiva.puntos[grabacionActiva.puntos.length - 1];
@@ -153,6 +203,11 @@ export function iniciarGrabacionGps(modo: "patinando" | "ruta", mapeado: boolean
     avisoInactividadDesde: null,
   };
   puntoPendienteConfirmar = null;
+  // DIAGNÓSTICO TEMPORAL -- reinicia el estado de logDiagnosticoFix para que
+  // una grabación nueva no arrastre el "último fix" ni el contador
+  // post-hueco de una sesión anterior ya finalizada.
+  ultimoFixRecibidoDiag = null;
+  fixesRestantesEtiquetarPostHueco = 0;
   detenerWatcherReal = iniciarSeguimientoUbicacion(alRecibirPosicion, onError);
   log("watcher iniciado");
 }
@@ -170,6 +225,9 @@ export function detenerGrabacionGps(): PuntoGps[] {
   grabacionActiva = null;
   puntoPendienteConfirmar = null;
   callbackPosicionActual = null;
+  // DIAGNÓSTICO TEMPORAL -- ver comentario en iniciarGrabacionGps.
+  ultimoFixRecibidoDiag = null;
+  fixesRestantesEtiquetarPostHueco = 0;
   return puntos;
 }
 

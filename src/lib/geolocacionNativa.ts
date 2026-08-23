@@ -17,10 +17,23 @@ const BackgroundGeolocation = registerPlugin<BackgroundGeolocationPlugin>("Backg
 //   entregando posiciones aunque la pantalla esté bloqueada (mediante un
 //   servicio en primer plano con notificación persistente), resolviendo la
 //   limitación conocida de la versión web.
+// DIAGNÓSTICO TEMPORAL (auditoría GPS V2) -- time/speed/simulated se agregan
+// acá para que grabacionGps.ts pueda loguearlos, SIN cambiar en nada la
+// aceptación/guardado de puntos todavía (eso sigue usando solo lat/lon/
+// accuracy, exactamente como hoy). `time` es la hora REAL en que el fix se
+// produjo (epoch ms) -- antes se descartaba acá mismo y grabacionGps.ts
+// sellaba Date.now() en su lugar. `speed` es la velocidad que calcula el
+// propio chip GPS (m/s), no la nuestra por distancia/tiempo. `simulated`
+// (solo tiene sentido en nativo -- BackgroundGeolocation.Location.simulated)
+// es null en los caminos que no lo exponen (web, obtenerPosicionActual),
+// nunca se inventa un valor.
 export interface PosicionSimple {
   lat: number;
   lon: number;
   accuracy: number;
+  time: number | null;
+  speed: number | null;
+  simulated: boolean | null;
 }
 
 export type DetenerSeguimiento = () => void;
@@ -74,6 +87,9 @@ export function iniciarSeguimientoUbicacion(
                 lat: posicion.latitude,
                 lon: posicion.longitude,
                 accuracy: posicion.accuracy,
+                time: posicion.time,
+                speed: posicion.speed,
+                simulated: posicion.simulated,
               });
             }
           },
@@ -105,6 +121,11 @@ export function iniciarSeguimientoUbicacion(
         lat: pos.coords.latitude,
         lon: pos.coords.longitude,
         accuracy: pos.coords.accuracy ?? 0,
+        time: pos.timestamp,
+        speed: pos.coords.speed,
+        // La Geolocation API del navegador no expone ningún equivalente a
+        // "simulated"/mock provider -- null, no se inventa.
+        simulated: null,
       });
     },
     () => onError(),
@@ -133,7 +154,16 @@ export async function obtenerPosicionActual(opciones?: {
 
   if (Capacitor.isNativePlatform()) {
     const pos = await Geolocation.getCurrentPosition({ enableHighAccuracy, timeout });
-    return { lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: pos.coords.accuracy ?? 0 };
+    // @capacitor/geolocation no expone "simulated" (eso es propio de
+    // BackgroundGeolocation.Location) -- null, no se inventa.
+    return {
+      lat: pos.coords.latitude,
+      lon: pos.coords.longitude,
+      accuracy: pos.coords.accuracy ?? 0,
+      time: pos.timestamp,
+      speed: pos.coords.speed,
+      simulated: null,
+    };
   }
 
   if (!navigator.geolocation) {
@@ -146,6 +176,9 @@ export async function obtenerPosicionActual(opciones?: {
           lat: pos.coords.latitude,
           lon: pos.coords.longitude,
           accuracy: pos.coords.accuracy ?? 0,
+          time: pos.timestamp,
+          speed: pos.coords.speed,
+          simulated: null,
         }),
       (err) => reject(err),
       { enableHighAccuracy, timeout },
