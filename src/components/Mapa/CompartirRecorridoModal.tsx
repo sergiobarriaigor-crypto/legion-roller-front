@@ -41,6 +41,10 @@ import type { CancionHistoria } from "@/lib/musicaHistorias";
 type Estado = "editando" | "publicando";
 type Tab = "imagen" | "video" | "video3d";
 
+// Máximo de "fotos en el mapa" para Video 2D V2 (ver fotosPinDataUrl) --
+// mismo límite ya usado en overlayFase6.ts/fraccionesFotosRuta.
+const LIMITE_FOTOS_PIN = 3;
+
 const ETIQUETAS_ETAPA_VIDEO: Record<EtapaVideoRecorridoV2, string> = {
   preparando: "Preparando recorrido...",
   generando: "Generando video...",
@@ -119,6 +123,10 @@ export function CompartirRecorridoModal({
   // proporción original.
   const [fotoFinalDataUrl, setFotoFinalDataUrl] = useState<string | null>(null);
   const [fotosPinDataUrl, setFotosPinDataUrl] = useState<string[]>([]);
+  // Aviso cuando la selección múltiple de la galería trae más fotos de las
+  // que quedan disponibles hasta LIMITE_FOTOS_PIN -- se recortan en vez de
+  // rechazar toda la selección.
+  const [avisoFotosPin, setAvisoFotosPin] = useState("");
   const [archivoEditandoFoto, setArchivoEditandoFoto] = useState<File | null>(null);
   const [tipoFotoEditando, setTipoFotoEditando] = useState<"final" | "pin" | null>(null);
   const inputFotoFinalRef = useRef<HTMLInputElement>(null);
@@ -342,17 +350,43 @@ export function CompartirRecorridoModal({
   // V1) le rompía la proporción a V2. V1 sigue funcionando igual con la
   // foto original sin tocar, porque dibujarPinFoto ya hace su propio
   // cover + clip circular en tiempo de dibujo (tarjetaRecorrido.ts).
+  // Selección múltiple desde la galería -- se lee cada archivo con su
+  // propio FileReader (en paralelo) pero el orden final respeta el orden
+  // de FileList (el mismo en que el usuario las marcó, hasta donde la
+  // API/navegador lo garantice), porque Promise.all conserva el orden del
+  // array de entrada sin importar cuál FileReader termine primero. Si
+  // trae más fotos de las que quedan hasta LIMITE_FOTOS_PIN, se recortan
+  // ANTES de leerlas (no se lee de más) y se avisa cuántas entraron.
   function manejarSeleccionFotoPin(e: React.ChangeEvent<HTMLInputElement>) {
-    const archivo = e.target.files?.[0];
+    const archivos = Array.from(e.target.files ?? []);
     e.target.value = "";
-    if (!archivo) return;
-    const lector = new FileReader();
-    lector.onload = () => {
-      const dataUrl = lector.result;
-      if (typeof dataUrl !== "string") return;
-      setFotosPinDataUrl((prev) => (prev.length >= 3 ? prev : [...prev, dataUrl].slice(0, 3)));
-    };
-    lector.readAsDataURL(archivo);
+    if (archivos.length === 0) return;
+
+    const espacioDisponible = Math.max(0, LIMITE_FOTOS_PIN - fotosPinDataUrl.length);
+    const aLeer = archivos.slice(0, espacioDisponible);
+    setAvisoFotosPin(
+      archivos.length <= aLeer.length
+        ? ""
+        : aLeer.length > 0
+          ? `Se agregaron ${aLeer.length} foto${aLeer.length === 1 ? "" : "s"} -- el máximo es ${LIMITE_FOTOS_PIN}.`
+          : `Ya tenés el máximo de ${LIMITE_FOTOS_PIN} fotos.`,
+    );
+    if (aLeer.length === 0) return;
+
+    Promise.all(
+      aLeer.map(
+        (archivo) =>
+          new Promise<string | null>((resolve) => {
+            const lector = new FileReader();
+            lector.onload = () => resolve(typeof lector.result === "string" ? lector.result : null);
+            lector.onerror = () => resolve(null);
+            lector.readAsDataURL(archivo);
+          }),
+      ),
+    ).then((dataUrls) => {
+      const validas = dataUrls.filter((u): u is string => u !== null);
+      setFotosPinDataUrl((prev) => [...prev, ...validas].slice(0, LIMITE_FOTOS_PIN));
+    });
   }
 
   function confirmarFotoEditada(dataUrl: string) {
@@ -367,6 +401,7 @@ export function CompartirRecorridoModal({
 
   function quitarFotoPin(indice: number) {
     setFotosPinDataUrl((prev) => prev.filter((_, i) => i !== indice));
+    setAvisoFotosPin("");
   }
 
   function elegirTab(nuevoTab: Tab) {
@@ -628,6 +663,7 @@ export function CompartirRecorridoModal({
                     ref={inputFotoPinRef}
                     type="file"
                     accept="image/*"
+                    multiple
                     className="hidden"
                     onChange={manejarSeleccionFotoPin}
                   />
@@ -660,7 +696,7 @@ export function CompartirRecorridoModal({
                         </button>
                         <button
                           type="button"
-                          disabled={fotosPinDataUrl.length >= 3}
+                          disabled={fotosPinDataUrl.length >= LIMITE_FOTOS_PIN}
                           onClick={() => inputFotoPinRef.current?.click()}
                           className="flex flex-col items-center gap-1 rounded-app border border-border-accent py-2 text-text-accent disabled:opacity-30"
                         >
@@ -677,6 +713,7 @@ export function CompartirRecorridoModal({
                           <span className="text-[10px]">Música</span>
                         </button>
                       </div>
+                      {avisoFotosPin && <p className="text-xs text-fill-warning">{avisoFotosPin}</p>}
                       {(fotoFinalDataUrl || fotosPinDataUrl.length > 0 || musicaElegida) && (
                         <div className="flex flex-wrap items-center justify-center gap-2">
                           {fotoFinalDataUrl && (
