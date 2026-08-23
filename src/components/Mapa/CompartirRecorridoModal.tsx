@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Capacitor } from "@capacitor/core";
+import { Camera, MediaTypeSelection, type MediaResult } from "@capacitor/camera";
 import {
   IconShare,
   IconUpload,
@@ -350,10 +351,34 @@ export function CompartirRecorridoModal({
   // V1) le rompía la proporción a V2. V1 sigue funcionando igual con la
   // foto original sin tocar, porque dibujarPinFoto ya hace su propio
   // cover + clip circular en tiempo de dibujo (tarjetaRecorrido.ts).
-  // Selección múltiple desde la galería -- se lee cada archivo con su
-  // propio FileReader (en paralelo) pero el orden final respeta el orden
-  // de FileList (el mismo en que el usuario las marcó, hasta donde la
-  // API/navegador lo garantice), porque Promise.all conserva el orden del
+  // Lee un Blob/File como data URL -- compartido por las dos vías de
+  // selección (web: File crudo del <input>; nativa: Blob obtenido de
+  // MediaResult.webPath vía fetch) para no duplicar la conversión.
+  function leerBlobComoDataUrl(blob: Blob): Promise<string | null> {
+    return new Promise((resolve) => {
+      const lector = new FileReader();
+      lector.onload = () => resolve(typeof lector.result === "string" ? lector.result : null);
+      lector.onerror = () => resolve(null);
+      lector.readAsDataURL(blob);
+    });
+  }
+
+  // Mensaje de aviso cuando la cantidad recibida (de la galería, nativa o
+  // web) supera el espacio disponible hasta LIMITE_FOTOS_PIN -- misma
+  // redacción para las dos vías.
+  function avisoRecorteFotosPin(cantidadRecibida: number, cantidadAceptada: number): string {
+    if (cantidadRecibida <= cantidadAceptada) return "";
+    if (cantidadAceptada === 0) return `Ya tenés el máximo de ${LIMITE_FOTOS_PIN} fotos.`;
+    return `Se agregaron ${cantidadAceptada} foto${cantidadAceptada === 1 ? "" : "s"} -- el máximo es ${LIMITE_FOTOS_PIN}.`;
+  }
+
+  // Selección múltiple desde la galería del NAVEGADOR (<input type="file"
+  // multiple>) -- acá no hay forma de limitar cuántas marca el usuario en
+  // la propia pantalla del sistema (ver manejarSeleccionFotoPinNativa para
+  // la vía nativa, que sí puede). Se lee cada archivo con su propio
+  // FileReader (en paralelo) pero el orden final respeta el orden de
+  // FileList (el mismo en que el usuario las marcó, hasta donde la API/
+  // navegador lo garantice), porque Promise.all conserva el orden del
   // array de entrada sin importar cuál FileReader termine primero. Si
   // trae más fotos de las que quedan hasta LIMITE_FOTOS_PIN, se recortan
   // ANTES de leerlas (no se lee de más) y se avisa cuántas entraron.
@@ -364,29 +389,66 @@ export function CompartirRecorridoModal({
 
     const espacioDisponible = Math.max(0, LIMITE_FOTOS_PIN - fotosPinDataUrl.length);
     const aLeer = archivos.slice(0, espacioDisponible);
-    setAvisoFotosPin(
-      archivos.length <= aLeer.length
-        ? ""
-        : aLeer.length > 0
-          ? `Se agregaron ${aLeer.length} foto${aLeer.length === 1 ? "" : "s"} -- el máximo es ${LIMITE_FOTOS_PIN}.`
-          : `Ya tenés el máximo de ${LIMITE_FOTOS_PIN} fotos.`,
-    );
+    setAvisoFotosPin(avisoRecorteFotosPin(archivos.length, aLeer.length));
     if (aLeer.length === 0) return;
 
-    Promise.all(
-      aLeer.map(
-        (archivo) =>
-          new Promise<string | null>((resolve) => {
-            const lector = new FileReader();
-            lector.onload = () => resolve(typeof lector.result === "string" ? lector.result : null);
-            lector.onerror = () => resolve(null);
-            lector.readAsDataURL(archivo);
-          }),
-      ),
-    ).then((dataUrls) => {
+    Promise.all(aLeer.map((archivo) => leerBlobComoDataUrl(archivo))).then((dataUrls) => {
       const validas = dataUrls.filter((u): u is string => u !== null);
       setFotosPinDataUrl((prev) => [...prev, ...validas].slice(0, LIMITE_FOTOS_PIN));
     });
+  }
+
+  // Selección múltiple desde la galería NATIVA (Capacitor) -- a diferencia
+  // del <input> web, Camera.chooseFromGallery() con allowMultipleSelection
+  // + limit SÍ puede bloquear al usuario dentro de la propia pantalla del
+  // selector para que no marque más del cupo (Android 13+/iOS; en
+  // versiones más viejas el sistema puede ignorar `limit`, por eso igual
+  // se recorta y avisa acá abajo como respaldo, mismo criterio que la vía
+  // web). `chooseFromGallery` es la reemplazante no-deprecada de
+  // `pickImages` en esta versión de @capacitor/camera (8.2.2) -- pickImages
+  // sigue existiendo pero su propio tipo de opciones ya está marcado
+  // @deprecated en el plugin.
+  async function manejarSeleccionFotoPinNativa() {
+    const espacioDisponible = Math.max(0, LIMITE_FOTOS_PIN - fotosPinDataUrl.length);
+    if (espacioDisponible === 0) {
+      setAvisoFotosPin(`Ya tenés el máximo de ${LIMITE_FOTOS_PIN} fotos.`);
+      return;
+    }
+
+    let resultados: MediaResult[];
+    try {
+      const { results } = await Camera.chooseFromGallery({
+        mediaType: MediaTypeSelection.Photo,
+        allowMultipleSelection: true,
+        limit: espacioDisponible,
+      });
+      resultados = results;
+    } catch {
+      // Cancelar el picker nativo rechaza la promesa -- mismo criterio ya
+      // usado por elegirDeGaleriaNativa() en camaraNativa.ts: cualquier
+      // error (cancelar o fallo real) se traga en silencio, sin distinguir
+      // por texto de mensaje (no verificable de forma confiable entre
+      // Android/iOS).
+      return;
+    }
+    if (resultados.length === 0) return;
+
+    const aLeer = resultados.slice(0, espacioDisponible);
+    setAvisoFotosPin(avisoRecorteFotosPin(resultados.length, aLeer.length));
+
+    const dataUrls = await Promise.all(
+      aLeer.map(async (resultado) => {
+        if (!resultado.webPath) return null;
+        try {
+          const blob = await (await fetch(resultado.webPath)).blob();
+          return leerBlobComoDataUrl(blob);
+        } catch {
+          return null;
+        }
+      }),
+    );
+    const validas = dataUrls.filter((u): u is string => u !== null);
+    setFotosPinDataUrl((prev) => [...prev, ...validas].slice(0, LIMITE_FOTOS_PIN));
   }
 
   function confirmarFotoEditada(dataUrl: string) {
@@ -697,7 +759,9 @@ export function CompartirRecorridoModal({
                         <button
                           type="button"
                           disabled={fotosPinDataUrl.length >= LIMITE_FOTOS_PIN}
-                          onClick={() => inputFotoPinRef.current?.click()}
+                          onClick={() =>
+                            Capacitor.isNativePlatform() ? manejarSeleccionFotoPinNativa() : inputFotoPinRef.current?.click()
+                          }
                           className="flex flex-col items-center gap-1 rounded-app border border-border-accent py-2 text-text-accent disabled:opacity-30"
                         >
                           <IconPhoto size={18} />
