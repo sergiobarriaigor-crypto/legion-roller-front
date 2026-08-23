@@ -1,0 +1,194 @@
+// GPS V2 (Opción A, ver auditoría) -- único dueño real del watcher de
+// ubicación mientras hay una grabación de "Patinando"/"Estoy en Ruta" en
+// curso. Antes, el watcher (iniciarSeguimientoUbicacion) vivía dentro de un
+// useEffect de MapaView.tsx atado a su propio montaje/desmontaje -- como
+// SwipeNavigator desmonta esa pantalla en cada cambio de pestaña (ver su
+// comentario), el watcher se apagaba de verdad aunque la grabación siguiera
+// activa, generando huecos reales en la captura (que luego se ven como línea
+// recta o como corte en el trazado, según clasificarTramos en geo.ts -- eso
+// no se toca acá).
+//
+// Este módulo vive a nivel de módulo (no de componente ni de contexto de
+// React) a propósito, mismo criterio ya usado por grabacionActivaModulo en
+// MapaView.tsx (de donde se movió este estado tal cual, sin cambiar ningún
+// criterio de aceptación/rechazo de puntos): debe sobrevivir cualquier
+// cantidad de montajes/desmontajes de MapaView durante la sesión. Solo dos
+// cosas lo terminan: detenerGrabacionGps() (fin real de la ruta) o una
+// recarga real de página (module state se reinicia solo, y ahí sigue
+// existiendo el respaldo de /mapa/patinando-ahora en MapaView.tsx).
+//
+// MapaView.tsx pasa a ser CONSUMIDOR: llama iniciarGrabacionGps/
+// detenerGrabacionGps en los mismos dos puntos de siempre (activarModo/
+// finalizarModo), se suscribe a las posiciones con registrarCallbackPosicion
+// en su propio efecto (conectar al montar, desconectar al desmontar -- eso
+// nunca toca el watcher real), y lee obtenerGrabacionActiva()/
+// hayGrabacionActiva() para todo lo que antes leía de grabacionActivaModulo.
+import { iniciarSeguimientoUbicacion, type PosicionSimple } from "./geolocacionNativa";
+import { distanciaHaversineKm, type PuntoGps } from "./geo";
+
+// LOGS TEMPORALES (a sacar una vez confirmado en dispositivo real que el
+// watcher sobrevive cambios de pestaña) -- ver también los logs espejo en
+// MapaView.tsx ("MapaView desmontado/remontado").
+function log(linea: string): void {
+  console.log(`[grabacionGps] ${linea}`);
+}
+
+// Mismos valores/criterio que tenía MapaView.tsx (PRECISION_MAXIMA_PUNTO_GRABADO_M,
+// PRECISION_INICIAL_MAXIMA_M, KMH_SALTO_SOSPECHOSO) -- movidos tal cual, sin
+// cambiar ningún umbral. KM_MOVIMIENTO_SIGNIFICATIVO queda además duplicado
+// en MapaView.tsx (mismo valor) porque ahí lo sigue usando registrarMovimiento
+// para el modo Exploración de la cámara -- eso no es parte de la captura y no
+// se movió acá.
+const KM_MOVIMIENTO_SIGNIFICATIVO = 0.03;
+const PRECISION_MAXIMA_PUNTO_GRABADO_M = 35;
+const PRECISION_INICIAL_MAXIMA_M = 20;
+const KMH_SALTO_SOSPECHOSO = 115;
+
+export interface EstadoGrabacionGps {
+  modo: "patinando" | "ruta";
+  puntos: PuntoGps[];
+  inicioGrabacion: number;
+  mapeado: boolean;
+  rodadaUnidaId: number | null;
+  ultimoMovimientoEn: number;
+  avisoInactividadDesde: number | null;
+}
+
+let grabacionActiva: EstadoGrabacionGps | null = null;
+let detenerWatcherReal: (() => void) | null = null;
+// Ver KMH_SALTO_SOSPECHOSO: un punto que salta lejos del último confirmado
+// se retiene acá hasta que la lectura siguiente confirme o desmienta el
+// salto (ver registrarPuntoGrabado) -- mismo mecanismo, movido tal cual.
+let puntoPendienteConfirmar: PuntoGps | null = null;
+// Un solo "slot" de suscripción (no una lista): a lo sumo una pantalla
+// (MapaView) puede estar montada mirando esto a la vez -- no hace falta un
+// pub/sub completo para este caso.
+let callbackPosicionActual: ((pos: PosicionSimple) => void) | null = null;
+
+function kmhEntre(a: PuntoGps, b: PuntoGps): number {
+  const dtSeg = (b.timestamp - a.timestamp) / 1000;
+  if (dtSeg <= 0) return 0;
+  return (distanciaHaversineKm(a, b) / dtSeg) * 3600;
+}
+
+// Ver KMH_SALTO_SOSPECHOSO arriba. Reemplaza al enfoque de un umbral de
+// velocidad fijo que rechaza de una: acá el punto sospechoso se retiene
+// hasta la lectura siguiente, que confirma o desmiente el salto
+// comparándose ella misma contra el último punto YA confirmado (no contra
+// el pendiente). Movida tal cual desde MapaView.tsx, sin cambiar el
+// criterio.
+function registrarPuntoGrabado(puntoNuevo: PuntoGps): void {
+  if (!grabacionActiva) return;
+
+  function confirmarPunto(p: PuntoGps): void {
+    if (!grabacionActiva) return;
+    grabacionActiva.puntos = [...grabacionActiva.puntos, p];
+  }
+
+  const pendiente = puntoPendienteConfirmar;
+  if (pendiente) {
+    puntoPendienteConfirmar = null;
+    const ultimoConfirmado = grabacionActiva.puntos[grabacionActiva.puntos.length - 1];
+    const siguioLejos = ultimoConfirmado ? kmhEntre(ultimoConfirmado, puntoNuevo) > KMH_SALTO_SOSPECHOSO : true;
+    if (siguioLejos) {
+      confirmarPunto(pendiente);
+      confirmarPunto(puntoNuevo);
+    } else {
+      registrarPuntoGrabado(puntoNuevo);
+    }
+    return;
+  }
+
+  const ultimoConfirmado = grabacionActiva.puntos[grabacionActiva.puntos.length - 1];
+  if (ultimoConfirmado && kmhEntre(ultimoConfirmado, puntoNuevo) > KMH_SALTO_SOSPECHOSO) {
+    puntoPendienteConfirmar = puntoNuevo;
+    return;
+  }
+
+  confirmarPunto(puntoNuevo);
+}
+
+// Handler real del watcher -- SIEMPRE corre mientras haya un watcher activo,
+// sin importar si alguna pantalla está escuchando (callbackPosicionActual
+// puede ser null mientras MapaView está desmontado): la aceptación de
+// puntos nunca depende de que haya UI montada. Al final reenvía la posición
+// cruda a quien esté suscripto, para cámara/broadcast/rodada -- igual que
+// antes.
+function alRecibirPosicion(pos: PosicionSimple): void {
+  if (grabacionActiva && pos.accuracy <= PRECISION_MAXIMA_PUNTO_GRABADO_M) {
+    const puntoGrabado: PuntoGps = { lat: pos.lat, lon: pos.lon, timestamp: Date.now() };
+    const ultimoGrabado = grabacionActiva.puntos[grabacionActiva.puntos.length - 1];
+    if (!ultimoGrabado) {
+      if (pos.accuracy <= PRECISION_INICIAL_MAXIMA_M) {
+        registrarPuntoGrabado(puntoGrabado);
+      }
+    } else {
+      const umbralKm = Math.max(KM_MOVIMIENTO_SIGNIFICATIVO, (pos.accuracy * 1.5) / 1000);
+      const esRuido = distanciaHaversineKm(ultimoGrabado, puntoGrabado) < umbralKm;
+      if (!esRuido) {
+        registrarPuntoGrabado(puntoGrabado);
+      }
+    }
+  }
+  callbackPosicionActual?.(pos);
+}
+
+// Idempotente a propósito: si ya hay un watcher corriendo (porque MapaView
+// se remontó sin que la grabación haya terminado), no crea uno nuevo -- nunca
+// debe haber más de un watcher real activo a la vez. `mapeado` solo se usa
+// para la grabación NUEVA; si ya hay una en curso, se ignora (la existente
+// manda).
+export function iniciarGrabacionGps(modo: "patinando" | "ruta", mapeado: boolean, onError: () => void): void {
+  if (detenerWatcherReal) {
+    log("iniciarGrabacionGps: ya había un watcher activo -- se reutiliza, no se crea otro");
+    return;
+  }
+  grabacionActiva = {
+    modo,
+    puntos: [],
+    inicioGrabacion: Date.now(),
+    mapeado,
+    rodadaUnidaId: null,
+    ultimoMovimientoEn: Date.now(),
+    avisoInactividadDesde: null,
+  };
+  puntoPendienteConfirmar = null;
+  detenerWatcherReal = iniciarSeguimientoUbicacion(alRecibirPosicion, onError);
+  log("watcher iniciado");
+}
+
+// Único lugar donde el watcher real se apaga -- debe llamarse solo al
+// terminar de verdad la ruta (finalizarModo), nunca desde un desmontaje de
+// pantalla. Devuelve los puntos acumulados para que el llamador los guarde.
+export function detenerGrabacionGps(): PuntoGps[] {
+  const puntos = grabacionActiva?.puntos ?? [];
+  if (detenerWatcherReal) {
+    detenerWatcherReal();
+    detenerWatcherReal = null;
+    log("watcher detenido — fin de grabación");
+  }
+  grabacionActiva = null;
+  puntoPendienteConfirmar = null;
+  callbackPosicionActual = null;
+  return puntos;
+}
+
+export function hayGrabacionActiva(): boolean {
+  return detenerWatcherReal !== null;
+}
+
+// Devuelve la MISMA referencia mutable interna (no una copia) -- mismo
+// criterio que ya tenía grabacionActivaModulo en MapaView.tsx, para que los
+// call sites que hoy hacen `grabacionActivaModulo.campo = valor` sigan
+// funcionando igual, solo leyendo el objeto desde acá.
+export function obtenerGrabacionActiva(): EstadoGrabacionGps | null {
+  return grabacionActiva;
+}
+
+// MapaView llama esto en cada montaje (mientras el modo siga activo) para
+// volver a recibir posiciones -- el watcher real puede llevar rato
+// corriendo desde una pantalla anterior; esto solo conecta/desconecta quién
+// escucha, nunca crea ni destruye el watcher en sí.
+export function registrarCallbackPosicion(cb: ((pos: PosicionSimple) => void) | null): void {
+  callbackPosicionActual = cb;
+}

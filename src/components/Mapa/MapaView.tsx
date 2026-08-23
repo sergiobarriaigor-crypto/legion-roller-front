@@ -31,7 +31,14 @@ import {
 import { ETIQUETA_MOTIVO, type EmergenciaActiva } from "@/lib/emergencias";
 import { salaIndividual } from "@/lib/chat";
 import { obtenerSocket } from "@/lib/socket";
-import { iniciarSeguimientoUbicacion, obtenerPosicionActual } from "@/lib/geolocacionNativa";
+import { obtenerPosicionActual, type PosicionSimple } from "@/lib/geolocacionNativa";
+import {
+  iniciarGrabacionGps,
+  detenerGrabacionGps,
+  hayGrabacionActiva,
+  obtenerGrabacionActiva,
+  registrarCallbackPosicion,
+} from "@/lib/grabacionGps";
 import { PatinadoresActivosPanel } from "@/components/Mapa/PatinadoresActivosPanel";
 import { MisRutasPanel } from "@/components/Mapa/MisRutasPanel";
 import { ChatFlotante } from "@/components/Mapa/ChatFlotante";
@@ -64,34 +71,15 @@ let siguiendoAlRemontar = true;
 let ultimaPosicionConocida: { lat: number; lon: number } | null = null;
 let exploracionManualActiva = false;
 
-// También a nivel de módulo, y por el mismo motivo (SwipeNavigator
-// desmonta/remonta esta pantalla al cambiar de pestaña): la grabación GPS de
-// "Patinando"/"Estoy en Ruta" en curso. Antes vivía solo en refs de React
-// (grabandoRef, puntosGrabadosRef, inicioGrabacionRef), así que cada remontaje
-// la reiniciaba a cero — el usuario seguía viendo "patinando" activo (eso sí
-// se restauraba desde el backend), pero la grabación real había arrancado de
-// nuevo, perdiendo los km/tiempo ya acumulados. Se limpia en activarModo (al
-// empezar una grabación nueva) y en finalizarModo (al terminar); si no hay
-// ninguna coincidente al restaurar `modo`, se asume que no hay nada que
-// recuperar (ej. recarga real de página, no solo cambio de pestaña).
-let grabacionActivaModulo: {
-  modo: "patinando" | "ruta";
-  puntos: PuntoGps[];
-  inicioGrabacion: number;
-  mapeado: boolean;
-  rodadaUnidaId: number | null;
-  // Mismo problema que con la grabación de puntos, pero para el aviso de
-  // inactividad (ver más abajo): ultimoMovimientoEnRef es un ref de React
-  // normal, así que cada remontaje lo reiniciaba a "ahora mismo" — el conteo
-  // de MIN_AVISO_INACTIVIDAD nunca llegaba a acumularse de corrido si el
-  // usuario cambiaba de pestaña aunque fuera una vez en medio, dejando
-  // sesiones "activas" indefinidamente sin que saltara el aviso ni el cierre
-  // automático. avisoInactividadDesde (no solo un booleano) permite recalcular
-  // cuánto falta del cierre automático de MIN_CIERRE_AUTOMATICO si el
-  // remontaje ocurre justo con el aviso ya mostrado.
-  ultimoMovimientoEn: number;
-  avisoInactividadDesde: number | null;
-} | null = null;
+// GPS V2 (Opción A): la grabación GPS de "Patinando"/"Estoy en Ruta" en
+// curso -- puntos, watcher real, timers de inactividad -- ya NO vive acá.
+// Vivía como variable de módulo en este mismo archivo (grabacionActivaModulo)
+// porque SwipeNavigator desmonta/remonta esta pantalla al cambiar de
+// pestaña, pero el watcher real seguía atado al ciclo de vida de este
+// componente y se apagaba igual. Ver frontend/src/lib/grabacionGps.ts, que
+// ahora es el único dueño tanto del estado como del watcher -- este archivo
+// pasa a ser consumidor (iniciarGrabacionGps/detenerGrabacionGps/
+// obtenerGrabacionActiva/hayGrabacionActiva/registrarCallbackPosicion).
 
 // Si la nueva posición del GPS difiere de la que ya se muestra en menos de
 // esto, no vale la pena animar la cámara — sería ruido de precisión del GPS,
@@ -111,49 +99,11 @@ const MIN_CIERRE_AUTOMATICO = 10;
 // cámara y sacar al usuario del modo Exploración.
 const MS_MOVIMIENTO_SOSTENIDO_EXPLORACION = 6000;
 
-// Un fix puntual de mala precisión (rebote entre edificios, ubicación por
-// red/Wi-Fi en vez de GPS real) puede reportar una posición decenas o
-// cientos de metros lejos de donde la persona está en verdad, aunque solo
-// dure una lectura -- un salto aislado que va y vuelve queda invisible para
-// el filtro de saltos de más abajo (que exige que la lectura SIGUIENTE
-// confirme el desplazamiento) y terminaría dibujado como un pico agudo en el
-// trazado del recorrido. Se descarta ANTES de llegar a la lista grabada; no
-// afecta la posición mostrada en pantalla (marcador propio/otros), solo qué
-// queda grabado como parte de la ruta y la distancia patinada.
-const PRECISION_MAXIMA_PUNTO_GRABADO_M = 35;
-
-// El primer punto grabado de la sesión queda de ancla para el filtro de
-// ruido de más abajo (comparación contra "el último punto ya grabado") --
-// si esa ancla nace de un fix recién arrancado el GPS (más impreciso
-// mientras "calienta", aun dentro de PRECISION_MAXIMA_PUNTO_GRABADO_M de
-// arriba), todo el resto de la sesión compara contra un punto ya corrido de
-// la posición real, y las primeras lecturas rebotan a su alrededor
-// dibujando el mismo salto que se quería evitar. Por eso el primer punto
-// exige una precisión más estricta -- las lecturas de arranque que no la
-// cumplan simplemente no fijan la ancla todavía (se siguen mostrando en
-// pantalla igual, ver registrarMovimiento) hasta que llegue una lo bastante
-// buena.
-const PRECISION_INICIAL_MAXIMA_M = 20;
-
-// Cerca del agua el GPS puede reportar buena precisión (dentro del umbral de
-// arriba) y aun así estar decenas de metros lejos de donde la persona está
-// parada de verdad (reflejo de la señal sobre el mar) -- confirmado con dos
-// reportes reales: un punto fin que quedó tirado en la playa, y un "pico" en
-// el trazado en vivo que se metía al agua y volvía. Un umbral de velocidad
-// fijo (probado primero) no alcanza: un salto que se arma en varias lecturas
-// chicas (no una sola instantánea) puede quedar por debajo de cualquier
-// umbral razonable en cada tramo individual, aunque el conjunto sea
-// claramente basura. En vez de adivinar una velocidad "imposible", un punto
-// que se aleja de golpe del último confirmado se guarda como PENDIENTE hasta
-// la lectura siguiente, que es quien decide: si esa siguiente lectura vuelve
-// cerca del último confirmado, el pendiente era un rebote puntual (va y
-// vuelve) y se descarta entero -- ninguno de los dos entra al trazado. Si en
-// cambio la siguiente lectura sigue lejos, era un desplazamiento sostenido
-// real y se agregan ambos. Ver registrarPuntoGrabado más abajo. El umbral
-// tiene que quedar por encima de lo que el club realmente alcanza patinando
-// -- en DH (bajadas en cuenta) se llega a ~100 km/h reales -- para no
-// confirmar una bajada real como si fuera un salto de GPS que "va y vuelve".
-const KMH_SALTO_SOSPECHOSO = 115;
+// PRECISION_MAXIMA_PUNTO_GRABADO_M, PRECISION_INICIAL_MAXIMA_M y
+// KMH_SALTO_SOSPECHOSO (filtro de ruido/rebote de la captura) ya NO viven
+// acá -- se movieron tal cual, mismos valores y mismo criterio, a
+// frontend/src/lib/grabacionGps.ts junto con registrarPuntoGrabado, que
+// también se movió. Este archivo ya no decide qué punto se graba.
 
 // Zoom usado para centrar el mapa automáticamente al activar un modo (más cercano
 // que el zoom inicial de la sección 1 del PDF, pensado para ubicarte de un vistazo).
@@ -466,11 +416,11 @@ export function MapaView() {
   // Espejos en refs de estado/token, para poder leerlos desde callbacks de
   // geolocalización y temporizadores de larga duración sin closures obsoletas.
   const modoRef = useRef<Modo>(null);
+  // Espejo local de estadoActivo.puntos (grabacionGps.ts) para renderizar --
+  // la aceptación/rechazo de cada punto (incluido el filtro de "salto
+  // sospechoso" que antes retenía un puntoPendienteConfirmarRef acá) ya no
+  // ocurre en este archivo, ver grabacionGps.ts.
   const puntosGrabadosRef = useRef<PuntoGps[]>([]);
-  // Ver KMH_SALTO_SOSPECHOSO: un punto que salta lejos del último confirmado
-  // se guarda acá hasta que la lectura siguiente confirme o desmienta el
-  // salto (ver registrarPuntoGrabado).
-  const puntoPendienteConfirmarRef = useRef<PuntoGps | null>(null);
   const tokenRef = useRef<string | null>(null);
   const necesitaEnvioInicialRef = useRef(false);
   // Envío de la posición propia mientras hay movimiento real (ver comentario
@@ -554,7 +504,8 @@ export function MapaView() {
     if (!anterior) {
       ultimaPosSignificativaRef.current = ahora;
       ultimoMovimientoEnRef.current = Date.now();
-      if (grabacionActivaModulo) grabacionActivaModulo.ultimoMovimientoEn = ultimoMovimientoEnRef.current;
+      const grabacionActiva = obtenerGrabacionActiva();
+      if (grabacionActiva) grabacionActiva.ultimoMovimientoEn = ultimoMovimientoEnRef.current;
       return;
     }
     const distanciaKm = distanciaHaversineKm(anterior, ahora);
@@ -570,7 +521,8 @@ export function MapaView() {
     if (distanciaKm >= umbralKm) {
       ultimaPosSignificativaRef.current = ahora;
       ultimoMovimientoEnRef.current = Date.now();
-      if (grabacionActivaModulo) grabacionActivaModulo.ultimoMovimientoEn = ultimoMovimientoEnRef.current;
+      const grabacionActiva = obtenerGrabacionActiva();
+      if (grabacionActiva) grabacionActiva.ultimoMovimientoEn = ultimoMovimientoEnRef.current;
       if (avisoInactividadRef.current) {
         continuarPatinando();
       }
@@ -601,54 +553,10 @@ export function MapaView() {
     }
   }
 
-  // Ver KMH_SALTO_SOSPECHOSO arriba. Reemplaza al enfoque anterior de un
-  // umbral de velocidad fijo: acá no se rechaza el punto sospechoso de
-  // una -- se retiene hasta la lectura siguiente, que confirma o desmiente
-  // el salto comparándose ella misma contra el último punto YA confirmado
-  // (no contra el pendiente). "Confirma" (se agregan ambos) si la
-  // siguiente lectura también implica una velocidad alta desde el último
-  // confirmado -- entonces el desplazamiento era sostenido, no un rebote.
-  // "Desmiente" (se descarta el pendiente entero, sin agregarlo nunca) si
-  // la siguiente lectura vuelve a una velocidad normal desde el último
-  // confirmado -- entonces el punto pendiente fue un rebote puntual que
-  // "fue y volvió". En ese caso la lectura nueva se reevalúa desde cero
-  // (recursión) porque puede a su vez ser, ella misma, otro salto.
-  function registrarPuntoGrabado(puntoNuevo: PuntoGps) {
-    function kmhEntre(a: PuntoGps, b: PuntoGps): number {
-      const dtSeg = (b.timestamp - a.timestamp) / 1000;
-      if (dtSeg <= 0) return 0;
-      return (distanciaHaversineKm(a, b) / dtSeg) * 3600;
-    }
-
-    function confirmarPunto(p: PuntoGps) {
-      const nuevos = [...puntosGrabadosRef.current, p];
-      puntosGrabadosRef.current = nuevos;
-      setPuntosGrabados(nuevos);
-      if (grabacionActivaModulo) grabacionActivaModulo.puntos.push(p);
-    }
-
-    const pendiente = puntoPendienteConfirmarRef.current;
-    if (pendiente) {
-      puntoPendienteConfirmarRef.current = null;
-      const ultimoConfirmado = puntosGrabadosRef.current[puntosGrabadosRef.current.length - 1];
-      const siguioLejos = ultimoConfirmado ? kmhEntre(ultimoConfirmado, puntoNuevo) > KMH_SALTO_SOSPECHOSO : true;
-      if (siguioLejos) {
-        confirmarPunto(pendiente);
-        confirmarPunto(puntoNuevo);
-      } else {
-        registrarPuntoGrabado(puntoNuevo);
-      }
-      return;
-    }
-
-    const ultimoConfirmado = puntosGrabadosRef.current[puntosGrabadosRef.current.length - 1];
-    if (ultimoConfirmado && kmhEntre(ultimoConfirmado, puntoNuevo) > KMH_SALTO_SOSPECHOSO) {
-      puntoPendienteConfirmarRef.current = puntoNuevo;
-      return;
-    }
-
-    confirmarPunto(puntoNuevo);
-  }
+  // registrarPuntoGrabado (filtro de "salto sospechoso" con retención/
+  // confirmación) ya NO vive acá -- se movió tal cual a
+  // frontend/src/lib/grabacionGps.ts, junto con el estado de puntos que
+  // antes vivía en puntosGrabadosRef/grabacionActivaModulo.
 
   // Centrado por GPS (sin modo activo): cada vez que se monta esta pantalla
   // (primer ingreso, o al volver tras cambiar de pestaña) se pide la
@@ -711,9 +619,57 @@ export function MapaView() {
     };
   }, []);
 
+  // Restauración desde grabacionGps -- SOLO para el caso "MapaView se
+  // remontó pero el watcher real seguía corriendo" (cambio de pestaña, no
+  // una recarga real de página). Corre una única vez al montar, ANTES que
+  // el efecto de abajo (que reutiliza el watcher vía iniciarGrabacionGps,
+  // idempotente). Si acá no hay nada que restaurar (recarga real, module
+  // state vacío), no hace nada y el camino de respaldo /mapa/patinando-ahora
+  // (más abajo, guardado por restauroModoRef) sigue funcionando igual que
+  // siempre.
+  useEffect(() => {
+    if (!hayGrabacionActiva() || modoRef.current) return;
+    const estado = obtenerGrabacionActiva();
+    if (!estado) return;
+
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setModo(estado.modo);
+    setPuntosGrabados(estado.puntos);
+    puntosGrabadosRef.current = estado.puntos;
+    inicioGrabacionRef.current = estado.inicioGrabacion;
+    grabandoRef.current = true;
+    mapeadoRef.current = estado.mapeado;
+    setMapeado(estado.mapeado);
+    rodadaUnidaIdRef.current = estado.rodadaUnidaId;
+    ultimoMovimientoEnRef.current = estado.ultimoMovimientoEn;
+    if (estado.avisoInactividadDesde !== null) {
+      const avisoDesde = estado.avisoInactividadDesde;
+      avisoInactividadRef.current = true;
+      setAvisoInactividad(true);
+      const restanteMs = MIN_CIERRE_AUTOMATICO * 60000 - (Date.now() - avisoDesde);
+      if (restanteMs <= 0) {
+        finalizarModo();
+      } else {
+        cierreAutomaticoTimeoutRef.current = setTimeout(() => {
+          finalizarModo();
+        }, restanteMs);
+      }
+    }
+    // Evita que el camino de /mapa/patinando-ahora (más abajo) repita esta
+    // restauración -- ya comparte el mismo guard (restauroModoRef).
+    restauroModoRef.current = true;
+    console.log("[MapaView] remontado — watcher reutilizado");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // GPS: solo se activa mientras haya un modo seleccionado (privacidad primero).
-  // Al desactivar un modo, la posición se borra de inmediato y el navegador deja
-  // de usar el GPS para esta función.
+  // Al desactivar un modo, la posición se borra de inmediato. El watcher REAL
+  // (iniciarSeguimientoUbicacion) ya no vive en este efecto -- vive en
+  // grabacionGps.ts, dueño único, y sigue corriendo aunque este componente se
+  // desmonte (ver su comentario). Este efecto solo: (a) le pide al módulo que
+  // haya un watcher activo (iniciarGrabacionGps es idempotente -- si ya había
+  // uno corriendo de un montaje anterior, no crea otro) y (b) se suscribe a
+  // recibir las posiciones mientras esta pantalla esté montada.
   useEffect(() => {
     if (!modo) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -724,109 +680,102 @@ export function MapaView() {
       marcarSiguiendo(false);
       return;
     }
-    const detener = iniciarSeguimientoUbicacion(
-      (pos) => {
-        const punto = { lat: pos.lat, lon: pos.lon };
-        posicionRef.current = punto;
-        setPosicion(punto);
-        ultimaPosicionConocida = punto;
-        setErrorGeo("");
-        registrarMovimiento(punto, pos.accuracy);
 
-        if (grabandoRef.current && pos.accuracy <= PRECISION_MAXIMA_PUNTO_GRABADO_M) {
-          // Mismo ruido de GPS que ya se filtra en registrarMovimiento (ver
-          // su comentario): quieto de verdad, el GPS igual puede reportar
-          // lecturas que saltan varias decenas de metros de un lado a otro
-          // (rebotes de red/Wi-Fi, multipath entre edificios). Sin este piso
-          // dinámico, esas lecturas se sumaban una a una a puntosGrabados
-          // (distancia y trazado), dibujando una "estrella" alrededor del
-          // punto real y sumando distancia sin haberse movido. Se compara
-          // contra el último punto YA grabado (no contra la lectura cruda
-          // anterior), así que el umbral no se resetea con cada ping: una
-          // vez que la distancia acumulada desde ahí supera el piso, se
-          // acepta igual (no se pierde movimiento lento real, solo ruido).
-          const puntoGrabado = { ...punto, timestamp: Date.now() };
-          const ultimoGrabado = puntosGrabadosRef.current[puntosGrabadosRef.current.length - 1];
-          if (!ultimoGrabado) {
-            // Ver PRECISION_INICIAL_MAXIMA_M: todavía no hay ancla -- recién
-            // se fija con la primera lectura lo bastante precisa.
-            if (pos.accuracy <= PRECISION_INICIAL_MAXIMA_M) {
-              registrarPuntoGrabado(puntoGrabado);
-            }
-          } else {
-            const umbralKm = Math.max(KM_MOVIMIENTO_SIGNIFICATIVO, (pos.accuracy * 1.5) / 1000);
-            const esRuido = distanciaHaversineKm(ultimoGrabado, puntoGrabado) < umbralKm;
-            if (!esRuido) {
-              registrarPuntoGrabado(puntoGrabado);
-            }
-          }
-        }
-
-        if (necesitaEnvioInicialRef.current && tokenRef.current) {
-          necesitaEnvioInicialRef.current = false;
-          apiPost("/mapa/patinando", { ...punto, modo: modoRef.current }, tokenRef.current).catch(() => {});
-          ultimoEnvioEnRef.current = Date.now();
-          ultimaPosEnviadaRef.current = punto;
-        } else if (tokenRef.current) {
-          // Ver INTERVALO_MIN_ENVIO_MS/DISTANCIA_MIN_ENVIO_KM más arriba: esto
-          // es lo que baja la latencia real de "los demás me ven moverme" --
-          // el heartbeat de 20s de abajo sigue existiendo aparte, sin tocar.
-          const ahora = Date.now();
-          const pasoTiempoMinimo = ahora - ultimoEnvioEnRef.current >= INTERVALO_MIN_ENVIO_MS;
-          const distanciaKm = ultimaPosEnviadaRef.current
-            ? distanciaHaversineKm(
-                { ...ultimaPosEnviadaRef.current, timestamp: 0 },
-                { ...punto, timestamp: 0 },
-              )
-            : Infinity;
-          if (pasoTiempoMinimo && distanciaKm >= DISTANCIA_MIN_ENVIO_KM) {
-            ultimoEnvioEnRef.current = ahora;
-            ultimaPosEnviadaRef.current = punto;
-            apiPost("/mapa/patinando", { ...punto, modo: modoRef.current }, tokenRef.current).catch(() => {});
-          }
-        }
-
-        if (necesitaRevisarRodadaRef.current && tokenRef.current) {
-          necesitaRevisarRodadaRef.current = false;
-          apiGet<RodadaCercana[]>(
-            `/mapa/rodadas-cercanas?lat=${punto.lat}&lon=${punto.lon}`,
-            tokenRef.current,
-          )
-            .then((candidatas) => {
-              if (candidatas.length > 0) setCandidatasRodada(candidatas);
-            })
-            .catch(() => {});
-        }
-
-        if (necesitaCentrarInicialRef.current && mapRef.current) {
-          necesitaCentrarInicialRef.current = false;
-          // El primer fix real del GPS (sobre todo en frío, con el plugin
-          // nativo en segundo plano) puede tardar bastante en llegar --
-          // varios segundos, a veces más de 20. Si en ese lapso el usuario
-          // ya agarró el mapa a mano para explorar (arrastre o pellizco,
-          // ver exploracionManualActiva), este centrado automático no debe
-          // pelearle la cámara: sin este chequeo, apenas llegaba ese primer
-          // fix se descartaba de golpe cualquier exploración manual ya en
-          // curso, aunque el usuario llevara rato mirando otra parte del
-          // mapa tranquilo (reporte real: "al querer navegar por el mapa,
-          // vuelve a mi avatar activado").
-          if (!exploracionManualActiva) {
-            moverCamaraProgramaticamente(() =>
-              mapRef.current!.flyTo([punto.lat, punto.lon], ZOOM_CENTRADO_AUTOMATICO),
-            );
-            marcarSiguiendo(true);
-          }
-        } else if (siguiendoRef.current && mapRef.current) {
-          // Modo seguimiento: recentra el mapa en cada posición nueva, como en
-          // la navegación de Google Maps, mientras el usuario no lo haya
-          // desactivado arrastrando el mapa a mano.
-          mapRef.current.panTo([punto.lat, punto.lon]);
-        }
-      },
-      () => setErrorGeo("No se pudo obtener tu ubicación (revisa los permisos)."),
+    iniciarGrabacionGps(modo, mapeadoRef.current, () =>
+      setErrorGeo("No se pudo obtener tu ubicación (revisa los permisos)."),
     );
 
-    return () => detener();
+    const manejarPosicion = (pos: PosicionSimple) => {
+      const punto = { lat: pos.lat, lon: pos.lon };
+      posicionRef.current = punto;
+      setPosicion(punto);
+      ultimaPosicionConocida = punto;
+      setErrorGeo("");
+      registrarMovimiento(punto, pos.accuracy);
+
+      // La aceptación/rechazo del punto (accuracy, ruido, salto sospechoso)
+      // ya ocurrió dentro de grabacionGps.ts antes de llegar acá -- esto solo
+      // refleja en la UI los puntos ya confirmados, si cambiaron.
+      const estadoActual = obtenerGrabacionActiva();
+      if (estadoActual && estadoActual.puntos !== puntosGrabadosRef.current) {
+        puntosGrabadosRef.current = estadoActual.puntos;
+        setPuntosGrabados(estadoActual.puntos);
+      }
+
+      if (necesitaEnvioInicialRef.current && tokenRef.current) {
+        necesitaEnvioInicialRef.current = false;
+        apiPost("/mapa/patinando", { ...punto, modo: modoRef.current }, tokenRef.current).catch(() => {});
+        ultimoEnvioEnRef.current = Date.now();
+        ultimaPosEnviadaRef.current = punto;
+      } else if (tokenRef.current) {
+        // Ver INTERVALO_MIN_ENVIO_MS/DISTANCIA_MIN_ENVIO_KM más arriba: esto
+        // es lo que baja la latencia real de "los demás me ven moverme" --
+        // el heartbeat de 20s de abajo sigue existiendo aparte, sin tocar.
+        const ahora = Date.now();
+        const pasoTiempoMinimo = ahora - ultimoEnvioEnRef.current >= INTERVALO_MIN_ENVIO_MS;
+        const distanciaKm = ultimaPosEnviadaRef.current
+          ? distanciaHaversineKm(
+              { ...ultimaPosEnviadaRef.current, timestamp: 0 },
+              { ...punto, timestamp: 0 },
+            )
+          : Infinity;
+        if (pasoTiempoMinimo && distanciaKm >= DISTANCIA_MIN_ENVIO_KM) {
+          ultimoEnvioEnRef.current = ahora;
+          ultimaPosEnviadaRef.current = punto;
+          apiPost("/mapa/patinando", { ...punto, modo: modoRef.current }, tokenRef.current).catch(() => {});
+        }
+      }
+
+      if (necesitaRevisarRodadaRef.current && tokenRef.current) {
+        necesitaRevisarRodadaRef.current = false;
+        apiGet<RodadaCercana[]>(
+          `/mapa/rodadas-cercanas?lat=${punto.lat}&lon=${punto.lon}`,
+          tokenRef.current,
+        )
+          .then((candidatas) => {
+            if (candidatas.length > 0) setCandidatasRodada(candidatas);
+          })
+          .catch(() => {});
+      }
+
+      if (necesitaCentrarInicialRef.current && mapRef.current) {
+        necesitaCentrarInicialRef.current = false;
+        // El primer fix real del GPS (sobre todo en frío, con el plugin
+        // nativo en segundo plano) puede tardar bastante en llegar --
+        // varios segundos, a veces más de 20. Si en ese lapso el usuario
+        // ya agarró el mapa a mano para explorar (arrastre o pellizco,
+        // ver exploracionManualActiva), este centrado automático no debe
+        // pelearle la cámara: sin este chequeo, apenas llegaba ese primer
+        // fix se descartaba de golpe cualquier exploración manual ya en
+        // curso, aunque el usuario llevara rato mirando otra parte del
+        // mapa tranquilo (reporte real: "al querer navegar por el mapa,
+        // vuelve a mi avatar activado").
+        if (!exploracionManualActiva) {
+          moverCamaraProgramaticamente(() =>
+            mapRef.current!.flyTo([punto.lat, punto.lon], ZOOM_CENTRADO_AUTOMATICO),
+          );
+          marcarSiguiendo(true);
+        }
+      } else if (siguiendoRef.current && mapRef.current) {
+        // Modo seguimiento: recentra el mapa en cada posición nueva, como en
+        // la navegación de Google Maps, mientras el usuario no lo haya
+        // desactivado arrastrando el mapa a mano.
+        mapRef.current.panTo([punto.lat, punto.lon]);
+      }
+    };
+
+    registrarCallbackPosicion(manejarPosicion);
+    console.log("[MapaView] watcher (re)conectado");
+
+    return () => {
+      // Desconecta ESTA pantalla de las posiciones -- nunca apaga el watcher
+      // real (eso solo pasa en detenerGrabacionGps, desde finalizarModo). Si
+      // esto corre porque el modo pasó a null (fin real de la ruta), el
+      // watcher ya se apagó antes, acá; si corre por un desmontaje de
+      // pantalla con la grabación todavía activa, el watcher sigue vivo.
+      registrarCallbackPosicion(null);
+      console.log("[MapaView] desmontado — watcher continúa");
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modo]);
 
@@ -865,34 +814,26 @@ export function MapaView() {
               );
             }
 
-            // Además de restaurar lo visual, retoma la grabación real de km/
-            // tiempo si venía en curso desde antes del remontaje (ver
-            // grabacionActivaModulo). Sin esto, grabandoRef quedaba en false
-            // y toda la sesión perdía su distancia/duración apenas el
-            // usuario cambiaba de pestaña y volvía. Si no hay nada
-            // coincidente guardado (ej. recarga real de página), no hay
-            // nada que recuperar — se queda como antes.
-            if (grabacionActivaModulo && grabacionActivaModulo.modo === mia.modo) {
-              setPuntosGrabados(grabacionActivaModulo.puntos);
-              puntosGrabadosRef.current = grabacionActivaModulo.puntos;
-              inicioGrabacionRef.current = grabacionActivaModulo.inicioGrabacion;
+            // Respaldo para una recarga REAL de página -- el caso de "solo
+            // cambié de pestaña" ya lo maneja el efecto de arriba (restaura
+            // desde grabacionGps.hayGrabacionActiva() antes de que este
+            // fetch async siquiera resuelva, y deja restauroModoRef en true
+            // para que esto ni se evalúe). Acá solo queda por si en algún
+            // momento grabacionGps ya tiene algo pero este camino corrió
+            // primero -- mismo criterio de siempre: si no hay nada
+            // coincidente, no hay nada que recuperar.
+            const grabacionActiva = obtenerGrabacionActiva();
+            if (grabacionActiva && grabacionActiva.modo === mia.modo) {
+              setPuntosGrabados(grabacionActiva.puntos);
+              puntosGrabadosRef.current = grabacionActiva.puntos;
+              inicioGrabacionRef.current = grabacionActiva.inicioGrabacion;
               grabandoRef.current = true;
-              mapeadoRef.current = grabacionActivaModulo.mapeado;
-              setMapeado(grabacionActivaModulo.mapeado);
-              rodadaUnidaIdRef.current = grabacionActivaModulo.rodadaUnidaId;
-
-              // Mismo motivo que arriba, pero para el aviso de inactividad:
-              // ultimoMovimientoEnRef es un ref normal, así que sin esto
-              // volvía a "ahora mismo" en cada remontaje y los 25 minutos de
-              // MIN_AVISO_INACTIVIDAD nunca llegaban a acumularse de corrido
-              // si el usuario cambiaba de pestaña — dejando sesiones activas
-              // indefinidamente sin que saltara el aviso ni el cierre
-              // automático. Si el remontaje ocurre justo con el aviso ya
-              // mostrado, se recalcula cuánto queda del cierre automático (o
-              // se cierra ya mismo si ese plazo ya se cumplió).
-              ultimoMovimientoEnRef.current = grabacionActivaModulo.ultimoMovimientoEn;
-              if (grabacionActivaModulo.avisoInactividadDesde !== null) {
-                const avisoDesde = grabacionActivaModulo.avisoInactividadDesde;
+              mapeadoRef.current = grabacionActiva.mapeado;
+              setMapeado(grabacionActiva.mapeado);
+              rodadaUnidaIdRef.current = grabacionActiva.rodadaUnidaId;
+              ultimoMovimientoEnRef.current = grabacionActiva.ultimoMovimientoEn;
+              if (grabacionActiva.avisoInactividadDesde !== null) {
+                const avisoDesde = grabacionActiva.avisoInactividadDesde;
                 avisoInactividadRef.current = true;
                 setAvisoInactividad(true);
                 const restanteMs = MIN_CIERRE_AUTOMATICO * 60000 - (Date.now() - avisoDesde);
@@ -976,7 +917,8 @@ export function MapaView() {
       if (inactivoMs >= MIN_AVISO_INACTIVIDAD * 60000) {
         setAvisoInactividad(true);
         avisoInactividadRef.current = true;
-        if (grabacionActivaModulo) grabacionActivaModulo.avisoInactividadDesde = Date.now();
+        const grabacionActiva = obtenerGrabacionActiva();
+        if (grabacionActiva) grabacionActiva.avisoInactividadDesde = Date.now();
         cierreAutomaticoTimeoutRef.current = setTimeout(() => {
           finalizarModo();
         }, MIN_CIERRE_AUTOMATICO * 60000);
@@ -1009,26 +951,26 @@ export function MapaView() {
     // y se muestra después (ver confirmarMapeoSi/No).
     setPuntosGrabados([]);
     puntosGrabadosRef.current = [];
-    puntoPendienteConfirmarRef.current = null;
     inicioGrabacionRef.current = Date.now();
     grabandoRef.current = true;
     mapeadoRef.current = false;
     setMapeado(false);
-    grabacionActivaModulo = {
-      modo: nuevoModo,
-      puntos: [],
-      inicioGrabacion: inicioGrabacionRef.current,
-      mapeado: false,
-      rodadaUnidaId: null,
-      ultimoMovimientoEn: ultimoMovimientoEnRef.current,
-      avisoInactividadDesde: null,
-    };
+    // Se llama acá, síncrono, y no solo desde el efecto de [modo] -- código
+    // que corre justo después de activarModo (ej. unirseYActivarRuta, que
+    // fija rodadaUnidaId en la grabación) necesita que ya exista de
+    // inmediato, sin esperar al próximo render. iniciarGrabacionGps es
+    // idempotente, así que cuando el efecto de [modo] corra después con este
+    // mismo modo ya asignado, su propio llamado no hace nada de más.
+    iniciarGrabacionGps(nuevoModo, false, () =>
+      setErrorGeo("No se pudo obtener tu ubicación (revisa los permisos)."),
+    );
   }
 
   function unirseARodada(id: number) {
     rodadaUnidaIdRef.current = id;
     setCandidatasRodada([]);
-    if (grabacionActivaModulo) grabacionActivaModulo.rodadaUnidaId = id;
+    const grabacionActiva = obtenerGrabacionActiva();
+    if (grabacionActiva) grabacionActiva.rodadaUnidaId = id;
   }
 
   // Atajo del banner "Tu rodada está por comenzar": a diferencia del botón
@@ -1042,7 +984,8 @@ export function MapaView() {
     activarModo("ruta");
     necesitaRevisarRodadaRef.current = false;
     rodadaUnidaIdRef.current = rodada.id;
-    if (grabacionActivaModulo) grabacionActivaModulo.rodadaUnidaId = rodada.id;
+    const grabacionActiva = obtenerGrabacionActiva();
+    if (grabacionActiva) grabacionActiva.rodadaUnidaId = rodada.id;
   }
 
   // Exige estar cerca del punto de encuentro real (marcado por el Admin con
@@ -1092,21 +1035,24 @@ export function MapaView() {
     mapeadoRef.current = true;
     setMapeado(true);
     setMostrarPreguntaMapeo(false);
-    if (grabacionActivaModulo) grabacionActivaModulo.mapeado = true;
+    const grabacionActiva = obtenerGrabacionActiva();
+    if (grabacionActiva) grabacionActiva.mapeado = true;
   }
 
   function confirmarMapeoNo() {
     mapeadoRef.current = false;
     setMapeado(false);
     setMostrarPreguntaMapeo(false);
-    if (grabacionActivaModulo) grabacionActivaModulo.mapeado = false;
+    const grabacionActiva = obtenerGrabacionActiva();
+    if (grabacionActiva) grabacionActiva.mapeado = false;
   }
 
   function continuarPatinando() {
     ultimoMovimientoEnRef.current = Date.now();
-    if (grabacionActivaModulo) {
-      grabacionActivaModulo.ultimoMovimientoEn = ultimoMovimientoEnRef.current;
-      grabacionActivaModulo.avisoInactividadDesde = null;
+    const grabacionActiva = obtenerGrabacionActiva();
+    if (grabacionActiva) {
+      grabacionActiva.ultimoMovimientoEn = ultimoMovimientoEnRef.current;
+      grabacionActiva.avisoInactividadDesde = null;
     }
     if (cierreAutomaticoTimeoutRef.current) {
       clearTimeout(cierreAutomaticoTimeoutRef.current);
@@ -1123,18 +1069,21 @@ export function MapaView() {
     }
     setAvisoInactividad(false);
     avisoInactividadRef.current = false;
-    // Un punto pendiente de confirmar nunca llegó a agregarse a
-    // puntosGrabados -- si la sesión termina justo ahí, se descarta sin más
-    // (no hay lectura siguiente que lo confirme).
-    puntoPendienteConfirmarRef.current = null;
 
     const tokenActual = tokenRef.current;
     const modoActual = modo;
     const eraMapeado = mapeadoRef.current;
+    // Único lugar donde el watcher real se apaga -- ver grabacionGps.ts.
+    // Devuelve los puntos ya confirmados (incluye el descarte de cualquier
+    // punto pendiente de confirmar, mismo criterio de siempre: si la sesión
+    // termina justo ahí, se descarta sin más porque no hay lectura
+    // siguiente que lo confirme).
+    const puntos = detenerGrabacionGps();
     setModo(null);
     setMostrarPreguntaMapeo(false);
     grabandoRef.current = false;
-    grabacionActivaModulo = null;
+    setPuntosGrabados(puntos);
+    puntosGrabadosRef.current = puntos;
 
     if (tokenActual) {
       try {
@@ -1147,7 +1096,6 @@ export function MapaView() {
     // Ya no depende de si se eligió mapear: toda actividad "Patinando"/"Estoy
     // en Ruta" registra km/tiempo, se haya mostrado el trazado o no (ver
     // activarModo, que graba desde el inicio del modo en ambos casos).
-    const puntos = puntosGrabadosRef.current;
     const duracionSeg = Math.round((Date.now() - inicioGrabacionRef.current) / 1000);
     const distanciaKm = distanciaTotalKm(puntos);
 
