@@ -120,7 +120,7 @@ export async function generarVideoRecorridoV2(
   const coberturaAnchaFase2 = construirCoberturaGrillaAnchaV2(ruta, ventana, params, ventana.factorAncho);
   const clavesAnchaFase2 = new Set([...grillaAncha.claves, ...coberturaAnchaFase2]);
 
-  const trayectoria = construirTrayectoriaV2(ruta, params, FPS_V2);
+  const trayectoria = construirTrayectoriaV2(ruta, params, FPS_V2, datosEstadisticas.indiceVelMax);
 
   const presupuestoZ17Bytes = calcularPresupuestoZ17Bytes(
     PRESUPUESTO_TOTAL_BYTES_DEFECTO,

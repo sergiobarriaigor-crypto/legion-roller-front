@@ -24,6 +24,7 @@ import {
   dibujarEtiquetaVelMaxFinalV2,
   dibujarEtiquetasPanoramicaV2,
   alphaEtiquetasPanoramicaV2,
+  dibujarPausaVelMaxV2,
   dibujarTransicionAFondoMarcaV2,
   alphaFadeIn,
   alphaFadeInHoldOut,
@@ -337,6 +338,7 @@ export async function grabarVideoV2(entrada: EntradaGrabacionV2, log: (linea: st
     dibujarOverlayFase5(ctx, trayectoria[0], ruta, params, datosEstadisticas);
     dibujarFotosRutaV2(ctx, trayectoria[0], ruta, params, fotosRuta);
     dibujarEtiquetaVelMaxFinalV2(ctx, trayectoria[0], ruta, datosEstadisticas);
+    dibujarPausaVelMaxV2(ctx, trayectoria[0], ruta, datosEstadisticas, nombreCalleVelMax);
     dibujarEtiquetasPanoramicaV2(ctx, etiquetasPanoramica, alphaEtiquetasPanoramicaV2(trayectoria[0], params));
 
     const mimeType = elegirMimeTypeVideoV2(log, !!grafoMusica);
@@ -397,6 +399,7 @@ export async function grabarVideoV2(entrada: EntradaGrabacionV2, log: (linea: st
       dibujarOverlayFase5(ctx, frame, ruta, params, datosEstadisticas);
       dibujarFotosRutaV2(ctx, frame, ruta, params, fotosRuta);
       dibujarEtiquetaVelMaxFinalV2(ctx, frame, ruta, datosEstadisticas);
+      dibujarPausaVelMaxV2(ctx, frame, ruta, datosEstadisticas, nombreCalleVelMax);
       dibujarEtiquetasPanoramicaV2(ctx, etiquetasPanoramica, alphaEtiquetasPanoramicaV2(frame, params));
 
       tiempoFrameAnteriorMs = performance.now();

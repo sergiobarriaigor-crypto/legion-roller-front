@@ -15,9 +15,10 @@
 //
 // Progreso SIEMPRE derivado de frame.tiempoSeg/frame.fase (FrameV2, ya
 // precomputado en Fase 3) -- nunca del reloj real de MediaRecorder. Esto
-// también rige el "evento" de velocidad máxima (marca + tarjeta temporal):
-// su aparición/desaparición se calcula con tiempoSeg, igual que todo lo
-// demás acá.
+// también rige el "evento" de velocidad máxima (la marca discreta y
+// permanente que dibuja este archivo): su aparición se calcula con
+// distObjetivoKm, igual que todo lo demás acá. La tarjeta destacada del
+// evento (pausa + fade/scale) vive en overlayFase6.ts.
 //
 // A diferencia de V1 (que dibuja con ctx.scale/translate y necesita
 // contrarrestarlo para que puntos/trazo no cambien de grosor con el
@@ -133,29 +134,12 @@ function aPantalla(punto: { x: number; y: number }, camara: EstadoCamaraV2): { x
   };
 }
 
-// Tiempo lógico (mismo eje que frame.tiempoSeg) en el que el trazado
-// alcanza el punto real de velocidad máxima -- se usa solo para saber
-// cuánto tiempo lleva mostrándose la tarjeta del evento, nunca para
-// recalcular la velocidad ni el punto (eso siempre viene de
-// datos.indiceVelMax/velocidadMaxima, ya resueltos por velocidadMaximaConPunto).
-function tiempoEventoVelMax(ruta: RutaCoreografiaV2, params: ParametrosCoreografiaV2, datos: DatosEstadisticasV2): number {
-  if (datos.indiceVelMax < 0) return Infinity;
-  const { tBC, tD } = limitesTiempo(params);
-  const fraccionEvento = ruta.distanciaAcumuladaKm[datos.indiceVelMax] / ruta.distanciaTotalKm;
-  return tBC + fraccionEvento * (tD - tBC);
-}
-
 const COLOR_DORADO = "#e0b24e";
 const COLOR_TEXTO_SECUNDARIO = "#c9c2b4";
 const COLOR_INICIO = "#5fae4e";
 const COLOR_VELMAX = "#e2453c";
 const COLOR_TRAZO = "#f0b23c";
 const COLOR_TRAZO_CASING = "rgba(13,10,6,0.5)";
-
-// Cuánto tiempo (segundos de tiempoSeg, no reloj real) permanece visible la
-// tarjeta del evento de velocidad máxima antes de reducirse a la marca
-// discreta permanente.
-const DURACION_TARJETA_VELMAX_SEG = 3;
 
 function dibujarPuntoSimple(ctx: CanvasRenderingContext2D, cx: number, cy: number, radio: number, color: string): void {
   ctx.save();
@@ -200,64 +184,6 @@ function dibujarMarcadorPatinador(ctx: CanvasRenderingContext2D, cx: number, cy:
 // así una vez que la tarjeta temporal se retira.
 function dibujarMarcaVelMaxDiscreta(ctx: CanvasRenderingContext2D, cx: number, cy: number): void {
   dibujarPuntoSimple(ctx, cx, cy, 6, COLOR_VELMAX);
-}
-
-function trazarRectRedondeado(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
-}
-
-// Tarjeta temporal del evento "velocidad máxima" -- aparece asociada al
-// punto real (línea guía + tarjeta), sin tapar el trazado completo. Se
-// ancla EXCLUSIVAMENTE a (px,py) -- la proyección de ese punto real con la
-// cámara del frame actual -- nunca a la posición del marcador: si se usara
-// la posición del marcador (que sigue avanzando mientras la tarjeta está
-// visible) para reubicarla, la tarjeta parecería "perseguir" al marcador
-// en vez de quedar fija sobre el punto geográfico donde ocurrió el evento.
-// Único ajuste que sí se permite: no salirse de los bordes del canvas.
-function dibujarTarjetaVelMax(ctx: CanvasRenderingContext2D, px: number, py: number, kmh: number): void {
-  const ancho = 158;
-  const alto = 62;
-  const margen = 8;
-  let arriba = true;
-  let cardY = py - alto - 24;
-  if (cardY < margen) {
-    arriba = false;
-    cardY = py + 24;
-  }
-  if (cardY + alto > ALTO_VIDEO - margen) cardY = ALTO_VIDEO - margen - alto;
-  const cardX = clamp(px - ancho / 2, margen, ANCHO_VIDEO - ancho - margen);
-
-  ctx.save();
-  ctx.strokeStyle = "rgba(255,255,255,0.55)";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(px, py);
-  ctx.lineTo(px, arriba ? cardY + alto : cardY);
-  ctx.stroke();
-
-  trazarRectRedondeado(ctx, cardX, cardY, ancho, alto, 12);
-  ctx.fillStyle = "rgba(13,10,6,0.82)";
-  ctx.fill();
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = COLOR_VELMAX;
-  ctx.stroke();
-
-  ctx.textAlign = "center";
-  ctx.shadowColor = "rgba(0,0,0,0.8)";
-  ctx.shadowBlur = 4;
-  ctx.fillStyle = COLOR_TEXTO_SECUNDARIO;
-  ctx.font = "700 13px Arial, sans-serif";
-  ctx.fillText("VELOCIDAD MÁX.", cardX + ancho / 2, cardY + 24);
-  ctx.fillStyle = COLOR_VELMAX;
-  ctx.font = "800 26px Arial, sans-serif";
-  ctx.fillText(`${Math.round(kmh)} km/h`, cardX + ancho / 2, cardY + 50);
-  ctx.restore();
 }
 
 // Barra superior -- durante seguimiento solo DISTANCIA/TIEMPO (la
@@ -384,16 +310,13 @@ export function dibujarOverlayFase5(
   // --- Evento de velocidad máxima: la marca discreta aparece apenas el
   // progreso alcanza ese punto real (mismo índice de
   // velocidadMaximaConPunto, sin recalcular nada de GPS) y queda
-  // permanente; la tarjeta con el valor solo se muestra los primeros
-  // segundos lógicos después de alcanzarlo, anclada exclusivamente a la
-  // proyección de ESE punto (nunca a la posición del marcador). ---
+  // permanente. La tarjeta destacada del evento (pausa + fade/scale) ya no
+  // vive acá -- ver dibujarPausaVelMaxV2 en overlayFase6.ts, que arranca
+  // exactamente en este mismo punto real (frame.pausaVelMax, resuelto por
+  // Fase 3 al construir la trayectoria). ---
   if (datos.indiceVelMax >= 0 && distObjetivoKm >= ruta.distanciaAcumuladaKm[datos.indiceVelMax]) {
     const p = aPantalla(ruta.puntosZ17[datos.indiceVelMax], camara);
     dibujarMarcaVelMaxDiscreta(ctx, p.x, p.y);
-    const tEvento = tiempoEventoVelMax(ruta, params, datos);
-    if (frame.tiempoSeg < tEvento + DURACION_TARJETA_VELMAX_SEG) {
-      dibujarTarjetaVelMax(ctx, p.x, p.y, datos.velocidadMaxima);
-    }
   }
 
   // --- Marcador del patinador -- durante seguimiento, el ícono animado con

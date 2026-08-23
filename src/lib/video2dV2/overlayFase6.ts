@@ -436,6 +436,83 @@ export function dibujarEtiquetaVelMaxFinalV2(ctx: CanvasRenderingContext2D, fram
   ctx.restore();
 }
 
+// --- Pausa al alcanzar la velocidad máxima (durante seguimiento) ---
+// Cámara/trazado/marcador ya quedan congelados solos (frame.tiempoSeg/fase/
+// camara son IDÉNTICOS en todos los cuadros de la pausa, ver
+// construirTrayectoriaV2 en trayectoriaV2.ts) -- lo único que hace falta
+// acá es dibujar la etiqueta con una entrada leve de fade+scale, anclada
+// SIEMPRE a la proyección del punto real (nunca a indiceActual/progreso/
+// marcador/punto interpolado). Se apaga sola en cuanto termina la pausa
+// (frame.pausaVelMax vuelve a null) -- sin fade-out propio, a propósito
+// (la pausa ya es corta y el trazado retoma en el mismo instante).
+const DURACION_POP_VELMAX_SEG = 0.35;
+const ANCHO_CHIP_PAUSA_VELMAX = 190;
+const ALTO_CHIP_PAUSA_VELMAX = 62;
+
+export function dibujarPausaVelMaxV2(
+  ctx: CanvasRenderingContext2D,
+  frame: FrameV2,
+  ruta: RutaCoreografiaV2,
+  datos: DatosEstadisticasV2,
+  nombreCalleVelMax: string | null,
+): void {
+  if (frame.pausaVelMax === null || datos.indiceVelMax < 0) return;
+
+  const t = clamp(frame.pausaVelMax / DURACION_POP_VELMAX_SEG, 0, 1);
+  const alpha = t;
+  const escala = 0.9 + 0.1 * t;
+
+  const p = aPantalla(ruta.puntosZ17[datos.indiceVelMax], frame.camara);
+  const lineaPrincipal = `⚡ ${Math.round(datos.velocidadMaxima)} km/h`;
+  const lineaSecundaria = nombreCalleVelMax || "VELOCIDAD MÁXIMA";
+
+  const margen = 8;
+  let arriba = true;
+  let chipY = p.y - ALTO_CHIP_PAUSA_VELMAX - 24;
+  if (chipY < ALTO_PANEL_RESUMEN_FINAL + margen) {
+    arriba = false;
+    chipY = p.y + 24;
+  }
+  if (chipY + ALTO_CHIP_PAUSA_VELMAX > ALTO_VIDEO - margen) chipY = ALTO_VIDEO - margen - ALTO_CHIP_PAUSA_VELMAX;
+  const chipX = clamp(p.x - ANCHO_CHIP_PAUSA_VELMAX / 2, margen, ANCHO_VIDEO - ANCHO_CHIP_PAUSA_VELMAX - margen);
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+
+  ctx.strokeStyle = "rgba(255,255,255,0.55)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(p.x, p.y);
+  ctx.lineTo(p.x, arriba ? chipY + ALTO_CHIP_PAUSA_VELMAX : chipY);
+  ctx.stroke();
+
+  const cx = chipX + ANCHO_CHIP_PAUSA_VELMAX / 2;
+  const cy = chipY + ALTO_CHIP_PAUSA_VELMAX / 2;
+  ctx.translate(cx, cy);
+  ctx.scale(escala, escala);
+  ctx.translate(-cx, -cy);
+
+  trazarRectRedondeado(ctx, chipX, chipY, ANCHO_CHIP_PAUSA_VELMAX, ALTO_CHIP_PAUSA_VELMAX, 14);
+  ctx.fillStyle = "rgba(13,10,6,0.82)";
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = COLOR_VELMAX_FINAL;
+  ctx.stroke();
+
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.shadowColor = "rgba(0,0,0,0.8)";
+  ctx.shadowBlur = 4;
+  ctx.font = "800 22px Arial, sans-serif";
+  ctx.fillStyle = COLOR_VELMAX_FINAL;
+  ctx.fillText(lineaPrincipal, cx, cy - 12);
+  ctx.font = "700 14px Arial, sans-serif";
+  ctx.fillStyle = "#f2efe9";
+  ctx.fillText(lineaSecundaria, cx, cy + 14);
+
+  ctx.restore();
+}
+
 // --- Panorámico final: etiquetas de calles/sectores + velocidad máxima ---
 // Cámara SIEMPRE fija (ruta.centroide) durante toda esta fase -- por eso la
 // posición en pantalla de cada etiqueta se resuelve UNA sola vez (mismo

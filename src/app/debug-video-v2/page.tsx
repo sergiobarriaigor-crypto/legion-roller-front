@@ -305,7 +305,7 @@ export default function DebugVideoV2Page() {
     // foto (ver construirFotosRutaV2) -- no es la que usa el scrubber en
     // vivo (ese sigue siendo calcularFaseYCamaraV2 incremental), es
     // simplemente la misma función pura de Fase 3 evaluada una vez acá.
-    const trayectoriaParaFotos = construirTrayectoriaV2(ruta, params, FPS_FASE3);
+    const trayectoriaParaFotos = construirTrayectoriaV2(ruta, params, FPS_FASE3, indiceVelMax);
     const fotosRutaImgs = await cargarFotosRutaV2(FOTOS_RUTA_PRUEBA_URLS, log);
     fotosRutaRef.current = construirFotosRutaV2(fotosRutaImgs, ruta, params, trayectoriaParaFotos);
     log(`[v2-fase6] fotosDeRutaListas(preview)=${fotosRutaRef.current.length}/${FOTOS_RUTA_PRUEBA_URLS.length}`);
@@ -399,8 +399,13 @@ export default function DebugVideoV2Page() {
 
     // Trayectoria completa precomputada -- única fuente de verdad para
     // planificar Y para dibujar/verificar (Z17 y, ahora, también la
-    // cobertura ancha complementaria).
-    const trayectoria = construirTrayectoriaV2(ruta, paramsFase3, FPS_FASE3);
+    // cobertura ancha complementaria). indiceVelMax solo para que la
+    // pausa de velocidad máxima (si aplica) quede incluida en los cuadros
+    // que se planifican/verifican acá -- mismo dato que ya usa Fase 5/6,
+    // sin geocodificar nada nuevo (esta función no necesita el nombre de
+    // calle, solo el índice para saber DÓNDE insertar los cuadros extra).
+    const datosEstadisticasFase3 = construirDatosEstadisticasV2(RUTA_PRUEBA, ruta.distanciaTotalKm);
+    const trayectoria = construirTrayectoriaV2(ruta, paramsFase3, FPS_FASE3, datosEstadisticasFase3.indiceVelMax);
     log(`[v2-fase3] trayectoria: ${trayectoria.length} frames a ${FPS_FASE3}fps (duracionTotal=${duracionTotalV2(paramsFase3).toFixed(2)}s)`);
 
     // Presupuesto/ventana efectiva calculados con el tamaño PLANEADO de la
@@ -634,7 +639,7 @@ export default function DebugVideoV2Page() {
     const coberturaAnchaFase2 = construirCoberturaGrillaAnchaV2(ruta, ventana, paramsFase3, ventana.factorAncho);
     const clavesAnchaFase2 = new Set([...grillaAncha.claves, ...coberturaAnchaFase2]);
 
-    const trayectoria = construirTrayectoriaV2(ruta, paramsFase3, FPS_FASE3);
+    const trayectoria = construirTrayectoriaV2(ruta, paramsFase3, FPS_FASE3, indiceVelMax);
     log(
       `[v2-fase4] trayectoria: ${trayectoria.length} frames a ${FPS_FASE3}fps (duracionTotal=${duracionTotalV2(paramsFase3).toFixed(2)}s)`,
     );
@@ -835,17 +840,22 @@ export default function DebugVideoV2Page() {
     // generar un video cada vez. Reemplaza el trazo de ruta completa fijo
     // que usaba este preview antes de Fase 5 (ese era solo un diagnóstico
     // de Fase 2, redundante con el trazado real de acá).
+    // pausaVelMax siempre null acá -- este scrubber recalcula un único
+    // instante puntual (calcularFaseYCamaraV2, "resimular"), nunca recorre
+    // el array de trayectoria[] real donde vive la pausa (ver
+    // construirTrayectoriaV2 en trayectoriaV2.ts); para ver la pausa hay
+    // que usar Fase 4 (grabar), que sí usa esa trayectoria real.
+    const frameScrub = { indice: 0, tiempoSeg: t, fase: resultado.fase, camara, pausaVelMax: null };
     if (datosEstadisticasRef.current) {
-      dibujarOverlayFase5(ctx, { indice: 0, tiempoSeg: t, fase: resultado.fase, camara }, ruta, params, datosEstadisticasRef.current);
+      dibujarOverlayFase5(ctx, frameScrub, ruta, params, datosEstadisticasRef.current);
     }
     // Fase 6A: fotos durante el recorrido -- misma capa que grabacionV2.ts,
     // evaluable acá sin generar un video cada vez. Dibujada DESPUÉS de
     // Fase 5 (mismo orden ya fijo: tiles -> Fase 5 -> Fase 6).
-    dibujarFotosRutaV2(ctx, { indice: 0, tiempoSeg: t, fase: resultado.fase, camara }, ruta, params, fotosRutaRef.current);
+    dibujarFotosRutaV2(ctx, frameScrub, ruta, params, fotosRutaRef.current);
     if (datosEstadisticasRef.current) {
-      dibujarEtiquetaVelMaxFinalV2(ctx, { indice: 0, tiempoSeg: t, fase: resultado.fase, camara }, ruta, datosEstadisticasRef.current);
-      const frameActual = { indice: 0, tiempoSeg: t, fase: resultado.fase, camara };
-      dibujarEtiquetasPanoramicaV2(ctx, etiquetasPanoramicaRef.current, alphaEtiquetasPanoramicaV2(frameActual, params));
+      dibujarEtiquetaVelMaxFinalV2(ctx, frameScrub, ruta, datosEstadisticasRef.current);
+      dibujarEtiquetasPanoramicaV2(ctx, etiquetasPanoramicaRef.current, alphaEtiquetasPanoramicaV2(frameScrub, params));
     }
 
     // Cruz en el centro (marca camara.cx/cy siempre).
