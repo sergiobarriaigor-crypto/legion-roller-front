@@ -39,6 +39,7 @@ import {
   obtenerGrabacionActiva,
   registrarCallbackPosicion,
   obtenerDiagnosticoGps,
+  limpiarDiagnosticoGps,
 } from "@/lib/grabacionGps";
 import { PatinadoresActivosPanel } from "@/components/Mapa/PatinadoresActivosPanel";
 import { MisRutasPanel } from "@/components/Mapa/MisRutasPanel";
@@ -1074,17 +1075,20 @@ export function MapaView() {
     const tokenActual = tokenRef.current;
     const modoActual = modo;
     const eraMapeado = mapeadoRef.current;
+    // DIAGNÓSTICO TEMPORAL -- snapshot (copia, ver obtenerDiagnosticoGps)
+    // capturado ANTES de tocar cualquier otro estado, para que el envío de
+    // abajo nunca dependa de qué tan rápido se limpia el resto. Se limpia
+    // recién al final de esta función, después del intento de envío (ver
+    // limpiarDiagnosticoGps más abajo) -- BORRAR esta línea, la llamada a
+    // limpiarDiagnosticoGps() y el campo diagnosticoGps del body de abajo
+    // una vez cerrada la investigación GPS.
+    const diagnosticoGps = obtenerDiagnosticoGps();
     // Único lugar donde el watcher real se apaga -- ver grabacionGps.ts.
     // Devuelve los puntos ya confirmados (incluye el descarte de cualquier
     // punto pendiente de confirmar, mismo criterio de siempre: si la sesión
     // termina justo ahí, se descarta sin más porque no hay lectura
     // siguiente que lo confirme).
     const puntos = detenerGrabacionGps();
-    // DIAGNÓSTICO TEMPORAL -- capturado ANTES de que arranque la próxima
-    // grabación (que recién reinicia el acumulador, ver iniciarGrabacionGps
-    // en grabacionGps.ts). BORRAR esta línea (y el campo diagnosticoGps del
-    // body de abajo) una vez cerrada la investigación GPS.
-    const diagnosticoGps = obtenerDiagnosticoGps();
     setModo(null);
     setMostrarPreguntaMapeo(false);
     grabandoRef.current = false;
@@ -1136,6 +1140,11 @@ export function MapaView() {
         setLimiteRutasAlcanzado(err instanceof ApiError && err.status === 409);
       }
     }
+
+    // DIAGNÓSTICO TEMPORAL -- recién ahora, después del intento de envío
+    // (haya salido bien, mal, o ni se haya intentado por sesión corta), se
+    // limpia el acumulador para la próxima grabación.
+    limpiarDiagnosticoGps();
 
     mapeadoRef.current = false;
     setMapeado(false);

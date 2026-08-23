@@ -237,12 +237,28 @@ function registrarDiagnosticoGps(
   }
 }
 
-// Se lee al finalizar la ruta (ver MapaView.tsx finalizarModo) -- a
-// propósito NO se limpia en detenerGrabacionGps (ver más abajo), para que
-// siga disponible en ese momento; se reinicia recién al arrancar la
-// PRÓXIMA grabación (iniciarGrabacionGps).
+// Se lee al finalizar la ruta (ver MapaView.tsx finalizarModo). Devuelve una
+// COPIA, nunca la referencia interna -- así, el snapshot que finalizarModo()
+// captura para mandar en el POST queda protegido de cualquier fix tardío que
+// llegue a registrarDiagnosticoGps() durante el propio cierre de la ruta
+// (ver limpiarDiagnosticoGps más abajo).
 export function obtenerDiagnosticoGps(): FixDiagnosticoGps[] {
-  return diagnosticoFixes;
+  return [...diagnosticoFixes];
+}
+
+// DIAGNÓSTICO TEMPORAL -- limpia el acumulador de diagnóstico-gps. La llama
+// tanto iniciarGrabacionGps (red de seguridad para que una grabación nueva
+// nunca arrastre datos de la anterior) como MapaView.tsx explícitamente,
+// DESPUÉS de haber capturado y enviado el snapshot de la ruta que acaba de
+// terminar (ver finalizarModo) -- a propósito no se limpia dentro de
+// detenerGrabacionGps(), para no atar el momento del reset a cuándo se
+// detiene el watcher: el snapshot ya capturado (copia, ver arriba) no se ve
+// afectado de todas formas, pero así el orden queda explícito y no depende
+// de que arranque una grabación siguiente.
+export function limpiarDiagnosticoGps(): void {
+  diagnosticoFixes = [];
+  indiceDiagSiguiente = 0;
+  registroPendienteDiag = null;
 }
 
 function kmhEntre(a: PuntoGps, b: PuntoGps): number {
@@ -341,12 +357,10 @@ export function iniciarGrabacionGps(modo: "patinando" | "ruta", mapeado: boolean
   // post-hueco de una sesión anterior ya finalizada.
   ultimoFixRecibidoDiag = null;
   fixesRestantesEtiquetarPostHueco = 0;
-  // DIAGNÓSTICO TEMPORAL -- reinicia el acumulador de diagnóstico-gps de la
-  // grabación anterior (ver registrarDiagnosticoGps/obtenerDiagnosticoGps).
-  // A propósito NO se reinicia en detenerGrabacionGps -- ver su comentario.
-  diagnosticoFixes = [];
-  indiceDiagSiguiente = 0;
-  registroPendienteDiag = null;
+  // DIAGNÓSTICO TEMPORAL -- red de seguridad: si por lo que sea MapaView no
+  // llegó a llamar limpiarDiagnosticoGps() al terminar la ruta anterior,
+  // esto evita que una grabación nueva arrastre datos de la anterior.
+  limpiarDiagnosticoGps();
   detenerWatcherReal = iniciarSeguimientoUbicacion(alRecibirPosicion, onError);
   log("watcher iniciado");
 }
