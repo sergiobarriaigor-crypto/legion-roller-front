@@ -335,12 +335,19 @@ export function CompartirRecorridoModal({
     setErrorVideo("");
   }
 
+  // Ya NO pasa por EditorEncuadreFoto -- ese editor fuerza un recorte fijo
+  // 9:16 (EXPORT_VERTICAL) que "cover"-recorta cualquier foto que no sea ya
+  // vertical (hasta ~68% perdido en una foto horizontal 16:9). Se lee
+  // directo como data URL, igual que ya hace manejarSeleccionFotoPin, y se
+  // deja que dibujarFotoFinalV2() (overlayFase6.ts) haga su propio
+  // "contain" ya implementado -- sin tocar ese archivo.
   function manejarSeleccionFotoFinal(e: React.ChangeEvent<HTMLInputElement>) {
     const archivo = e.target.files?.[0];
     e.target.value = "";
     if (!archivo) return;
-    setTipoFotoEditando("final");
-    setArchivoEditandoFoto(archivo);
+    leerBlobComoDataUrl(archivo).then((dataUrl) => {
+      if (dataUrl) setFotoFinalDataUrl(dataUrl);
+    });
   }
 
   // A diferencia de la foto de cierre, esta ya NO pasa por
