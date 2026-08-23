@@ -81,7 +81,12 @@ const FIXES_A_ETIQUETAR_POST_HUECO = 10;
 let ultimoFixRecibidoDiag: PosicionSimple | null = null;
 let fixesRestantesEtiquetarPostHueco = 0;
 
-function logDiagnosticoFix(pos: PosicionSimple): void {
+function logDiagnosticoFix(pos: PosicionSimple): {
+  horaRecepcion: number;
+  retrasoMs: number | null;
+  dtRealSeg: number | null;
+  etiquetas: string[];
+} {
   const horaRecepcion = Date.now();
   const retrasoMs = pos.time !== null ? horaRecepcion - pos.time : null;
   const anterior = ultimoFixRecibidoDiag;
@@ -111,6 +116,133 @@ function logDiagnosticoFix(pos: PosicionSimple): void {
   );
 
   ultimoFixRecibidoDiag = pos;
+  return { horaRecepcion, retrasoMs, dtRealSeg, etiquetas };
+}
+
+// DIAGNÓSTICO TEMPORAL -- persistencia (fase siguiente a los logs DIAG-FIX,
+// para poder revisar una prueba real sin depender de la consola). Igual que
+// logDiagnosticoFix, esto es un espejo de SOLO LECTURA: nunca escribe en
+// grabacionActiva.puntos ni en puntoPendienteConfirmar, solo los lee para
+// reproducir la MISMA decisión que ya toma alRecibirPosicion/
+// registrarPuntoGrabado más abajo, y así poder etiquetar cada fix. Es
+// diagnóstico DERIVADO, no la fuente oficial de qué quedó grabado -- si
+// algún día este espejo y el comportamiento real llegaran a discrepar, el
+// real manda siempre. Reutiliza las mismas constantes de umbral que la
+// lógica real (nunca las duplica con otro valor), así que no hay riesgo de
+// que se desalineen si esos umbrales cambian más adelante. Cuando el motivo
+// no se puede determinar con certeza (no debería ocurrir en uso normal --
+// ej. si por algún motivo llega un fix sin haber grabación activa), usa
+// "indeterminado" en vez de adivinar. BORRAR este bloque completo
+// (interfaz + estado + función + su llamado, y obtenerDiagnosticoGps) una
+// vez cerrada la investigación GPS.
+export interface FixDiagnosticoGps {
+  indice: number;
+  lat: number;
+  lon: number;
+  accuracy: number;
+  fixTime: number | null;
+  horaRecepcion: number;
+  retrasoMs: number | null;
+  speed: number | null;
+  simulated: boolean | null;
+  dtRealSeg: number | null;
+  etiquetas: string[];
+  entroAPuntos: boolean;
+  motivoRechazo: string | null;
+}
+
+let diagnosticoFixes: FixDiagnosticoGps[] = [];
+let indiceDiagSiguiente = 0;
+// Referencia al registro de diagnóstico del fix que quedó "pendiente" (ver
+// puntoPendienteConfirmar) -- para poder actualizar su resultado final
+// (confirmado / descartado por rebote) recién cuando el fix SIGUIENTE lo
+// resuelve, exactamente como decide la lógica real.
+let registroPendienteDiag: FixDiagnosticoGps | null = null;
+
+function registrarDiagnosticoGps(
+  pos: PosicionSimple,
+  base: { horaRecepcion: number; retrasoMs: number | null; dtRealSeg: number | null; etiquetas: string[] },
+): void {
+  const registro: FixDiagnosticoGps = {
+    indice: indiceDiagSiguiente++,
+    lat: pos.lat,
+    lon: pos.lon,
+    accuracy: pos.accuracy,
+    fixTime: pos.time,
+    horaRecepcion: base.horaRecepcion,
+    retrasoMs: base.retrasoMs,
+    speed: pos.speed,
+    simulated: pos.simulated,
+    dtRealSeg: base.dtRealSeg,
+    etiquetas: base.etiquetas,
+    entroAPuntos: false,
+    motivoRechazo: "indeterminado",
+  };
+  diagnosticoFixes.push(registro);
+
+  if (!grabacionActiva) {
+    return; // no debería ocurrir en uso normal -- queda como "indeterminado"
+  }
+
+  if (pos.accuracy > PRECISION_MAXIMA_PUNTO_GRABADO_M) {
+    registro.motivoRechazo = "accuracy>35m";
+    return;
+  }
+
+  const puntoGrabado: PuntoGps = { lat: pos.lat, lon: pos.lon, timestamp: Date.now() };
+  const ultimoGrabado = grabacionActiva.puntos[grabacionActiva.puntos.length - 1];
+
+  if (!ultimoGrabado) {
+    if (pos.accuracy <= PRECISION_INICIAL_MAXIMA_M) {
+      registro.entroAPuntos = true;
+      registro.motivoRechazo = null;
+    } else {
+      registro.motivoRechazo = "primer-punto-precision-insuficiente(>20m)";
+    }
+    return;
+  }
+
+  const umbralKm = Math.max(KM_MOVIMIENTO_SIGNIFICATIVO, (pos.accuracy * 1.5) / 1000);
+  const esRuido = distanciaHaversineKm(ultimoGrabado, puntoGrabado) < umbralKm;
+  if (esRuido) {
+    registro.motivoRechazo = "ruido(distancia<umbral)";
+    return;
+  }
+
+  const pendienteAntes = puntoPendienteConfirmar;
+  if (pendienteAntes) {
+    // Mismo criterio que registrarPuntoGrabado: si este fix sigue lejos del
+    // último confirmado, se confirman AMBOS (el pendiente y este); si no,
+    // el pendiente se descarta por rebote y este fix termina confirmado de
+    // todas formas (re-evaluado contra el mismo último confirmado, que no
+    // cambió).
+    const siguioLejos = kmhEntre(ultimoGrabado, puntoGrabado) > KMH_SALTO_SOSPECHOSO;
+    if (registroPendienteDiag) {
+      registroPendienteDiag.entroAPuntos = siguioLejos;
+      registroPendienteDiag.motivoRechazo = siguioLejos ? null : "pendiente-descartado-rebote";
+    }
+    registroPendienteDiag = null;
+    registro.entroAPuntos = true;
+    registro.motivoRechazo = null;
+    return;
+  }
+
+  const saltaLejos = kmhEntre(ultimoGrabado, puntoGrabado) > KMH_SALTO_SOSPECHOSO;
+  if (saltaLejos) {
+    registro.motivoRechazo = "pendiente-esperando-confirmacion";
+    registroPendienteDiag = registro;
+  } else {
+    registro.entroAPuntos = true;
+    registro.motivoRechazo = null;
+  }
+}
+
+// Se lee al finalizar la ruta (ver MapaView.tsx finalizarModo) -- a
+// propósito NO se limpia en detenerGrabacionGps (ver más abajo), para que
+// siga disponible en ese momento; se reinicia recién al arrancar la
+// PRÓXIMA grabación (iniciarGrabacionGps).
+export function obtenerDiagnosticoGps(): FixDiagnosticoGps[] {
+  return diagnosticoFixes;
 }
 
 function kmhEntre(a: PuntoGps, b: PuntoGps): number {
@@ -163,7 +295,8 @@ function registrarPuntoGrabado(puntoNuevo: PuntoGps): void {
 // cruda a quien esté suscripto, para cámara/broadcast/rodada -- igual que
 // antes.
 function alRecibirPosicion(pos: PosicionSimple): void {
-  logDiagnosticoFix(pos);
+  const diagBase = logDiagnosticoFix(pos);
+  registrarDiagnosticoGps(pos, diagBase);
 
   if (grabacionActiva && pos.accuracy <= PRECISION_MAXIMA_PUNTO_GRABADO_M) {
     const puntoGrabado: PuntoGps = { lat: pos.lat, lon: pos.lon, timestamp: Date.now() };
@@ -208,6 +341,12 @@ export function iniciarGrabacionGps(modo: "patinando" | "ruta", mapeado: boolean
   // post-hueco de una sesión anterior ya finalizada.
   ultimoFixRecibidoDiag = null;
   fixesRestantesEtiquetarPostHueco = 0;
+  // DIAGNÓSTICO TEMPORAL -- reinicia el acumulador de diagnóstico-gps de la
+  // grabación anterior (ver registrarDiagnosticoGps/obtenerDiagnosticoGps).
+  // A propósito NO se reinicia en detenerGrabacionGps -- ver su comentario.
+  diagnosticoFixes = [];
+  indiceDiagSiguiente = 0;
+  registroPendienteDiag = null;
   detenerWatcherReal = iniciarSeguimientoUbicacion(alRecibirPosicion, onError);
   log("watcher iniciado");
 }

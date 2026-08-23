@@ -38,6 +38,7 @@ import {
   hayGrabacionActiva,
   obtenerGrabacionActiva,
   registrarCallbackPosicion,
+  obtenerDiagnosticoGps,
 } from "@/lib/grabacionGps";
 import { PatinadoresActivosPanel } from "@/components/Mapa/PatinadoresActivosPanel";
 import { MisRutasPanel } from "@/components/Mapa/MisRutasPanel";
@@ -1079,6 +1080,11 @@ export function MapaView() {
     // termina justo ahí, se descarta sin más porque no hay lectura
     // siguiente que lo confirme).
     const puntos = detenerGrabacionGps();
+    // DIAGNÓSTICO TEMPORAL -- capturado ANTES de que arranque la próxima
+    // grabación (que recién reinicia el acumulador, ver iniciarGrabacionGps
+    // en grabacionGps.ts). BORRAR esta línea (y el campo diagnosticoGps del
+    // body de abajo) una vez cerrada la investigación GPS.
+    const diagnosticoGps = obtenerDiagnosticoGps();
     setModo(null);
     setMostrarPreguntaMapeo(false);
     grabandoRef.current = false;
@@ -1110,6 +1116,7 @@ export function MapaView() {
             puntos,
             mapeado: eraMapeado,
             publicacionId: rodadaUnidaIdRef.current ?? undefined,
+            diagnosticoGps,
           },
           tokenActual,
         );
