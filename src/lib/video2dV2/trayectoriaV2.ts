@@ -26,18 +26,13 @@ export interface FrameV2 {
   camara: EstadoCamaraV2;
 }
 
-export function construirTrayectoriaV2(
-  ruta: RutaCoreografiaV2,
-  params: ParametrosCoreografiaV2,
-  fps: number,
-  puntoVelMax: { x: number; y: number } | null = null,
-): FrameV2[] {
+export function construirTrayectoriaV2(ruta: RutaCoreografiaV2, params: ParametrosCoreografiaV2, fps: number): FrameV2[] {
   const totalFrames = Math.max(1, Math.round(duracionTotalV2(params) * fps));
   const estado = crearEstadoRecursivoV2();
   const frames: FrameV2[] = [];
   for (let i = 0; i < totalFrames; i++) {
     const tiempoSeg = i / fps;
-    const { fase, camara } = calcularFaseYCamaraV2(ruta, params, tiempoSeg, estado, "incremental", puntoVelMax);
+    const { fase, camara } = calcularFaseYCamaraV2(ruta, params, tiempoSeg, estado, "incremental");
     frames.push({ indice: i, tiempoSeg, fase, camara });
   }
   return frames;

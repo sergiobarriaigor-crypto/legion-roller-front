@@ -16,11 +16,14 @@ import {
   cargarFotosRutaV2,
   cargarImagenDecodificada,
   construirFotosRutaV2,
+  construirEtiquetasPanoramicaV2,
   dibujarCierreLogoV2,
   dibujarFondoMarcaV2,
   dibujarFotoFinalV2,
   dibujarFotosRutaV2,
   dibujarEtiquetaVelMaxFinalV2,
+  dibujarEtiquetasPanoramicaV2,
+  alphaEtiquetasPanoramicaV2,
   dibujarTransicionAFondoMarcaV2,
   alphaFadeIn,
   alphaFadeInHoldOut,
@@ -172,11 +175,15 @@ export interface EntradaGrabacionV2 {
   ruta: RutaCoreografiaV2;
   params: ParametrosCoreografiaV2;
   datosEstadisticas: DatosEstadisticasV2;
-  // Ancla de cámara del resumen final (ver resolverPuntoVelMaxV2 en
-  // camaraV2.ts) -- el MISMO valor ya usado para construir `trayectoria`,
-  // nunca recalculado acá. null desactiva la sub-secuencia de zoom sin
-  // romper nada (panoramicaFinal queda estática, como antes de esta fase).
-  puntoVelMax: { x: number; y: number } | null;
+  // Etiquetas del panorámico final -- hasta 3 sectores/calles ya
+  // resueltos por MisRutasPanel.tsx (datos.sectoresRuta, cero consultas
+  // nuevas acá) + el nombre de calle de velocidad máxima, resuelto una
+  // única vez por el llamador (generarVideoRecorridoV2.ts) ANTES de
+  // empezar a grabar. null/undefined en cualquiera de los dos simplemente
+  // muestra menos etiquetas (o solo "VELOCIDAD MÁXIMA" genérico) -- nunca
+  // interrumpe la generación del video.
+  sectoresRuta?: { lat: number; lon: number; nombre: string; distanciaKm: number }[];
+  nombreCalleVelMax: string | null;
   // Fase 6A -- URLs planas (data-URL o ruta pública), ya resueltas por el
   // llamador; la carga/decodificación de todas ellas ocurre acá adentro,
   // siempre antes de start(). Ninguna es obligatoria: sin fotos de ruta el
@@ -216,7 +223,8 @@ export async function grabarVideoV2(entrada: EntradaGrabacionV2, log: (linea: st
     ruta,
     params,
     datosEstadisticas,
-    puntoVelMax,
+    sectoresRuta,
+    nombreCalleVelMax,
     fotosRutaUrls,
     fotoCierreUrl,
     ciudad,
@@ -277,6 +285,12 @@ export async function grabarVideoV2(entrada: EntradaGrabacionV2, log: (linea: st
     const fotosRuta = construirFotosRutaV2(fotosRutaImgs, ruta, params, trayectoria);
     log(`[v2-fase6] fotosDeRutaListas=${fotosRuta.length}/${fotosRutaUrls.length}`);
 
+    // Etiquetas del panorámico final -- cámara SIEMPRE fija (ruta.centroide)
+    // durante panoramicaFinal, así que la posición de cada etiqueta se
+    // resuelve UNA sola vez acá, nunca por frame.
+    const etiquetasPanoramica = construirEtiquetasPanoramicaV2(ruta.centroide, ruta, datosEstadisticas, sectoresRuta, nombreCalleVelMax);
+    log(`[v2-fase6] etiquetasPanoramicaListas=${etiquetasPanoramica.length}`);
+
     const fotoCierreImg = fotoCierreUrl ? await cargarImagenDecodificada(fotoCierreUrl, log) : null;
     if (fotoCierreUrl && !fotoCierreImg) log(`[v2-fase6] foto de cierre no cargó -- se omite ese beat.`);
 
@@ -320,9 +334,10 @@ export async function grabarVideoV2(entrada: EntradaGrabacionV2, log: (linea: st
     // Primer cuadro dibujado ANTES de captureStream()/start() -- mismo
     // principio que V1: no capturar un instante en blanco.
     dibujarFrameGrabacion(ctx, trayectoria[0], ventana, ventanaEfectiva, tilesAncha, tilesZ17);
-    dibujarOverlayFase5(ctx, trayectoria[0], ruta, params, datosEstadisticas, puntoVelMax);
+    dibujarOverlayFase5(ctx, trayectoria[0], ruta, params, datosEstadisticas);
     dibujarFotosRutaV2(ctx, trayectoria[0], ruta, params, fotosRuta);
-    dibujarEtiquetaVelMaxFinalV2(ctx, trayectoria[0], ruta, datosEstadisticas, params, puntoVelMax);
+    dibujarEtiquetaVelMaxFinalV2(ctx, trayectoria[0], ruta, datosEstadisticas);
+    dibujarEtiquetasPanoramicaV2(ctx, etiquetasPanoramica, alphaEtiquetasPanoramicaV2(trayectoria[0], params));
 
     const mimeType = elegirMimeTypeVideoV2(log, !!grafoMusica);
     streamVideo = canvas.captureStream(fps);
@@ -379,9 +394,11 @@ export async function grabarVideoV2(entrada: EntradaGrabacionV2, log: (linea: st
       }
 
       dibujarFrameGrabacion(ctx, frame, ventana, ventanaEfectiva, tilesAncha, tilesZ17);
-      dibujarOverlayFase5(ctx, frame, ruta, params, datosEstadisticas, puntoVelMax);
+      dibujarOverlayFase5(ctx, frame, ruta, params, datosEstadisticas);
       dibujarFotosRutaV2(ctx, frame, ruta, params, fotosRuta);
-      dibujarEtiquetaVelMaxFinalV2(ctx, frame, ruta, datosEstadisticas, params, puntoVelMax);
+      dibujarEtiquetaVelMaxFinalV2(ctx, frame, ruta, datosEstadisticas);
+      dibujarEtiquetasPanoramicaV2(ctx, etiquetasPanoramica, alphaEtiquetasPanoramicaV2(frame, params));
+
       tiempoFrameAnteriorMs = performance.now();
       await esperar(intervaloMs);
 

@@ -78,31 +78,30 @@ function limitesTiempo(params: ParametrosCoreografiaV2): { tBC: number; tD: numb
   return { tBC, tD, tEF };
 }
 
-// Misma división en fracciones que camaraV2.ts (PF_FRAC_*) -- reimplementada
-// acá de forma independiente (no importada, ese archivo queda congelado
-// para este overlay). Si esa división cambia alguna vez, hay que replicar
-// el cambio acá también. Solo se usa para decidir CUÁNDO mostrar la grilla
-// grande de estadísticas -- nunca para mover cámara ni recalcular nada de
-// GPS/velocidad.
-const PF_FRAC_HOLD_OVERVIEW = 0.9 / 6.5;
-const PF_FRAC_ZOOM_IN = 0.9 / 6.5;
-const PF_FRAC_HOLD_VELMAX = 1.7 / 6.5;
-const PF_FRAC_ZOOM_OUT = 0.9 / 6.5;
+// panoramicaFinal (cámara SIEMPRE fija en ruta.centroide, sin zoom/paneo) se
+// divide en dos momentos, sin mover la cámara -- mismas fracciones
+// reimplementadas de forma independiente en overlayFase6.ts (que dibuja las
+// etiquetas de calles/velocidad máxima con el mismo corte): primero
+// trazado+calles+velocidad máxima, después un fundido corto, después las
+// estadísticas generales. Acá solo se usa para decidir CUÁNDO mostrar la
+// grilla grande de estadísticas (barra chica antes, grilla grande después);
+// si esa división cambia, hay que replicar el cambio en overlayFase6.ts.
+const FRAC_BEAT_A_FIN = 2.5 / 5.5;
+const FRAC_FUNDIDO_FIN = 2.8 / 5.5;
 
-// Durante la sub-secuencia de zoom hacia velocidad máxima (panoramicaFinal
-// con puntoVelMax válido), la grilla grande de estadísticas solo aparece en
-// el hold final, DESPUÉS del zoom-out -- mientras tanto se muestra la barra
-// chica (igual que en seguimiento), para no competir visualmente con el
-// zoom/etiqueta. Sin secuencia especial (puntoVelMax null), se comporta
-// EXACTAMENTE como antes de este cambio: grilla grande en toda
-// panoramicaFinal.
-function enHoldEstadisticasFinal(frame: FrameV2, params: ParametrosCoreografiaV2, puntoVelMax: { x: number; y: number } | null): boolean {
+// Punto de corte "duro" para la barra de estadísticas (a mitad del fundido)
+// -- a diferencia de las etiquetas de calles (que sí se desvanecen suave),
+// la barra ocupa la misma franja de pantalla en sus dos versiones y un
+// fundido cruzado entre ambas se ve confuso (textos superpuestos); un corte
+// único, escondido dentro del fundido corto de las etiquetas, se percibe
+// como parte de la misma transición.
+function enBeatEstadisticasFinal(frame: FrameV2, params: ParametrosCoreografiaV2): boolean {
   if (frame.fase !== "panoramicaFinal") return false;
-  if (!puntoVelMax || params.duracionPanoramicaFinalSeg <= 0) return true;
+  if (params.duracionPanoramicaFinalSeg <= 0) return true;
   const { tEF } = limitesTiempo(params);
   const tau = clamp((frame.tiempoSeg - tEF) / params.duracionPanoramicaFinalSeg, 0, 1);
-  const t4 = PF_FRAC_HOLD_OVERVIEW + PF_FRAC_ZOOM_IN + PF_FRAC_HOLD_VELMAX + PF_FRAC_ZOOM_OUT;
-  return tau > t4;
+  const corte = (FRAC_BEAT_A_FIN + FRAC_FUNDIDO_FIN) / 2;
+  return tau > corte;
 }
 
 function indiceYProgresoEnDistancia(ruta: RutaCoreografiaV2, distObjetivoKm: number): { indice: number; progreso: number } {
@@ -332,17 +331,13 @@ function dibujarBarraEstadisticas(
 // tiles híbridos del frame (dibujarFrameGrabacion en grabacionV2.ts, o el
 // draw loop del preview en /debug-video-v2). Orden interno ya fijo:
 // trazado -> marca de velocidad máxima -> marcador/punto final ->
-// estadísticas. `puntoVelMax` (ver resolverPuntoVelMaxV2 en camaraV2.ts) es
-// el mismo valor, ya resuelto una vez, que se le pasa a la cámara -- acá
-// solo se usa para decidir CUÁNDO mostrar la grilla grande de estadísticas
-// (nunca para recalcular nada de GPS/velocidad).
+// estadísticas.
 export function dibujarOverlayFase5(
   ctx: CanvasRenderingContext2D,
   frame: FrameV2,
   ruta: RutaCoreografiaV2,
   params: ParametrosCoreografiaV2,
   datos: DatosEstadisticasV2,
-  puntoVelMax: { x: number; y: number } | null,
 ): void {
   if (frame.fase === "panoramicaInicial" || frame.fase === "paneoAcercamiento") return;
 
@@ -415,7 +410,7 @@ export function dibujarOverlayFase5(
   }
 
   // --- Estadísticas ---
-  const enResumenFinal = frame.fase === "alejamientoPaneo" || enHoldEstadisticasFinal(frame, params, puntoVelMax);
+  const enResumenFinal = frame.fase === "alejamientoPaneo" || enBeatEstadisticasFinal(frame, params);
   const distanciaMostrarKm = enResumenFinal ? datos.distanciaTotalKm : distObjetivoKm;
   const tiempoMostrarSeg = enResumenFinal ? datos.duracionTotalSeg : fraccionTrazo * datos.duracionTotalSeg;
   dibujarBarraEstadisticas(ctx, datos, distanciaMostrarKm, tiempoMostrarSeg, enResumenFinal);

@@ -8,7 +8,8 @@
 // (fracción de trazado, interpolación por distancia, tarjeta con línea
 // guía) están REIMPLEMENTADAS acá de forma independiente, a propósito, para
 // no crear ningún acoplamiento con ese archivo congelado.
-import { ANCHO_VIDEO, ALTO_VIDEO, type EstadoCamaraV2, type ParametrosCoreografiaV2, type RutaCoreografiaV2 } from "./camaraV2";
+import { ANCHO_VIDEO, ALTO_VIDEO, ZOOM_SEGUIMIENTO, type EstadoCamaraV2, type ParametrosCoreografiaV2, type RutaCoreografiaV2 } from "./camaraV2";
+import { lonAPixelX, latAPixelY } from "./proyeccion";
 import type { FrameV2 } from "./trayectoriaV2";
 // Solo el TIPO -- lectura de datos.indiceVelMax/velocidadMaxima ya
 // resueltos por Fase 5 (velocidadMaximaConPunto), nunca se recalculan acá
@@ -371,72 +372,39 @@ export function dibujarFotosRutaV2(ctx: CanvasRenderingContext2D, frame: FrameV2
 // no ubicar la etiqueta encima de ese panel. No es una llamada a esa
 // función ni depende de su código, solo del mismo número ya conocido.
 const ALTO_PANEL_RESUMEN_FINAL = 168;
+// Alto de la barra CHICA (distancia/tiempo) que Fase 5 muestra durante el
+// primer momento del panorámico final (antes del fundido a estadísticas) --
+// distinto del panel grande de arriba, reimplementado acá igual criterio.
+const ALTO_PANEL_COMPACTO = 100;
 const COLOR_VELMAX_FINAL = "#e2453c"; // mismo rojo que la marca discreta de Fase 5, reimplementado (no importado)
 
-// Sub-etapa "hold en velocidad máxima" dentro de panoramicaFinal -- misma
-// división en fracciones que camaraV2.ts (PF_FRAC_*), reimplementada acá de
-// forma independiente (tercera copia, mismo criterio que ALTO_PANEL_RESUMEN_FINAL
-// más abajo: si esa división cambia, hay que replicar el cambio acá
-// también). Solo decide si mostrar la variante de 2 líneas -- nunca mueve
-// cámara ni recalcula velocidad/GPS.
-const PF_FRAC_HOLD_OVERVIEW = 0.9 / 6.5;
-const PF_FRAC_ZOOM_IN = 0.9 / 6.5;
-const PF_FRAC_HOLD_VELMAX = 1.7 / 6.5;
-
-function enHoldVelMaxFinal(frame: FrameV2, params: ParametrosCoreografiaV2, puntoVelMax: { x: number; y: number } | null): boolean {
-  if (frame.fase !== "panoramicaFinal" || !puntoVelMax || params.duracionPanoramicaFinalSeg <= 0) return false;
-  const { tEF } = limitesTiempoSeguimiento(params);
-  const tau = clamp((frame.tiempoSeg - tEF) / params.duracionPanoramicaFinalSeg, 0, 1);
-  const t2 = PF_FRAC_HOLD_OVERVIEW + PF_FRAC_ZOOM_IN;
-  const t3 = t2 + PF_FRAC_HOLD_VELMAX;
-  return tau > t2 && tau <= t3;
-}
-
-// Etiqueta "⚡ XX km/h" durante alejamiento + panorámica final -- distinta
-// de la tarjeta grande de Fase 5 (esa ya desapareció antes de tD). Ancla al
-// MISMO punto/índice que Fase 5 ya resolvió (datos.indiceVelMax/
+// Etiqueta "⚡ XX km/h" durante alejamiento (la transición hacia el
+// panorámico, sin cambios respecto a como ya funcionaba) -- una sola línea,
+// sin nombre de calle. El enriquecimiento con nombre de calle/sector es
+// exclusivo del panorámico final (ver dibujarEtiquetasPanoramicaV2 más
+// abajo), porque recién ahí la cámara está quieta y tiene sentido leerlo.
+// Ancla al MISMO índice que Fase 5 ya resolvió (datos.indiceVelMax/
 // velocidadMaxima, vía velocidadMaximaConPunto) -- nunca recalcula nada de
-// GPS/velocidad. `puntoVelMax` es el mismo valor ya resuelto (ver
-// resolverPuntoVelMaxV2 en camaraV2.ts) que recibió la cámara -- acá solo
-// para saber si la sub-secuencia de zoom está realmente activa (si es
-// null, la cámara nunca se acercó, así que tampoco corresponde la variante
-// de 2 líneas). Se georreferencia con la cámara de cada frame (tamaño en
-// pantalla fijo, como todo lo demás acá). Deja de dibujarse sola en cuanto
-// termina panoramicaFinal, porque esta función solo se llama desde el loop
-// principal -- los beats de cierre (foto final/logo) nunca la invocan.
-export function dibujarEtiquetaVelMaxFinalV2(
-  ctx: CanvasRenderingContext2D,
-  frame: FrameV2,
-  ruta: RutaCoreografiaV2,
-  datos: DatosEstadisticasV2,
-  params: ParametrosCoreografiaV2,
-  puntoVelMax: { x: number; y: number } | null,
-): void {
-  if (frame.fase !== "alejamientoPaneo" && frame.fase !== "panoramicaFinal") return;
+// GPS/velocidad.
+export function dibujarEtiquetaVelMaxFinalV2(ctx: CanvasRenderingContext2D, frame: FrameV2, ruta: RutaCoreografiaV2, datos: DatosEstadisticasV2): void {
+  if (frame.fase !== "alejamientoPaneo") return;
   if (datos.indiceVelMax < 0) return;
 
   const p = aPantalla(ruta.puntosZ17[datos.indiceVelMax], frame.camara);
-  const destacado = enHoldVelMaxFinal(frame, params, puntoVelMax);
   const texto = `⚡ ${Math.round(datos.velocidadMaxima)} km/h`;
-  const textoSecundario = "VELOCIDAD MÁXIMA";
 
   ctx.save();
-  ctx.font = destacado ? "800 17px Arial, sans-serif" : "700 15px Arial, sans-serif";
+  ctx.font = "700 15px Arial, sans-serif";
   const anchoTexto = ctx.measureText(texto).width;
-  let anchoTextoSecundario = 0;
-  if (destacado) {
-    ctx.font = "700 12px Arial, sans-serif";
-    anchoTextoSecundario = ctx.measureText(textoSecundario).width;
-  }
-  const paddingX = 12;
-  const anchoChip = Math.max(anchoTexto, anchoTextoSecundario) + paddingX * 2;
-  const altoChip = destacado ? 46 : 26;
+  const paddingX = 10;
+  const anchoChip = anchoTexto + paddingX * 2;
+  const altoChip = 26;
 
   const margen = 8;
   let arriba = true;
   let chipY = p.y - altoChip - 16;
   // Nunca superponerse con el panel de estadísticas de Fase 5 (arriba de
-  // todo, siempre presente en estas dos fases).
+  // todo, siempre presente durante alejamiento).
   if (chipY < ALTO_PANEL_RESUMEN_FINAL + margen) {
     arriba = false;
     chipY = p.y + 16;
@@ -444,8 +412,6 @@ export function dibujarEtiquetaVelMaxFinalV2(
   if (chipY + altoChip > ALTO_VIDEO - margen) chipY = ALTO_VIDEO - margen - altoChip;
   const chipX = clamp(p.x - anchoChip / 2, margen, ANCHO_VIDEO - anchoChip - margen);
 
-  // Línea guía corta -- mismo criterio que la tarjeta de foto/vel. máxima,
-  // conecta el punto real (georreferenciado) con la etiqueta.
   ctx.strokeStyle = "rgba(255,255,255,0.5)";
   ctx.lineWidth = 1.5;
   ctx.beginPath();
@@ -453,9 +419,7 @@ export function dibujarEtiquetaVelMaxFinalV2(
   ctx.lineTo(chipX + anchoChip / 2, arriba ? chipY + altoChip : chipY);
   ctx.stroke();
 
-  // Píldora -- deliberadamente más chica que la tarjeta temporal (158x62)
-  // de Fase 5, incluso en su variante destacada de 2 líneas.
-  trazarRectRedondeado(ctx, chipX, chipY, anchoChip, altoChip, destacado ? 14 : altoChip / 2);
+  trazarRectRedondeado(ctx, chipX, chipY, anchoChip, altoChip, altoChip / 2);
   ctx.fillStyle = "rgba(13,10,6,0.78)";
   ctx.fill();
   ctx.lineWidth = 1.5;
@@ -466,19 +430,231 @@ export function dibujarEtiquetaVelMaxFinalV2(
   ctx.textBaseline = "middle";
   ctx.shadowColor = "rgba(0,0,0,0.8)";
   ctx.shadowBlur = 4;
-  if (destacado) {
-    ctx.font = "800 17px Arial, sans-serif";
-    ctx.fillStyle = COLOR_VELMAX_FINAL;
-    ctx.fillText(texto, chipX + anchoChip / 2, chipY + altoChip / 2 - 10);
-    ctx.font = "700 12px Arial, sans-serif";
-    ctx.fillStyle = "#f2efe9";
-    ctx.fillText(textoSecundario, chipX + anchoChip / 2, chipY + altoChip / 2 + 11);
-  } else {
-    ctx.font = "700 15px Arial, sans-serif";
-    ctx.fillStyle = "#f2efe9";
-    ctx.fillText(texto, chipX + anchoChip / 2, chipY + altoChip / 2 + 1);
+  ctx.font = "700 15px Arial, sans-serif";
+  ctx.fillStyle = "#f2efe9";
+  ctx.fillText(texto, chipX + anchoChip / 2, chipY + altoChip / 2 + 1);
+  ctx.restore();
+}
+
+// --- Panorámico final: etiquetas de calles/sectores + velocidad máxima ---
+// Cámara SIEMPRE fija (ruta.centroide) durante toda esta fase -- por eso la
+// posición en pantalla de cada etiqueta se resuelve UNA sola vez (mismo
+// principio que congelar cardX/cardY en construirFotosRutaV2 más arriba),
+// no por frame. Fuente de los nombres: datos.sectoresRuta, ya resuelto por
+// MisRutasPanel.tsx (0 consultas nuevas) + un único nombre de calle para
+// velocidad máxima, resuelto una vez por el llamador (generarVideoRecorridoV2.ts)
+// ANTES de esta función -- acá nunca se geocodifica nada.
+export interface EtiquetaPanoramicaV2 {
+  tipo: "sector" | "velmax";
+  lineas: string[];
+  puntoPantalla: { x: number; y: number };
+  cajaX: number;
+  cajaY: number;
+  ancho: number;
+  alto: number;
+}
+
+interface RectanguloEtiquetaV2 {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+function rectanguloDesdeCentroV2(cx: number, cy: number, ancho: number, alto: number): RectanguloEtiquetaV2 {
+  return { x0: cx - ancho / 2, y0: cy - alto / 2, x1: cx + ancho / 2, y1: cy + alto / 2 };
+}
+
+function seSuperponenV2(a: RectanguloEtiquetaV2, b: RectanguloEtiquetaV2): boolean {
+  return a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0;
+}
+
+// Direcciones candidatas alrededor del punto (no solo arriba/abajo) a
+// radios crecientes -- determinístico: se prueba en este orden fijo y se
+// toma la PRIMERA que no se superponga con ninguna etiqueta ya colocada y
+// quede dentro del canvas. Con máximo 4 etiquetas en total (3 sectores + 1
+// de velocidad máxima) esto resuelve casi siempre en el primer o segundo
+// radio.
+const DIRECCIONES_CANDIDATAS_ETIQUETA_V2: { dx: number; dy: number }[] = [
+  { dx: 0, dy: 1 },
+  { dx: 0, dy: -1 },
+  { dx: 1, dy: 0 },
+  { dx: -1, dy: 0 },
+  { dx: 0.7071, dy: 0.7071 },
+  { dx: -0.7071, dy: 0.7071 },
+  { dx: 0.7071, dy: -0.7071 },
+  { dx: -0.7071, dy: -0.7071 },
+];
+const RADIOS_CANDIDATOS_ETIQUETA_V2 = [30, 46, 64, 86, 112];
+const MARGEN_PANTALLA_ETIQUETA_V2 = 12;
+
+function ubicarEtiquetaV2(
+  punto: { x: number; y: number },
+  ancho: number,
+  alto: number,
+  yaColocadas: RectanguloEtiquetaV2[],
+): { cx: number; cy: number } {
+  for (const radio of RADIOS_CANDIDATOS_ETIQUETA_V2) {
+    for (const dir of DIRECCIONES_CANDIDATAS_ETIQUETA_V2) {
+      const cx = clamp(
+        punto.x + dir.dx * radio,
+        MARGEN_PANTALLA_ETIQUETA_V2 + ancho / 2,
+        ANCHO_VIDEO - MARGEN_PANTALLA_ETIQUETA_V2 - ancho / 2,
+      );
+      const cy = clamp(
+        punto.y + dir.dy * radio,
+        ALTO_PANEL_COMPACTO + MARGEN_PANTALLA_ETIQUETA_V2 + alto / 2,
+        ALTO_VIDEO - MARGEN_PANTALLA_ETIQUETA_V2 - alto / 2,
+      );
+      const rect = rectanguloDesdeCentroV2(cx, cy, ancho, alto);
+      if (yaColocadas.every((r) => !seSuperponenV2(rect, r))) return { cx, cy };
+    }
+  }
+  // Fallback -- con <=4 etiquetas no debería alcanzarse nunca, pero nunca se
+  // deja de mostrar una etiqueta por esto (queda dentro del canvas igual,
+  // solo sin garantía de cero superposición en este caso extremo).
+  const radioFinal = RADIOS_CANDIDATOS_ETIQUETA_V2[RADIOS_CANDIDATOS_ETIQUETA_V2.length - 1];
+  return {
+    cx: clamp(punto.x, MARGEN_PANTALLA_ETIQUETA_V2 + ancho / 2, ANCHO_VIDEO - MARGEN_PANTALLA_ETIQUETA_V2 - ancho / 2),
+    cy: clamp(
+      punto.y + radioFinal,
+      ALTO_PANEL_COMPACTO + MARGEN_PANTALLA_ETIQUETA_V2 + alto / 2,
+      ALTO_VIDEO - MARGEN_PANTALLA_ETIQUETA_V2 - alto / 2,
+    ),
+  };
+}
+
+function medirCajaEtiquetaV2(lineas: string[], fontPrincipal: string, fontSecundario?: string): { ancho: number; alto: number } {
+  const medidor = document.createElement("canvas").getContext("2d");
+  const paddingX = 12;
+  let anchoMax = 0;
+  if (medidor) {
+    medidor.font = fontPrincipal;
+    anchoMax = medidor.measureText(lineas[0]).width;
+    if (lineas[1] && fontSecundario) {
+      medidor.font = fontSecundario;
+      anchoMax = Math.max(anchoMax, medidor.measureText(lineas[1]).width);
+    }
+  }
+  return { ancho: anchoMax + paddingX * 2, alto: lineas.length > 1 ? 46 : 26 };
+}
+
+// Construye la lista final de etiquetas del panorámico -- UNA sola vez
+// (cámara fija durante toda la fase, no hace falta recalcular por frame).
+// Prioridad: velocidad máxima primero (si hay un tramo confiable), después
+// hasta 3 etiquetas de sector -- así, si dos etiquetas compiten por el
+// mismo espacio, la de velocidad máxima nunca cede su lugar a una de calle.
+export function construirEtiquetasPanoramicaV2(
+  centroide: EstadoCamaraV2,
+  ruta: RutaCoreografiaV2,
+  datos: DatosEstadisticasV2,
+  sectoresRuta: { lat: number; lon: number; nombre: string; distanciaKm: number }[] | undefined,
+  nombreCalleVelMax: string | null,
+): EtiquetaPanoramicaV2[] {
+  const colocadas: RectanguloEtiquetaV2[] = [];
+  const resultado: EtiquetaPanoramicaV2[] = [];
+
+  if (datos.indiceVelMax >= 0 && datos.indiceVelMax < ruta.puntosZ17.length) {
+    const puntoPantalla = aPantalla(ruta.puntosZ17[datos.indiceVelMax], centroide);
+    const lineas = [`⚡ ${Math.round(datos.velocidadMaxima)} km/h`, nombreCalleVelMax || "VELOCIDAD MÁXIMA"];
+    const { ancho, alto } = medirCajaEtiquetaV2(lineas, "800 17px Arial, sans-serif", "700 12px Arial, sans-serif");
+    const { cx, cy } = ubicarEtiquetaV2(puntoPantalla, ancho, alto, colocadas);
+    const rect = rectanguloDesdeCentroV2(cx, cy, ancho, alto);
+    colocadas.push(rect);
+    resultado.push({ tipo: "velmax", lineas, puntoPantalla, cajaX: rect.x0, cajaY: rect.y0, ancho, alto });
+  }
+
+  for (const sector of sectoresRuta ?? []) {
+    if (!sector.nombre) continue;
+    const puntoZ17 = { x: lonAPixelX(sector.lon, ZOOM_SEGUIMIENTO), y: latAPixelY(sector.lat, ZOOM_SEGUIMIENTO) };
+    const puntoPantalla = aPantalla(puntoZ17, centroide);
+    const lineas = [sector.nombre];
+    const { ancho, alto } = medirCajaEtiquetaV2(lineas, "700 15px Arial, sans-serif");
+    const { cx, cy } = ubicarEtiquetaV2(puntoPantalla, ancho, alto, colocadas);
+    const rect = rectanguloDesdeCentroV2(cx, cy, ancho, alto);
+    colocadas.push(rect);
+    resultado.push({ tipo: "sector", lineas, puntoPantalla, cajaX: rect.x0, cajaY: rect.y0, ancho, alto });
+  }
+
+  return resultado;
+}
+
+function dibujarMarcaSectorDiscretaV2(ctx: CanvasRenderingContext2D, cx: number, cy: number): void {
+  ctx.beginPath();
+  ctx.arc(cx, cy, 5, 0, Math.PI * 2);
+  ctx.fillStyle = COLOR_DORADO;
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = "rgba(255,255,255,0.85)";
+  ctx.stroke();
+}
+
+// Dibuja la lista ya construida -- `alpha` es el fundido compartido entre
+// todas (calles + velocidad máxima aparecen/desaparecen juntas, ver
+// enBeatEstadisticasFinal en overlayFase5.ts para el corte de la barra de
+// estadísticas que ocurre en la misma ventana). La marca discreta permanente
+// de velocidad máxima (el punto rojo) NO se dibuja acá -- esa ya la dibuja
+// overlayFase5.ts, sin fundido, siempre visible una vez alcanzada.
+export function dibujarEtiquetasPanoramicaV2(ctx: CanvasRenderingContext2D, etiquetas: EtiquetaPanoramicaV2[], alpha: number): void {
+  if (alpha <= 0 || etiquetas.length === 0) return;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  for (const etq of etiquetas) {
+    const cx = etq.cajaX + etq.ancho / 2;
+    const cy = etq.cajaY + etq.alto / 2;
+    const esVelMax = etq.tipo === "velmax";
+
+    if (!esVelMax) dibujarMarcaSectorDiscretaV2(ctx, etq.puntoPantalla.x, etq.puntoPantalla.y);
+
+    ctx.strokeStyle = "rgba(255,255,255,0.5)";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(etq.puntoPantalla.x, etq.puntoPantalla.y);
+    ctx.lineTo(cx, cy);
+    ctx.stroke();
+
+    trazarRectRedondeado(ctx, etq.cajaX, etq.cajaY, etq.ancho, etq.alto, esVelMax ? 14 : etq.alto / 2);
+    ctx.fillStyle = "rgba(13,10,6,0.78)";
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = esVelMax ? COLOR_VELMAX_FINAL : "rgba(224,178,78,0.55)";
+    ctx.stroke();
+
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.shadowColor = "rgba(0,0,0,0.8)";
+    ctx.shadowBlur = 4;
+    if (esVelMax) {
+      ctx.font = "800 17px Arial, sans-serif";
+      ctx.fillStyle = COLOR_VELMAX_FINAL;
+      ctx.fillText(etq.lineas[0], cx, cy - 10);
+      ctx.font = "700 12px Arial, sans-serif";
+      ctx.fillStyle = "#f2efe9";
+      ctx.fillText(etq.lineas[1], cx, cy + 11);
+    } else {
+      ctx.font = "700 15px Arial, sans-serif";
+      ctx.fillStyle = COLOR_DORADO;
+      ctx.fillText(etq.lineas[0], cx, cy + 1);
+    }
   }
   ctx.restore();
+}
+
+// Fundido compartido de las etiquetas del panorámico -- misma división que
+// enBeatEstadisticasFinal en overlayFase5.ts (reimplementada acá de forma
+// independiente): 1 hasta el fin del beat A, baja a 0 durante el fundido
+// corto, 0 durante el beat de estadísticas. Si duracionPanoramicaFinalSeg
+// es 0, no hay tiempo para mostrar nada -- se devuelve 0 directamente.
+const FRAC_BEAT_A_FIN_V2 = 2.5 / 5.5;
+const FRAC_FUNDIDO_FIN_V2 = 2.8 / 5.5;
+
+export function alphaEtiquetasPanoramicaV2(frame: FrameV2, params: ParametrosCoreografiaV2): number {
+  if (frame.fase !== "panoramicaFinal" || params.duracionPanoramicaFinalSeg <= 0) return 0;
+  const { tEF } = limitesTiempoSeguimiento(params);
+  const tau = clamp((frame.tiempoSeg - tEF) / params.duracionPanoramicaFinalSeg, 0, 1);
+  if (tau <= FRAC_BEAT_A_FIN_V2) return 1;
+  if (tau <= FRAC_FUNDIDO_FIN_V2) return 1 - (tau - FRAC_BEAT_A_FIN_V2) / (FRAC_FUNDIDO_FIN_V2 - FRAC_BEAT_A_FIN_V2);
+  return 0;
 }
 
 // --- Cierre: foto final + transición + logo/ciudad -- cuadros agregados

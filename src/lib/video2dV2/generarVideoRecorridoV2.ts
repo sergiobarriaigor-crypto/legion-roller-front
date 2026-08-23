@@ -13,6 +13,7 @@
 // el usuario ya elige hoy (fotos, música). No se importa ni se modifica
 // nada de /debug-video-v2 -- ese archivo sigue siendo solo un laboratorio.
 import type { DatosTarjetaRecorrido } from "../tarjetaRecorrido";
+import { reverseGeocodificarEspecifico } from "../geocodificacion";
 import { elegirGrillaAncha } from "./grillaAncha";
 import {
   ANCHO_VIDEO,
@@ -21,7 +22,6 @@ import {
   construirRutaCoreografiaV2,
   construirCoberturaGrillaAnchaV2,
   calcularDuracionSeguimientoV2,
-  resolverPuntoVelMaxV2,
   type ParametrosCoreografiaV2,
 } from "./camaraV2";
 import { construirTrayectoriaV2 } from "./trayectoriaV2";
@@ -48,11 +48,11 @@ const PARAMS_DEFECTO_V2: Omit<ParametrosCoreografiaV2, "duracionSeguimientoSeg">
   duracionPanoramicaInicialSeg: 0.8,
   duracionPaneoAcercamientoSeg: 3.2,
   duracionAlejamientoPaneoSeg: 3.2,
-  // Panorámica final: hold panorámico -> zoom hacia velocidad máxima ->
-  // hold -> zoom-out -> hold con estadísticas (ver camaraV2.ts, PF_FRAC_*).
-  // ~6.5s ya aprobado; si no hay punto de velocidad máxima válido, esta
-  // fase simplemente queda estática todo el tiempo, como antes.
-  duracionPanoramicaFinalSeg: 6.5,
+  // Panorámica final: cámara SIEMPRE fija (sin zoom/paneo) -- dos momentos
+  // sin mover la cámara: trazado+calles+velocidad máxima (~2.8s), fundido
+  // corto, estadísticas generales (~2.7s). Ver overlayFase5.ts/overlayFase6.ts
+  // (FRAC_BEAT_A_FIN/FRAC_FUNDIDO_FIN) para el corte exacto.
+  duracionPanoramicaFinalSeg: 5.5,
   finPaneoFraccion: 0.7,
   inicioZoomFraccion: 0.55,
 };
@@ -72,6 +72,26 @@ export interface ResultadoVideoRecorridoV2 {
   mimeType: string;
 }
 
+// Única consulta externa nueva de todo este módulo: el nombre de calle/
+// sector del punto real de velocidad máxima (geocodificacion.ts no expone
+// cancelación propia -- este timeout es solo para no depender de que
+// Nominatim responda; la petición igual puede seguir en curso de fondo,
+// pero la generación del video nunca espera más que esto). Cualquier falla
+// o demora deja `null` -- el llamador ya sabe mostrar "VELOCIDAD MÁXIMA"
+// genérico en ese caso (ver overlayFase6.ts).
+const TIMEOUT_GEOCODE_VELMAX_MS = 3000;
+
+async function nombreCalleVelMaxConTimeout(lat: number, lon: number): Promise<string | null> {
+  try {
+    return await Promise.race([
+      reverseGeocodificarEspecifico(lat, lon),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), TIMEOUT_GEOCODE_VELMAX_MS)),
+    ]);
+  } catch {
+    return null;
+  }
+}
+
 export async function generarVideoRecorridoV2(
   datos: DatosTarjetaRecorrido,
   opciones: OpcionesVideoRecorridoV2 = {},
@@ -87,17 +107,20 @@ export async function generarVideoRecorridoV2(
   const duracionSeguimientoAuto = calcularDuracionSeguimientoV2(ruta.distanciaTotalKm);
   const params: ParametrosCoreografiaV2 = { ...PARAMS_DEFECTO_V2, duracionSeguimientoSeg: duracionSeguimientoAuto };
 
-  // Estadísticas (incluye indiceVelMax, vía velocidadMaximaConPunto) ANTES
-  // de construir cobertura/trayectoria -- puntoVelMax se resuelve UNA sola
-  // vez acá y se reutiliza tal cual en cámara/cobertura/overlays, nunca se
-  // recalcula la velocidad en otro lado.
   const datosEstadisticas = construirDatosEstadisticasV2(rutaGps, ruta.distanciaTotalKm);
-  const puntoVelMax = resolverPuntoVelMaxV2(ruta, datosEstadisticas.indiceVelMax);
 
-  const coberturaAnchaFase2 = construirCoberturaGrillaAnchaV2(ruta, ventana, params, ventana.factorAncho, puntoVelMax);
+  // Único punto donde se geocodifica algo nuevo en todo este módulo: el
+  // nombre de calle/sector del punto real de velocidad máxima. Las 3
+  // etiquetas de sectoresRuta NO se geocodifican acá -- ya vienen resueltas
+  // en `datos` desde MisRutasPanel.tsx. Nunca bloquea ni interrumpe la
+  // generación (timeout + try/catch ya resueltos en la función).
+  const puntoVelMaxGps = datosEstadisticas.indiceVelMax >= 0 ? rutaGps[datosEstadisticas.indiceVelMax] : null;
+  const nombreCalleVelMax = puntoVelMaxGps ? await nombreCalleVelMaxConTimeout(puntoVelMaxGps.lat, puntoVelMaxGps.lon) : null;
+
+  const coberturaAnchaFase2 = construirCoberturaGrillaAnchaV2(ruta, ventana, params, ventana.factorAncho);
   const clavesAnchaFase2 = new Set([...grillaAncha.claves, ...coberturaAnchaFase2]);
 
-  const trayectoria = construirTrayectoriaV2(ruta, params, FPS_V2, puntoVelMax);
+  const trayectoria = construirTrayectoriaV2(ruta, params, FPS_V2);
 
   const presupuestoZ17Bytes = calcularPresupuestoZ17Bytes(
     PRESUPUESTO_TOTAL_BYTES_DEFECTO,
@@ -151,7 +174,8 @@ export async function generarVideoRecorridoV2(
       ruta,
       params,
       datosEstadisticas,
-      puntoVelMax,
+      sectoresRuta: datos.sectoresRuta,
+      nombreCalleVelMax,
       fotosRutaUrls: fotosPinDataUrl ?? [],
       fotoCierreUrl: fotoFinalDataUrl,
       ciudad: datos.ciudad,

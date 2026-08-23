@@ -13,17 +13,6 @@ export const ESCALA_SEGUIMIENTO = 0.6; // mismo valor de referencia ya validado 
 export const ANCHO_VIDEO = 720;
 export const ALTO_VIDEO = 1280;
 
-// Zoom del resumen final hacia el punto de velocidad máxima -- acotado a
-// <= ESCALA_SEGUIMIENTO (nunca más cerrado que el seguimiento) A PROPÓSITO:
-// construirCorredorZ17V2 reserva su margen por punto dimensionado para el
-// viewport de ESCALA_SEGUIMIENTO (el más chico/apretado posible); un
-// escala MENOR necesita un viewport más grande en espacio Z17 y podría
-// pedir tiles fuera de ese corredor ya reservado. Si tras la revisión
-// visual esto se ve demasiado cerrado, hay que bajar este valor Y volver a
-// correr el diagnóstico de Fase 3 (tilesFaltantes) antes de dar por buena
-// la nueva escala -- nunca cambiarlo sin esa verificación.
-export const ESCALA_ZOOM_VELMAX = ESCALA_SEGUIMIENTO;
-
 // --- Cámara de seguimiento: anticipación y suavizado ---
 // Mismos valores/fórmulas ya validados en V1 (tarjetaRecorrido.ts), portados
 // acá porque V2 no importa de ese archivo. Sin el clamp a "bordes del mapa
@@ -283,21 +272,6 @@ export function construirRutaCoreografiaV2(puntos: PuntoGps[], grillaAncha: Gril
   return { ...rutaParcial, inicioSeguimiento, finSeguimiento };
 }
 
-// Resuelve el punto de velocidad máxima como ancla de cámara para el
-// resumen final -- NUNCA recalcula velocidad ni GPS (eso ya lo resolvió
-// velocidadMaximaConPunto en overlayFase5.ts, una sola vez en todo el
-// pipeline); acá solo se valida que el índice YA calculado sea usable como
-// coordenada de cámara. Devuelve null ante cualquier duda (índice
-// inválido/fuera de rango, coordenada no finita) -- el llamador debe tratar
-// null como "sin secuencia especial" (panorámica estática de siempre),
-// nunca como un error que deba interrumpir la generación del video.
-export function resolverPuntoVelMaxV2(ruta: RutaCoreografiaV2, indiceVelMax: number): { x: number; y: number } | null {
-  if (!Number.isInteger(indiceVelMax) || indiceVelMax < 0 || indiceVelMax >= ruta.puntosZ17.length) return null;
-  const p = ruta.puntosZ17[indiceVelMax];
-  if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) return null;
-  return { x: p.x, y: p.y };
-}
-
 // Duración de referencia para el tramo de seguimiento -- mismos valores ya
 // validados en V1 (SEGUNDOS_POR_KM_SEGUIMIENTO/DURACION_TRAZO_MIN_SEG/
 // DURACION_TRAZO_MAX_SEG), sin la conversión a duracionAnimSeg (acá el
@@ -338,65 +312,19 @@ export interface ResultadoFaseV2 {
   fraccionTrazo: number | null;
 }
 
-// --- Sub-secuencia dentro de panoramicaFinal: panorámica completa -> zoom
-// hacia el punto de velocidad máxima -> hold -> zoom-out -> panorámica +
-// estadísticas. Fracciones FIJAS de duracionPanoramicaFinalSeg (mismo
-// principio que finPaneoFraccion/inicioZoomFraccion, pero no expuestas como
-// parámetro -- es una secuencia aprobada como una sola pieza, no algo para
-// tunear por ruta). Con el default de producción (~6.5s) dan aprox.
-// 0.9s/0.9s/1.7s/0.9s/2.1s. Si puntoVelMax es null (ver resolverPuntoVelMaxV2),
-// panoramicaFinal se queda exactamente como antes de este cambio: centroide
-// fijo durante toda la fase, sin ninguna sub-secuencia. ---
-const PF_FRAC_HOLD_OVERVIEW = 0.9 / 6.5;
-const PF_FRAC_ZOOM_IN = 0.9 / 6.5;
-const PF_FRAC_HOLD_VELMAX = 1.7 / 6.5;
-const PF_FRAC_ZOOM_OUT = 0.9 / 6.5;
-// resto (~2.1/6.5) = hold final con estadísticas -- ver overlayFase5.ts
-
-function interpolarCamaraV2(a: EstadoCamaraV2, b: EstadoCamaraV2, p: number): EstadoCamaraV2 {
-  return { cx: a.cx + (b.cx - a.cx) * p, cy: a.cy + (b.cy - a.cy) * p, escala: a.escala + (b.escala - a.escala) * p };
-}
-
-function camaraPanoramicaFinalV2(
-  ruta: RutaCoreografiaV2,
-  params: ParametrosCoreografiaV2,
-  tiempoSeg: number,
-  tEF: number,
-  puntoVelMax: { x: number; y: number } | null,
-): EstadoCamaraV2 {
-  if (!puntoVelMax || params.duracionPanoramicaFinalSeg <= 0) return { ...ruta.centroide };
-
-  const tau = clamp((tiempoSeg - tEF) / params.duracionPanoramicaFinalSeg, 0, 1);
-  const objetivo: EstadoCamaraV2 = { cx: puntoVelMax.x, cy: puntoVelMax.y, escala: ESCALA_ZOOM_VELMAX };
-
-  const t1 = PF_FRAC_HOLD_OVERVIEW;
-  const t2 = t1 + PF_FRAC_ZOOM_IN;
-  const t3 = t2 + PF_FRAC_HOLD_VELMAX;
-  const t4 = t3 + PF_FRAC_ZOOM_OUT;
-
-  if (tau <= t1) return { ...ruta.centroide };
-  if (tau <= t2) return interpolarCamaraV2(ruta.centroide, objetivo, suavizar((tau - t1) / (t2 - t1)));
-  if (tau <= t3) return { ...objetivo };
-  if (tau <= t4) return interpolarCamaraV2(objetivo, ruta.centroide, suavizar((tau - t3) / (t4 - t3)));
-  return { ...ruta.centroide };
-}
-
 // Único punto de entrada de la coreografía completa: dado un tiempo real
 // (segundos desde el arranque) devuelve la fase activa y la cámara. Fases
 // A/B/C/E/F/G son funciones puras de `tiempoSeg` (interpolación con
 // suavizar()); la fase D (seguimiento) es recursiva -- en modo
 // "incremental" usa `estadoSeguimiento` (mutado in place, para reproducción
 // en vivo cuadro a cuadro); en modo "resimular" reconstruye desde cero
-// (para el scrubber). `puntoVelMax` (ver resolverPuntoVelMaxV2) ancla la
-// sub-secuencia de panoramicaFinal -- null desactiva esa sub-secuencia sin
-// romper nada (panoramicaFinal queda estática, como siempre).
+// (para el scrubber).
 export function calcularFaseYCamaraV2(
   ruta: RutaCoreografiaV2,
   params: ParametrosCoreografiaV2,
   tiempoSeg: number,
   estadoSeguimiento: EstadoRecursivoSeguimientoV2,
   modo: "incremental" | "resimular",
-  puntoVelMax: { x: number; y: number } | null = null,
 ): ResultadoFaseV2 {
   const tA = params.duracionPanoramicaInicialSeg;
   const tBC = tA + params.duracionPaneoAcercamientoSeg;
@@ -449,7 +377,7 @@ export function calcularFaseYCamaraV2(
     };
   }
 
-  return { fase: "panoramicaFinal", camara: camaraPanoramicaFinalV2(ruta, params, tiempoSeg, tEF, puntoVelMax), fraccionTrazo: null };
+  return { fase: "panoramicaFinal", camara: { ...ruta.centroide }, fraccionTrazo: null };
 }
 
 // --- Corredor de tiles Z17 para la coreografía completa (sin segmentación
@@ -503,7 +431,6 @@ export function construirCoberturaGrillaAnchaV2(
   ventana: VentanaCrossfade,
   params: ParametrosCoreografiaV2,
   factorAncho: number,
-  puntoVelMax: { x: number; y: number } | null,
   pasos = 60,
 ): Set<string> {
   const tiles = new Set<string>();
@@ -533,7 +460,7 @@ export function construirCoberturaGrillaAnchaV2(
   for (let i = 0; i <= pasos; i++) {
     const tiempoSeg = (duracionTotal * i) / pasos;
     if (tiempoSeg > tBC && tiempoSeg <= tD && pesoTracking >= 1) continue;
-    const { camara } = calcularFaseYCamaraV2(ruta, params, tiempoSeg, estadoDescartable, "resimular", puntoVelMax);
+    const { camara } = calcularFaseYCamaraV2(ruta, params, tiempoSeg, estadoDescartable, "resimular");
     agregarSiVisible(camara);
   }
 
