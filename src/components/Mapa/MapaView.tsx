@@ -40,6 +40,7 @@ import {
   registrarCallbackPosicion,
   obtenerDiagnosticoGps,
   limpiarDiagnosticoGps,
+  obtenerDiagnosticoFlujo,
 } from "@/lib/grabacionGps";
 import { PatinadoresActivosPanel } from "@/components/Mapa/PatinadoresActivosPanel";
 import { MisRutasPanel } from "@/components/Mapa/MisRutasPanel";
@@ -1086,6 +1087,16 @@ export function MapaView() {
     // DIAGNÓSTICO TEMPORAL -- confirma cuántos fixes había en el snapshot
     // justo antes del POST. BORRAR junto con el resto de la instrumentación.
     console.log(`[MapaView] FRONT diag antes POST=${diagnosticoGps.length}`);
+    // DIAGNÓSTICO TEMPORAL -- señales escalares independientes del array de
+    // arriba (ver obtenerDiagnosticoFlujo), para poder localizar en qué
+    // frontera del flujo frontend se vació un acumulador que sí llegó a
+    // tener datos. snapshotAntesPost se completa acá mismo, del lado del
+    // componente, con el largo de la copia ya capturada arriba. BORRAR
+    // junto con el resto de la instrumentación de diagnosticoGps.
+    const diagnosticoFlujo = {
+      ...obtenerDiagnosticoFlujo(),
+      snapshotAntesPost: diagnosticoGps.length,
+    };
     // Único lugar donde el watcher real se apaga -- ver grabacionGps.ts.
     // Devuelve los puntos ya confirmados (incluye el descarte de cualquier
     // punto pendiente de confirmar, mismo criterio de siempre: si la sesión
@@ -1124,6 +1135,7 @@ export function MapaView() {
             mapeado: eraMapeado,
             publicacionId: rodadaUnidaIdRef.current ?? undefined,
             diagnosticoGps,
+            diagnosticoFlujo,
           },
           tokenActual,
         );

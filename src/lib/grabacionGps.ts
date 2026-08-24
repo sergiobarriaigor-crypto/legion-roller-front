@@ -159,10 +159,27 @@ let indiceDiagSiguiente = 0;
 // resuelve, exactamente como decide la lógica real.
 let registroPendienteDiag: FixDiagnosticoGps | null = null;
 
+// DIAGNÓSTICO TEMPORAL -- señales escalares de "diagnosticoFlujo", ver
+// obtenerDiagnosticoFlujo más abajo. A propósito NUNCA se derivan leyendo
+// diagnosticoFixes.length después del hecho -- cada una se actualiza en su
+// propio punto del código, para que sigan siendo un registro válido aunque
+// el array se vacíe por algún motivo aún no identificado. BORRAR junto con
+// el resto de la instrumentación de diagnosticoGps.
+let vecesRegistrarDiagnosticoGps = 0;
+let maxDiagnosticoFixesObservado = 0;
+let diagnosticoFixesAlObtenerSnapshot = 0;
+// Bump manual (v2, v3...) cada vez que se redespliegue esta instrumentación,
+// para poder confirmar si el celular está ejecutando el build esperado.
+const BUILD_TAG_DIAGNOSTICO = "diagflujo-v1";
+
 function registrarDiagnosticoGps(
   pos: PosicionSimple,
   base: { horaRecepcion: number; retrasoMs: number | null; dtRealSeg: number | null; etiquetas: string[] },
 ): void {
+  // DIAGNÓSTICO TEMPORAL -- primera línea, sin condición: si esta función se
+  // invoca aunque sea una vez, este contador lo refleja.
+  vecesRegistrarDiagnosticoGps++;
+
   const registro: FixDiagnosticoGps = {
     indice: indiceDiagSiguiente++,
     lat: pos.lat,
@@ -183,6 +200,9 @@ function registrarDiagnosticoGps(
   // se ejecuta y acumula durante la grabación real. BORRAR junto con el
   // resto de la instrumentación de diagnosticoGps.
   log(`FRONT diag acumulado=${diagnosticoFixes.length}`);
+  // DIAGNÓSTICO TEMPORAL -- pico histórico del largo del array, tomado acá
+  // (no releído después) para que sobreviva aunque el array se vacíe.
+  maxDiagnosticoFixesObservado = Math.max(maxDiagnosticoFixesObservado, diagnosticoFixes.length);
 
   if (!grabacionActiva) {
     return; // no debería ocurrir en uso normal -- queda como "indeterminado"
@@ -247,7 +267,30 @@ function registrarDiagnosticoGps(
 // llegue a registrarDiagnosticoGps() durante el propio cierre de la ruta
 // (ver limpiarDiagnosticoGps más abajo).
 export function obtenerDiagnosticoGps(): FixDiagnosticoGps[] {
-  return [...diagnosticoFixes];
+  const copia = [...diagnosticoFixes];
+  // DIAGNÓSTICO TEMPORAL -- congela el largo de ESTA copia en el instante
+  // exacto en que se crea, para poder comparar contra maxDiagnosticoFixes
+  // (¿el array ya venía vacío al llegar acá, o se vació después?).
+  diagnosticoFixesAlObtenerSnapshot = copia.length;
+  return copia;
+}
+
+// DIAGNÓSTICO TEMPORAL -- snapshot de las señales escalares de flujo (ver
+// arriba), para viajar en el POST junto a diagnosticoGps dentro de
+// diagnosticoFlujo (ver MapaView.tsx finalizarModo). BORRAR junto con el
+// resto de la instrumentación de diagnosticoGps.
+export function obtenerDiagnosticoFlujo(): {
+  vecesRegistrarDiagnosticoGps: number;
+  maxDiagnosticoFixes: number;
+  diagnosticoFixesAlObtenerSnapshot: number;
+  buildFrontend: string;
+} {
+  return {
+    vecesRegistrarDiagnosticoGps,
+    maxDiagnosticoFixes: maxDiagnosticoFixesObservado,
+    diagnosticoFixesAlObtenerSnapshot,
+    buildFrontend: BUILD_TAG_DIAGNOSTICO,
+  };
 }
 
 // DIAGNÓSTICO TEMPORAL -- limpia el acumulador de diagnóstico-gps. La llama
@@ -263,6 +306,11 @@ export function limpiarDiagnosticoGps(): void {
   diagnosticoFixes = [];
   indiceDiagSiguiente = 0;
   registroPendienteDiag = null;
+  // DIAGNÓSTICO TEMPORAL -- mismo criterio: recién se reinician acá, nunca
+  // antes de que finalizarModo() ya haya capturado/enviado el snapshot.
+  vecesRegistrarDiagnosticoGps = 0;
+  maxDiagnosticoFixesObservado = 0;
+  diagnosticoFixesAlObtenerSnapshot = 0;
 }
 
 function kmhEntre(a: PuntoGps, b: PuntoGps): number {
