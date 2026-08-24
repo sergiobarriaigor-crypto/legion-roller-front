@@ -170,7 +170,9 @@ let maxDiagnosticoFixesObservado = 0;
 let diagnosticoFixesAlObtenerSnapshot = 0;
 // Bump manual (v2, v3...) cada vez que se redespliegue esta instrumentación,
 // para poder confirmar si el celular está ejecutando el build esperado.
-const BUILD_TAG_DIAGNOSTICO = "diagflujo-v1";
+// Exportado para que (app)/layout.tsx pueda mostrarlo en pantalla -- un
+// único valor fuente, nunca duplicado a mano en dos archivos.
+export const BUILD_TAG_DIAGNOSTICO = "diagflujo-v2";
 
 function registrarDiagnosticoGps(
   pos: PosicionSimple,

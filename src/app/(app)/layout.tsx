@@ -11,6 +11,22 @@ import { BorradorPostProvider } from "@/context/BorradorPostContext";
 import { ChatHeaderProvider } from "@/context/ChatHeaderContext";
 import { EmergenciaProvider, useEmergencias } from "@/context/EmergenciaContext";
 import { RUTAS_RESTRINGIDAS_VISITANTE } from "@/lib/session";
+import { BUILD_TAG_DIAGNOSTICO } from "@/lib/grabacionGps";
+
+// DIAGNÓSTICO TEMPORAL -- comprobación visible de qué build de frontend está
+// ejecutando el dispositivo, sin depender de la consola/DevTools/ADB. Se
+// muestra en TODAS las pantallas autenticadas (layout compartido), incluida
+// la de "Cargando...", para que sea lo primero visible al abrir la app,
+// antes de iniciar cualquier ruta. Mismo valor que viaja en
+// diagnosticoFlujo.buildFrontend (ver grabacionGps.ts) -- una sola fuente.
+// BORRAR junto con el resto de la instrumentación de diagnosticoGps.
+function EtiquetaBuildDiagnostico() {
+  return (
+    <div className="pointer-events-none fixed bottom-1 left-1 z-50 rounded bg-black/50 px-1.5 py-0.5 font-mono text-[10px] leading-none text-white/70">
+      {BUILD_TAG_DIAGNOSTICO}
+    </div>
+  );
+}
 
 // Mientras el propio usuario tiene una emergencia SOS activa, la app queda
 // candada a /mapa (pedido explícito: mantener la atención ahí, ver todo el
@@ -87,6 +103,7 @@ export default function AppGroupLayout({
   if (cargando || !sesion || rutaRestringida) {
     return (
       <>
+        <EtiquetaBuildDiagnostico />
         <Suspense fallback={null}>
           <RedirigirSinSesion />
         </Suspense>
@@ -108,6 +125,7 @@ export default function AppGroupLayout({
     // en vez de quedar centrados y angostos como en un celular.
     <EmergenciaProvider token={sesion.token} miembroId={sesion.id}>
       <div className="relative mx-auto flex min-h-dvh w-full max-w-md flex-1 flex-col bg-page-bg [transform:translateZ(0)]">
+        <EtiquetaBuildDiagnostico />
         {sesion.rol !== "visitante" && <GuardiaEmergencia />}
         {enConversacionChat ? chatHeader : <AppHeader />}
         {sesion.rol !== "visitante" && <EmergenciaBanner />}
