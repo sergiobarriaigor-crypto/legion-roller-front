@@ -25,6 +25,11 @@
 // hayGrabacionActiva() para todo lo que antes leía de grabacionActivaModulo.
 import { iniciarSeguimientoUbicacion, type PosicionSimple } from "./geolocacionNativa";
 import { distanciaHaversineKm, type PuntoGps } from "./geo";
+// GPS V2 -- FASE 1 (modo sombra, ver diseño). Reutiliza el ÚNICO watcher real
+// de este archivo -- V2 nunca crea uno propio (regla explícita: máximo un
+// watcher GPS real activo). Se le pasa cada fix crudo tal cual llega acá,
+// sin que V2 pueda influir en nada de lo de abajo.
+import { alimentarFixCrudoV2, detenerPipelineV2, iniciarPipelineV2 } from "./gpsV2";
 
 // LOGS TEMPORALES (a sacar una vez confirmado en dispositivo real que el
 // watcher sobrevive cambios de pestaña) -- ver también los logs espejo en
@@ -367,6 +372,9 @@ function registrarPuntoGrabado(puntoNuevo: PuntoGps): void {
 function alRecibirPosicion(pos: PosicionSimple): void {
   const diagBase = logDiagnosticoFix(pos);
   registrarDiagnosticoGps(pos, diagBase);
+  // GPS V2 -- FASE 1: mismo fix crudo, en modo sombra. No lee ni escribe
+  // nada de lo que sigue -- puramente observacional todavía.
+  alimentarFixCrudoV2(pos);
 
   if (grabacionActiva && pos.accuracy <= PRECISION_MAXIMA_PUNTO_GRABADO_M) {
     const puntoGrabado: PuntoGps = { lat: pos.lat, lon: pos.lon, timestamp: Date.now() };
@@ -415,6 +423,10 @@ export function iniciarGrabacionGps(modo: "patinando" | "ruta", mapeado: boolean
   // llegó a llamar limpiarDiagnosticoGps() al terminar la ruta anterior,
   // esto evita que una grabación nueva arrastre datos de la anterior.
   limpiarDiagnosticoGps();
+  // GPS V2 -- FASE 1: arranca el pipeline en modo sombra junto con el único
+  // watcher real -- nunca antes ni después por separado, para que V1 y V2
+  // arranquen exactamente en el mismo instante de la grabación.
+  iniciarPipelineV2(modo, mapeado);
   detenerWatcherReal = iniciarSeguimientoUbicacion(alRecibirPosicion, onError);
   log("watcher iniciado");
 }
@@ -429,6 +441,9 @@ export function detenerGrabacionGps(): PuntoGps[] {
     detenerWatcherReal = null;
     log("watcher detenido — fin de grabación");
   }
+  // GPS V2 -- FASE 1: se detiene junto con el watcher real. Su resultado
+  // todavía no se usa para nada (no controla el recorrido oficial).
+  detenerPipelineV2();
   grabacionActiva = null;
   puntoPendienteConfirmar = null;
   callbackPosicionActual = null;
