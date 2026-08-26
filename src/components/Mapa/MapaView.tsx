@@ -38,9 +38,7 @@ import {
   hayGrabacionActiva,
   obtenerGrabacionActiva,
   registrarCallbackPosicion,
-  obtenerDiagnosticoGps,
   limpiarDiagnosticoGps,
-  obtenerDiagnosticoFlujo,
 } from "@/lib/grabacionGps";
 import { obtenerResumenGpsV2 } from "@/lib/gpsV2";
 import { PatinadoresActivosPanel } from "@/components/Mapa/PatinadoresActivosPanel";
@@ -1077,31 +1075,9 @@ export function MapaView() {
     const tokenActual = tokenRef.current;
     const modoActual = modo;
     const eraMapeado = mapeadoRef.current;
-    // DIAGNÓSTICO TEMPORAL -- snapshot (copia, ver obtenerDiagnosticoGps)
-    // capturado ANTES de tocar cualquier otro estado, para que el envío de
-    // abajo nunca dependa de qué tan rápido se limpia el resto. Se limpia
-    // recién al final de esta función, después del intento de envío (ver
-    // limpiarDiagnosticoGps más abajo) -- BORRAR esta línea, la llamada a
-    // limpiarDiagnosticoGps() y el campo diagnosticoGps del body de abajo
-    // una vez cerrada la investigación GPS.
-    const diagnosticoGps = obtenerDiagnosticoGps();
-    // DIAGNÓSTICO TEMPORAL -- confirma cuántos fixes había en el snapshot
-    // justo antes del POST. BORRAR junto con el resto de la instrumentación.
-    console.log(`[MapaView] FRONT diag antes POST=${diagnosticoGps.length}`);
-    // DIAGNÓSTICO TEMPORAL -- señales escalares independientes del array de
-    // arriba (ver obtenerDiagnosticoFlujo), para poder localizar en qué
-    // frontera del flujo frontend se vació un acumulador que sí llegó a
-    // tener datos. snapshotAntesPost se completa acá mismo, del lado del
-    // componente, con el largo de la copia ya capturada arriba. BORRAR
-    // junto con el resto de la instrumentación de diagnosticoGps.
-    const diagnosticoFlujo = {
-      ...obtenerDiagnosticoFlujo(),
-      snapshotAntesPost: diagnosticoGps.length,
-    };
     // GPS V2 (Fase 2, modo sombra) -- snapshot capturado ANTES de
     // detenerGrabacionGps(), que internamente llama detenerPipelineV2() y
-    // borra el estado del pipeline V2. Mismo criterio que el snapshot de
-    // diagnosticoGps de arriba.
+    // borra el estado del pipeline V2.
     const resumenGpsV2 = obtenerResumenGpsV2();
     // Único lugar donde el watcher real se apaga -- ver grabacionGps.ts.
     // Devuelve los puntos ya confirmados (incluye el descarte de cualquier
@@ -1140,8 +1116,6 @@ export function MapaView() {
             puntos,
             mapeado: eraMapeado,
             publicacionId: rodadaUnidaIdRef.current ?? undefined,
-            diagnosticoGps,
-            diagnosticoFlujo,
           },
           tokenActual,
         );
