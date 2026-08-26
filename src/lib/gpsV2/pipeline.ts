@@ -50,9 +50,13 @@ export function crearPipelineV2(): PipelineV2 {
   let estado: EstadoGpsV2 = "SIN_GRABACION";
   let puntosConfiables: PuntoConfiableV2[] = [];
   const discontinuidades: DiscontinuidadV2[] = [];
-  // Ventana adaptativa del "paso típico" reciente -- nunca un techo de
-  // velocidad fijo, se recalcula sola con el ritmo real de esta grabación.
-  let pasosRecientesKm: number[] = [];
+  // Ventana adaptativa del "ritmo típico" reciente, en km/s -- nunca un
+  // techo de velocidad fijo, se recalcula sola con el ritmo real de esta
+  // grabación. Guarda VELOCIDAD (distancia/dt) de cada paso confiable
+  // reciente, no la distancia cruda -- así una pausa/frenada real que tarda
+  // más tiempo no infla el ritmo típico ni hace ver una distancia grande
+  // como sospechosa (ver procesarEnGrabandoNormal).
+  let ritmosRecientesKmPorSeg: number[] = [];
 
   // Candidato-pendiente dentro de GRABANDO (protección tipo ruta 86, sin
   // hueco evidente) -- separado del candidato de RECUPERANDO a propósito:
@@ -75,9 +79,9 @@ export function crearPipelineV2(): PipelineV2 {
     return puntosConfiables.length > 0 ? puntosConfiables[puntosConfiables.length - 1] : null;
   }
 
-  function registrarPaso(distKm: number): void {
-    pasosRecientesKm.push(distKm);
-    if (pasosRecientesKm.length > VENTANA_PASO_TIPICO_FIXES) pasosRecientesKm.shift();
+  function registrarPaso(velocidadKmPorSeg: number): void {
+    ritmosRecientesKmPorSeg.push(velocidadKmPorSeg);
+    if (ritmosRecientesKmPorSeg.length > VENTANA_PASO_TIPICO_FIXES) ritmosRecientesKmPorSeg.shift();
   }
 
   function aceptarConfiable(punto: PuntoConfiableV2, discontinuidad: DiscontinuidadV2["motivo"] | null): ResultadoProcesarFix {
@@ -92,7 +96,10 @@ export function crearPipelineV2(): PipelineV2 {
       };
       discontinuidades.push(discReg);
     } else if (previo) {
-      registrarPaso(distanciaHaversineKm(previo, punto));
+      const dtPaso = dtSegundos(previo, { time: punto.timestamp });
+      if (dtPaso !== null && dtPaso > 0) {
+        registrarPaso(distanciaHaversineKm(previo, punto) / dtPaso);
+      }
     }
     return { tipo: "confiable", punto, discontinuidad: discReg };
   }
@@ -116,7 +123,7 @@ export function crearPipelineV2(): PipelineV2 {
       candidatosRecuperacion.push(nuevo);
       if (candidatosRecuperacion.length >= 2) {
         estado = "GRABANDO";
-        pasosRecientesKm = []; // el ritmo previo al hueco no dice nada del nuevo tramo
+        ritmosRecientesKmPorSeg = []; // el ritmo previo al hueco no dice nada del nuevo tramo
         ultimoFixRecibidoTime = nuevo.timestamp;
         const resultado = aceptarConfiable(nuevo, "hueco");
         candidatosRecuperacion = [];
@@ -139,7 +146,7 @@ export function crearPipelineV2(): PipelineV2 {
     if (transcurridoSeg < VENTANA_ESTABILIZACION_SEG) return null;
     const ultimo = candidatosRecuperacion[candidatosRecuperacion.length - 1];
     estado = "GRABANDO";
-    pasosRecientesKm = [];
+    ritmosRecientesKmPorSeg = [];
     ultimoFixRecibidoTime = ultimo.timestamp;
     const resultado = aceptarConfiable(ultimo, "hueco");
     candidatosRecuperacion = [];
@@ -230,8 +237,29 @@ export function crearPipelineV2(): PipelineV2 {
     }
 
     const dtSeg = dtSegundos(ultimo, fix);
-    const pasoTipico = mediana(pasosRecientesKm) || umbralRuido;
-    const factorSalto = distKm / Math.max(pasoTipico, umbralRuido);
+
+    // Sospecha por salto: se mide en VELOCIDAD implícita relativa al ritmo
+    // reciente, no en distancia cruda -- una pausa/frenada real (semáforo,
+    // descanso) acumula distancia contra el último confiable simplemente
+    // porque pasó más tiempo, sin que la velocidad real tenga nada de
+    // anómalo (ver ruta 95: ~49m en >100s, ritmo de caminata, que con un
+    // criterio de distancia se veía como "salto"). Sin ritmo reciente
+    // todavía (arranque de la grabación, o justo después de un hueco que
+    // reinicia la ventana) no hay referencia contra la cual comparar, así
+    // que este factor no dispara sospecha por sí solo -- ver
+    // ritmosRecientesKmPorSeg.
+    const ritmoTipico = ritmosRecientesKmPorSeg.length > 0 ? mediana(ritmosRecientesKmPorSeg) : null;
+    let sospechosoPorFactor = false;
+    if (dtSeg === null || dtSeg <= 0) {
+      // Distancia real ya confirmada (pasó el filtro de ruido) sin tiempo
+      // transcurrido válido entre fixes: no hay forma de que sea coherente,
+      // independientemente de si hay ritmo típico o no.
+      sospechosoPorFactor = true;
+    } else if (ritmoTipico !== null && ritmoTipico > 0) {
+      const velocidadImplicita = distKm / dtSeg;
+      const factorSalto = velocidadImplicita / ritmoTipico;
+      sospechosoPorFactor = factorSalto > FACTOR_SALTO_SOSPECHOSO;
+    }
 
     let contradiceSpeed = false;
     if (fix.speed !== null && dtSeg !== null && dtSeg > 0) {
@@ -241,7 +269,7 @@ export function crearPipelineV2(): PipelineV2 {
       contradiceSpeed = Math.abs(kmhImplicito - kmhChip) / base > TOLERANCIA_CONTRADICCION_SPEED;
     }
 
-    const sospechoso = factorSalto > FACTOR_SALTO_SOSPECHOSO || contradiceSpeed;
+    const sospechoso = sospechosoPorFactor || contradiceSpeed;
 
     if (!sospechoso) {
       return aceptarConfiable(fixPunto, null);
@@ -313,7 +341,7 @@ export function crearPipelineV2(): PipelineV2 {
       estado = "GRABANDO";
       puntosConfiables = [];
       discontinuidades.length = 0;
-      pasosRecientesKm = [];
+      ritmosRecientesKmPorSeg = [];
       candidatoPendiente = null;
       candidatosRecuperacion = [];
       inicioRecuperacionTime = null;

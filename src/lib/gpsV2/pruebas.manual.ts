@@ -193,4 +193,84 @@ verificar("primer fix con accuracy pobre se rechaza (gate inicial mas estricto)"
   assert.equal(p.obtenerPuntosConfiables().length, 0);
 });
 
+// --- Ajuste ruta 95: sospecha por VELOCIDAD implicita, no por distancia ---
+// Helper: establece un ritmo tipico normal de patinaje (~14.4 km/h) con 3
+// fixes antes de cada caso, igual que hace la ruta real antes de un tramo
+// dudoso.
+function conRitmoEstablecido(p: ReturnType<typeof crearPipelineV2>): void {
+  p.iniciar();
+  p.procesarFix(fix(0, 0, 0));
+  p.procesarFix(fix(40, 0, 10)); // 40m/10s -- sin ritmo previo, entra directo
+  p.procesarFix(fix(80, 0, 20)); // 40m/10s -- ritmo tipico ya queda en ~14.4 km/h
+}
+
+verificar("ruta95-1 -- 49m en ~125s (ritmo de caminata) NO es sospechoso", () => {
+  const p = crearPipelineV2();
+  conRitmoEstablecido(p); // ultimo confiable: (80,0,t=20)
+  // Fixes intermedios de jitter (ruido, <30m del ultimo confiable, cada uno
+  // a <30s del anterior para no disparar hueco real) -- igual que un GPS
+  // real siguiendo emitiendo fixes mientras la persona esta parada/lenta.
+  assert.equal(p.procesarFix(fix(82, 1, 45)).tipo, "ruido");
+  assert.equal(p.procesarFix(fix(81, -1, 70)).tipo, "ruido");
+  assert.equal(p.procesarFix(fix(80, 2, 95)).tipo, "ruido");
+  assert.equal(p.procesarFix(fix(82, -1, 120)).tipo, "ruido");
+  // Recien acá se acumulan los 49m reales desde el ultimo confiable, a los
+  // ~125s de real -- ritmo implicito ~1.4 km/h, nada sospechoso.
+  const r = p.procesarFix(fix(129, 0, 145));
+  assert.equal(r.tipo, "confiable", "una pausa/frenada real no debe verse como salto");
+  assert.equal(p.obtenerPuntosConfiables().length, 4);
+  assert.equal(p.obtenerDiscontinuidades().length, 0);
+});
+
+verificar("ruta95-2 -- 49m en 1s (mismo ritmo tipico) SI es sospechoso", () => {
+  const p = crearPipelineV2();
+  conRitmoEstablecido(p);
+  const r = p.procesarFix(fix(129, 0, 21)); // 49m desde el ultimo confiable, en 1s (~176 km/h)
+  assert.equal(r.tipo, "candidato-pendiente", "un salto real de decenas de metros en 1s debe seguir siendo sospechoso");
+});
+
+verificar("ruta95-3 -- arranque desde parado no genera falso cambio-trayectoria", () => {
+  const p = crearPipelineV2();
+  p.iniciar();
+  p.procesarFix(fix(0, 0, 0)); // primer punto de toda la grabacion
+  // Primer movimiento real: sin ningun ritmo previo (ventana vacia), aunque
+  // sea rapido para ser "el primer paso" no hay referencia contra la cual
+  // compararlo -- no debe dispararse sospecha solo por el factor relativo.
+  const r = p.procesarFix(fix(45, 0, 3)); // 45m en 3s (~54 km/h)
+  assert.equal(r.tipo, "confiable", "el arranque no tiene ritmo previo para comparar, no debe marcarse sospechoso");
+  assert.equal(p.obtenerPuntosConfiables().length, 2);
+});
+
+verificar("ruta95-4 -- frenado/semaforo y reanudacion al mismo ritmo no genera falso positivo", () => {
+  const p = crearPipelineV2();
+  conRitmoEstablecido(p); // ritmo tipico ~14.4 km/h, ultimo confiable en (80,0,t=20)
+  // Se detiene: fixes casi en el mismo lugar, por debajo del piso de ruido
+  // (simula esperar en un semaforo), cada uno a <30s del anterior para no
+  // disparar un hueco real -- deben clasificarse "ruido", no tocan el
+  // ritmo tipico.
+  const rQuieto1 = p.procesarFix(fix(81, 0, 45));
+  assert.equal(rQuieto1.tipo, "ruido");
+  const rQuieto2 = p.procesarFix(fix(80, 1, 70));
+  assert.equal(rQuieto2.tipo, "ruido");
+  // Reanuda al mismo ritmo de siempre: 40m en 70s desde el ultimo confiable
+  // real (80,0,t=20) -- mucho mas lento que el ritmo tipico porque incluye
+  // la espera, pero no es un salto.
+  const rReanuda = p.procesarFix(fix(120, 0, 90));
+  assert.equal(rReanuda.tipo, "confiable", "reanudar tras una pausa real no debe marcarse como salto");
+  assert.equal(p.obtenerDiscontinuidades().length, 0);
+});
+
+verificar("ruta95-5 -- bajada con aceleracion sostenida se confirma como trayectoria real", () => {
+  const p = crearPipelineV2();
+  conRitmoEstablecido(p); // ritmo tipico ~14.4 km/h
+  // Acelera fuerte y sostenido: cada paso sigue alejandose a un ritmo
+  // similar entre si (~90 km/h), nunca "vuelve" ni converge con el anterior.
+  const rCandidato = p.procesarFix(fix(340, 0, 30)); // 260m en 10s (~93 km/h) desde (80,0,20)
+  assert.equal(rCandidato.tipo, "candidato-pendiente", "el salto de ritmo debe verse como sospechoso primero");
+  const rConfirma = p.procesarFix(fix(590, 0, 40)); // 250m mas en 10s, mismo ritmo alto sostenido
+  assert.equal(rConfirma.tipo, "confiable", "la aceleracion sostenida real debe terminar confirmandose");
+  assert.equal(p.obtenerDiscontinuidades().length, 1);
+  assert.equal(p.obtenerDiscontinuidades()[0].motivo, "cambio-trayectoria");
+});
+
 console.log(`\nTODO OK (${ok} verificaciones)`);
