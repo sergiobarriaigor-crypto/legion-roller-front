@@ -273,4 +273,46 @@ verificar("ruta95-5 -- bajada con aceleracion sostenida se confirma como trayect
   assert.equal(p.obtenerDiscontinuidades()[0].motivo, "cambio-trayectoria");
 });
 
+// --- Ajuste ruta 96: piso de referencia cuando ritmoTipico se degrada -----
+verificar("ruta96 -- ritmo tipico degradado por pausa/caminata lenta no dispara falso positivo, pero un salto real si", () => {
+  const p = crearPipelineV2();
+  p.iniciar();
+  p.procesarFix(fix(0, 0, 0));
+  // Racha de pasos reales pero muy lentos (caminando/frenando): el GPS
+  // sigue emitiendo fixes cada <30s (nunca hueco real), pero la posicion
+  // casi no cambia hasta el fix final de cada tramo -- degrada ritmoTipico
+  // muy por debajo de cualquier velocidad razonable.
+  for (let t = 25; t < 300; t += 25) {
+    assert.equal(p.procesarFix(fix(1, 0, t)).tipo, "ruido");
+  }
+  const rLento1 = p.procesarFix(fix(31, 0, 300)); // 31m en 300s (~0.37 km/h) desde el origen
+  assert.equal(rLento1.tipo, "confiable");
+  for (let t = 325; t < 600; t += 25) {
+    assert.equal(p.procesarFix(fix(32, 0, t)).tipo, "ruido");
+  }
+  // El segundo paso lento ya deberia estar protegido por el piso (si no lo
+  // estuviera, un ritmo previo igual de degenerado tambien podria
+  // dispararlo como "salto").
+  const rLento2 = p.procesarFix(fix(62, 0, 600)); // 31m mas en 300s, mismo ritmo lento
+  assert.equal(rLento2.tipo, "confiable", "el piso debe proteger tambien a un paso lento contra un ritmo previo igual de bajo");
+
+  // Fixes intermedios de jitter para no disparar un hueco real mientras la
+  // persona sigue caminando lento.
+  assert.equal(p.procesarFix(fix(63, 1, 625)).tipo, "ruido");
+  assert.equal(p.procesarFix(fix(61, -1, 650)).tipo, "ruido");
+
+  // Reanuda a un ritmo bajo/normal (~2.7 km/h, igual que el 9->10 real de
+  // la ruta 96) -- ritmoTipico esta en ~0.37 km/h, muy por debajo del piso
+  // (~3.6 km/h con accuracy default). Sin el piso esto se veia como "5x"
+  // el ritmo degenerado; con el piso, se compara contra el piso y no
+  // resulta sospechoso.
+  const rReanuda = p.procesarFix(fix(110.7, 0, 665.9)); // 48.7m en 65.9s (~2.66 km/h)
+  assert.equal(rReanuda.tipo, "confiable", "reanudar a ritmo bajo/normal tras una racha lenta no debe verse como salto");
+
+  // Con el ritmo tipico TODAVIA degradado (el piso lo cubre, no lo esconde),
+  // un salto real de decenas de metros en 1.5s debe seguir detectandose.
+  const rSalto = p.procesarFix(fix(159.7, 0, 667.4)); // 49m en 1.5s (~117.6 km/h)
+  assert.equal(rSalto.tipo, "candidato-pendiente", "un salto real debe seguir siendo sospechoso aunque el ritmo tipico este degradado");
+});
+
 console.log(`\nTODO OK (${ok} verificaciones)`);

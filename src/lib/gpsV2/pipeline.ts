@@ -249,15 +249,27 @@ export function crearPipelineV2(): PipelineV2 {
     // que este factor no dispara sospecha por sí solo -- ver
     // ritmosRecientesKmPorSeg.
     const ritmoTipico = ritmosRecientesKmPorSeg.length > 0 ? mediana(ritmosRecientesKmPorSeg) : null;
+    // Piso de la referencia (ver ruta 96): una racha real de pasos lentos
+    // (caminando, frenando) puede degradar ritmoTipico muy por debajo de
+    // cualquier velocidad razonable -- sin piso, reanudar a un ritmo igual
+    // de lento en términos absolutos (ej. 1.4-2.7 km/h) se ve como "5x" un
+    // número ya degenerado. El piso NO es un techo de velocidad fijo nuevo:
+    // se deriva de dos constantes que ya existen -- cubrir la distancia de
+    // ruido (umbralRuido) en el tiempo más largo que el propio sistema
+    // todavía considera "sin hueco" (UMBRAL_HUECO_SEG). Solo actúa cuando
+    // ritmoTipico ya cayó por debajo de ese piso; nunca reemplaza a un
+    // ritmo típico que sigue siendo razonable.
+    const pisoVelocidadKmSeg = umbralRuido / UMBRAL_HUECO_SEG;
     let sospechosoPorFactor = false;
     if (dtSeg === null || dtSeg <= 0) {
       // Distancia real ya confirmada (pasó el filtro de ruido) sin tiempo
       // transcurrido válido entre fixes: no hay forma de que sea coherente,
       // independientemente de si hay ritmo típico o no.
       sospechosoPorFactor = true;
-    } else if (ritmoTipico !== null && ritmoTipico > 0) {
+    } else if (ritmoTipico !== null) {
       const velocidadImplicita = distKm / dtSeg;
-      const factorSalto = velocidadImplicita / ritmoTipico;
+      const referencia = Math.max(ritmoTipico, pisoVelocidadKmSeg);
+      const factorSalto = velocidadImplicita / referencia;
       sospechosoPorFactor = factorSalto > FACTOR_SALTO_SOSPECHOSO;
     }
 
