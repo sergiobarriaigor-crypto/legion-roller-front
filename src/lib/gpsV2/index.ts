@@ -26,11 +26,30 @@ export interface EstadoGrabacionGpsV2 {
   fixesRecibidos: number;
 }
 
+// FASE 2 -- comparación real V1 vs V2 (ver diseño acordado). A propósito NO
+// es un log por-fix (eso fue lo que rompió el envío en la instrumentación
+// vieja de V1 -- ver 413 "request entity too large"): solo `puntosConfiables`
+// crece con la cantidad de fixes, y eso es del mismo orden que `puntos` de
+// V1 (que ya viaja siempre sin problema). Todo lo demás son conteos o listas
+// que solo crecen con EVENTOS poco frecuentes (huecos, cambios de
+// trayectoria), nunca con cada fix.
+export interface ResumenGpsV2 {
+  fixesRecibidos: number;
+  puntosConfiables: PuntoConfiableV2[];
+  discontinuidades: DiscontinuidadV2[];
+  entradasRecuperacion: { indiceFix: number; fixTime: number | null }[];
+  candidatosPendientes: number;
+  rechazados: { motivo: string; cantidad: number }[];
+}
+
 const pipeline = crearPipelineV2();
 let activoV2 = false;
 let modoActualV2: "patinando" | "ruta" | null = null;
 let mapeadoActualV2 = false;
 let fixesRecibidosV2 = 0;
+let candidatosPendientesV2 = 0;
+const entradasRecuperacionV2: { indiceFix: number; fixTime: number | null }[] = [];
+const rechazadosV2 = new Map<string, number>();
 let callbackPosicionConfiable: ((p: PuntoConfiableV2) => void) | null = null;
 let callbackEstado: ((e: EstadoGpsV2) => void) | null = null;
 
@@ -45,14 +64,22 @@ function log(linea: string): void {
 export function alimentarFixCrudoV2(pos: PosicionSimple): void {
   if (!activoV2) return;
   fixesRecibidosV2++;
+  const indiceEsteFix = fixesRecibidosV2 - 1;
   const estadoAntes = pipeline.obtenerEstado();
   const resultado = pipeline.procesarFix(aFixCrudoV2(pos));
   if (resultado.tipo === "confiable") {
     callbackPosicionConfiable?.(resultado.punto);
+  } else if (resultado.tipo === "candidato-pendiente") {
+    candidatosPendientesV2++;
+  } else if (resultado.tipo === "rechazado") {
+    rechazadosV2.set(resultado.motivo, (rechazadosV2.get(resultado.motivo) ?? 0) + 1);
   }
   const estadoDespues = pipeline.obtenerEstado();
   if (estadoDespues !== estadoAntes) {
     callbackEstado?.(estadoDespues);
+    if (estadoDespues === "RECUPERANDO") {
+      entradasRecuperacionV2.push({ indiceFix: indiceEsteFix, fixTime: pos.time });
+    }
   }
 }
 
@@ -66,6 +93,9 @@ export function iniciarPipelineV2(modo: "patinando" | "ruta", mapeado: boolean):
   modoActualV2 = modo;
   mapeadoActualV2 = mapeado;
   fixesRecibidosV2 = 0;
+  candidatosPendientesV2 = 0;
+  entradasRecuperacionV2.length = 0;
+  rechazadosV2.clear();
   pipeline.iniciar();
   activoV2 = true;
   log("pipeline V2 iniciado (Fase 1 -- modo sombra, alimentado por el watcher de V1)");
@@ -103,4 +133,19 @@ export function registrarCallbackPosicionConfiableV2(cb: ((p: PuntoConfiableV2) 
 
 export function registrarCallbackEstadoV2(cb: ((e: EstadoGpsV2) => void) | null): void {
   callbackEstado = cb;
+}
+
+// Fase 2 -- arma el resumen de comparación V1 vs V2 a partir de lo acumulado
+// durante la grabación. Se llama ANTES de `detenerPipelineV2()` (que borra
+// el estado del pipeline), igual que ya se hace hoy con los snapshots de
+// `diagnosticoGps`/`diagnosticoFlujo` de V1.
+export function obtenerResumenGpsV2(): ResumenGpsV2 {
+  return {
+    fixesRecibidos: fixesRecibidosV2,
+    puntosConfiables: pipeline.obtenerPuntosConfiables(),
+    discontinuidades: pipeline.obtenerDiscontinuidades(),
+    entradasRecuperacion: [...entradasRecuperacionV2],
+    candidatosPendientes: candidatosPendientesV2,
+    rechazados: Array.from(rechazadosV2.entries()).map(([motivo, cantidad]) => ({ motivo, cantidad })),
+  };
 }

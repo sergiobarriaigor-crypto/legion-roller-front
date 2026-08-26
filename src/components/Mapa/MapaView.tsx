@@ -42,6 +42,7 @@ import {
   limpiarDiagnosticoGps,
   obtenerDiagnosticoFlujo,
 } from "@/lib/grabacionGps";
+import { obtenerResumenGpsV2 } from "@/lib/gpsV2";
 import { PatinadoresActivosPanel } from "@/components/Mapa/PatinadoresActivosPanel";
 import { MisRutasPanel } from "@/components/Mapa/MisRutasPanel";
 import { ChatFlotante } from "@/components/Mapa/ChatFlotante";
@@ -1097,6 +1098,11 @@ export function MapaView() {
       ...obtenerDiagnosticoFlujo(),
       snapshotAntesPost: diagnosticoGps.length,
     };
+    // GPS V2 (Fase 2, modo sombra) -- snapshot capturado ANTES de
+    // detenerGrabacionGps(), que internamente llama detenerPipelineV2() y
+    // borra el estado del pipeline V2. Mismo criterio que el snapshot de
+    // diagnosticoGps de arriba.
+    const resumenGpsV2 = obtenerResumenGpsV2();
     // Único lugar donde el watcher real se apaga -- ver grabacionGps.ts.
     // Devuelve los puntos ya confirmados (incluye el descarte de cualquier
     // punto pendiente de confirmar, mismo criterio de siempre: si la sesión
@@ -1125,7 +1131,7 @@ export function MapaView() {
 
     if (tokenActual && puntos.length >= 2) {
       try {
-        const resultado = await apiPost<{ guardado?: boolean; guardadoDetalle?: boolean }>(
+        const resultado = await apiPost<{ id?: number | null; guardado?: boolean; guardadoDetalle?: boolean }>(
           "/mapa/recorridos",
           {
             tipo: modoActual === "ruta" ? "ruta" : "libre",
@@ -1148,6 +1154,15 @@ export function MapaView() {
               "Tus estadísticas se guardaron, pero no el detalle de esta ruta: alcanzaste el máximo de 10 rutas mapeadas en Mis Rutas.",
             );
             setLimiteRutasAlcanzado(true);
+          }
+          // GPS V2 (Fase 2) -- envío separado y posterior al guardado real,
+          // a propósito: un fallo acá nunca debe afectar la ruta ya guardada.
+          if (resultado?.id) {
+            try {
+              await apiPost(`/mapa/recorridos/${resultado.id}/comparacion-v2`, resumenGpsV2, tokenActual);
+            } catch {
+              // silencioso -- solo es comparación de diagnóstico, no la ruta real
+            }
           }
         }
       } catch (err) {
