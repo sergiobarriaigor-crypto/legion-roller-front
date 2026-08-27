@@ -315,4 +315,49 @@ verificar("ruta96 -- ritmo tipico degradado por pausa/caminata lenta no dispara 
   assert.equal(rSalto.tipo, "candidato-pendiente", "un salto real debe seguir siendo sospechoso aunque el ritmo tipico este degradado");
 });
 
+// --- Ajuste ruta 98: contradiceSpeed deja de ser OR independiente --------
+verificar("ruta98-1 -- chip speed≈0 justo al arrancar de una parada NO es sospechoso solo por eso", () => {
+  const p = crearPipelineV2();
+  conRitmoEstablecido(p); // ritmo tipico ~14.4 km/h, ultimo confiable (80,0,t=20)
+  // 35m en 21s (~6 km/h) -- factorSalto queda por debajo del umbral, pero
+  // el chip todavia reporta velocidad casi nula (arrancando de una parada,
+  // ver ruta 98 real: ~6.4 km/h de posicion contra speed≈0 del chip).
+  const r = p.procesarFix(fix(115, 0, 41, { speed: 0 }));
+  assert.equal(r.tipo, "confiable", "speed≈0 del chip no debe convertir por si solo un movimiento normal en sospechoso");
+});
+
+verificar("ruta98-2 -- speed del chip coherente con la posicion es normal", () => {
+  const p = crearPipelineV2();
+  conRitmoEstablecido(p);
+  // 40m en 10s (~14.4 km/h), speed del chip = 4 m/s = 14.4 km/h: coincide.
+  const r = p.procesarFix(fix(120, 0, 30, { speed: 4 }));
+  assert.equal(r.tipo, "confiable");
+});
+
+verificar("ruta98-3 -- speed contradictorio pero factorSalto normal NO es sospechoso", () => {
+  const p = crearPipelineV2();
+  conRitmoEstablecido(p);
+  // Misma distancia/tiempo que el ritmo tipico (factorSalto ~1), pero el
+  // chip reporta 20 m/s (72 km/h) -- contradice fuertemente la posicion.
+  // Antes esto bastaba por si solo para marcar candidato-pendiente.
+  const r = p.procesarFix(fix(120, 0, 30, { speed: 20 }));
+  assert.equal(r.tipo, "confiable", "un speed contradictorio no alcanza si la posicion no muestra ningun salto");
+});
+
+verificar("ruta98-4 -- salto real de ~50m en 1-2s sigue sospechoso por factorSalto", () => {
+  const p = crearPipelineV2();
+  conRitmoEstablecido(p);
+  const r = p.procesarFix(fix(129, 0, 21.5)); // 49m en 1.5s (~117.6 km/h), sin speed del chip
+  assert.equal(r.tipo, "candidato-pendiente", "factorSalto debe seguir siendo el disparador principal para un salto real");
+});
+
+verificar("ruta98-5 -- salto real + speed contradictorio sigue sospechoso", () => {
+  const p = crearPipelineV2();
+  conRitmoEstablecido(p);
+  // Mismo salto real que arriba, y ademas el chip reporta 0 -- contradice
+  // la posicion, pero no hace falta: factorSalto ya alcanza por si solo.
+  const r = p.procesarFix(fix(129, 0, 21.5, { speed: 0 }));
+  assert.equal(r.tipo, "candidato-pendiente", "un salto real sigue detectandose independientemente de si el speed tambien contradice");
+});
+
 console.log(`\nTODO OK (${ok} verificaciones)`);

@@ -273,6 +273,16 @@ export function crearPipelineV2(): PipelineV2 {
       sospechosoPorFactor = factorSalto > FACTOR_SALTO_SOSPECHOSO;
     }
 
+    // Señal BLANDA (ver constantes.ts): nunca confirma ni descarta un fix
+    // por sí sola -- el disparador principal de sospecha en GRABANDO sigue
+    // siendo exclusivamente la incoherencia espacial/temporal de
+    // factorSalto. Se sigue calculando (para diagnóstico/una futura
+    // ponderación combinada) pero ya NO participa como OR independiente:
+    // antes, un chip que reporta speed≈0 justo al arrancar de una parada
+    // (ruta 98: ~6.4 km/h reales con el chip todavía sin estabilizar)
+    // colapsaba la tolerancia relativa (`base = max(kmhChip, 1)`) y
+    // marcaba sospechoso un movimiento perfectamente normal, sin que
+    // factorSalto viera nada raro.
     let contradiceSpeed = false;
     if (fix.speed !== null && dtSeg !== null && dtSeg > 0) {
       const kmhImplicito = (distKm / dtSeg) * 3600;
@@ -280,8 +290,9 @@ export function crearPipelineV2(): PipelineV2 {
       const base = Math.max(kmhChip, 1);
       contradiceSpeed = Math.abs(kmhImplicito - kmhChip) / base > TOLERANCIA_CONTRADICCION_SPEED;
     }
+    void contradiceSpeed; // reservado: no participa todavia en `sospechoso`
 
-    const sospechoso = sospechosoPorFactor || contradiceSpeed;
+    const sospechoso = sospechosoPorFactor;
 
     if (!sospechoso) {
       return aceptarConfiable(fixPunto, null);
