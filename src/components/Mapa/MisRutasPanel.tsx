@@ -18,6 +18,7 @@ import {
   dividirEnTramosParaDibujo,
   type PuntoGps,
 } from "@/lib/geo";
+import { velocidadMaximaValidadaV2 } from "@/lib/velocidadMaximaValidadaV2";
 import { useNombreLugar, useNombreLugarEspecifico, useCiudad } from "@/lib/sectores";
 import { NombreLugar } from "@/components/Mapa/NombreLugar";
 import { CompartirRecorridoModal } from "@/components/Mapa/CompartirRecorridoModal";
@@ -170,6 +171,12 @@ function FichaRecorrido({
   // reducida (ver diagnóstico ruta 99 -- ahí se originaban tanto el
   // desfase de distancia como los cortes falsos del trazado en el video).
   const [puntosCompletos, setPuntosCompletos] = useState<PuntoGps[] | null>(null);
+  // Velocidad máxima calculada sobre los puntos completos (ver diagnóstico
+  // ruta 99, parte 2: velocidadMaximaKmH sobre `puntos` decimado daba una
+  // cifra artificialmente baja). Solo se usa para lo que recibe Compartir
+  // -- la "Vel. máxima" siempre visible en la ficha (más abajo) sigue
+  // calculándose sobre `puntos` decimado, sin cambios, fuera de alcance.
+  const [velocidadMaximaCompleta, setVelocidadMaximaCompleta] = useState<number | null>(null);
 
   const puntos = recorrido.puntos;
 
@@ -182,6 +189,7 @@ function FichaRecorrido({
         token,
       );
       setPuntosCompletos(resultado.puntos);
+      setVelocidadMaximaCompleta(velocidadMaximaValidadaV2(resultado.puntos).kmh);
       setMostrarCompartir(true);
     } catch (err) {
       // No rompe el resto de "Mis rutas": el error queda solo en esta
@@ -364,7 +372,11 @@ function FichaRecorrido({
             distanciaKm: recorrido.distanciaKm,
             duracionSeg: recorrido.duracionSeg,
             velocidadPromedio,
-            velocidadMaxima,
+            // Sobre puntos completos (velocidadMaximaValidadaV2), no sobre
+            // los decimados -- ver diagnóstico ruta 99. El `?? velocidadMaxima`
+            // es solo defensivo (mostrarCompartir ya garantiza que ambos se
+            // calcularon juntos en abrirCompartir()), nunca debería usarse.
+            velocidadMaxima: velocidadMaximaCompleta ?? velocidadMaxima,
             fecha: fechaCompleta,
             sector,
             sectoresRuta,
