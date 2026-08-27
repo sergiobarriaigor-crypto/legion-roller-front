@@ -5,13 +5,14 @@
 // renderV2.ts/geo.ts -- todo acá es un consumidor nuevo, de solo lectura,
 // de esos módulos ya congelados.
 //
-// Reutiliza geo.ts (distanciaHaversineKm/clasificarTramos/
-// velocidadMaximaConPunto) EXACTAMENTE como ya lo hace V1 conceptualmente,
-// pero sin tocar ese archivo: clasificarTramos() se llama en modo
-// solo-lectura para decidir qué tramos NO deben dibujarse como parte del
-// trazado (saltoGps) -- nunca para reclasificar ni "reparar" GPS. La
-// velocidad máxima viene siempre de velocidadMaximaConPunto (mismo dato,
-// nunca recalculado acá).
+// Reutiliza geo.ts (distanciaHaversineKm/velocidadMaximaConPunto) sin
+// tocar ese archivo. Qué tramos NO se dibujan como parte del trazado
+// (diagnóstico ruta 99 -- ver clasificacionTrazadoV2.ts) ya NO usa
+// clasificarTramos(): usa clasificarTrazadoV2(), una clasificación local
+// exclusiva de este trazado que solo corta ante evidencia espacial fuerte
+// (rebote confirmado A->B->C), no por dt<2s ni por mediana de racha. La
+// velocidad máxima sigue viniendo de velocidadMaximaConPunto (clasificarTramos
+// real, sin cambios, mismo dato de siempre) -- fuera de alcance de ese ajuste.
 //
 // Progreso SIEMPRE derivado de frame.tiempoSeg/frame.fase (FrameV2, ya
 // precomputado en Fase 3) -- nunca del reloj real de MediaRecorder. Esto
@@ -26,9 +27,10 @@
 // pantalla (mismo criterio que dibujarTilesHibridos/dibujarFrameGrabacion)
 // -- así que un lineWidth/radio fijo ya da grosor constante en pantalla
 // sin ningún truco de escala inversa.
-import { clasificarTramos, velocidadMaximaConPunto, type PuntoGps, type ClasificacionTramo } from "@/lib/geo";
+import { velocidadMaximaConPunto, type PuntoGps, type ClasificacionTramo } from "@/lib/geo";
 import { ANCHO_VIDEO, ALTO_VIDEO, type EstadoCamaraV2, type ParametrosCoreografiaV2, type RutaCoreografiaV2 } from "./camaraV2";
 import type { FrameV2 } from "./trayectoriaV2";
+import { clasificarTrazadoV2 } from "./clasificacionTrazadoV2";
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
@@ -51,7 +53,11 @@ export interface DatosEstadisticasV2 {
 }
 
 export function construirDatosEstadisticasV2(puntos: PuntoGps[], distanciaTotalKm: number): DatosEstadisticasV2 {
-  const clasificacion = clasificarTramos(puntos);
+  // Clasificación LOCAL, exclusiva del trazado del Video 2D -- ver
+  // clasificacionTrazadoV2.ts. `velocidadMaximaConPunto` (abajo) sigue
+  // usando clasificarTramos() real, sin cambios -- fuera de alcance de
+  // este ajuste.
+  const clasificacion = clasificarTrazadoV2(puntos);
   const duracionTotalSeg = puntos.length > 1 ? (puntos[puntos.length - 1].timestamp - puntos[0].timestamp) / 1000 : 0;
   const { kmh: velocidadMaxima, indice: indiceVelMax } = velocidadMaximaConPunto(puntos);
   const velocidadPromedio = duracionTotalSeg > 0 ? distanciaTotalKm / (duracionTotalSeg / 3600) : 0;
