@@ -102,7 +102,11 @@ export async function generarVideoRecorridoV2(
 
   const rutaGps = datos.puntos;
   const grillaAncha = elegirGrillaAncha(rutaGps, ANCHO_VIDEO, ALTO_VIDEO);
-  const ruta = construirRutaCoreografiaV2(rutaGps, grillaAncha);
+  // datos.distanciaKm es la distancia oficial del recorrido (guardada al
+  // finalizar, sobre los puntos completos) -- nunca se recalcula desde
+  // rutaGps, para que el video muestre exactamente el mismo número que la
+  // imagen resumen y la ruta oficial (ver diagnóstico ruta 99).
+  const ruta = construirRutaCoreografiaV2(rutaGps, grillaAncha, datos.distanciaKm);
   const ventana = calcularVentanaCrossfade(grillaAncha.zoom);
   const duracionSeguimientoAuto = calcularDuracionSeguimientoV2(ruta.distanciaTotalKm);
   const params: ParametrosCoreografiaV2 = { ...PARAMS_DEFECTO_V2, duracionSeguimientoSeg: duracionSeguimientoAuto };

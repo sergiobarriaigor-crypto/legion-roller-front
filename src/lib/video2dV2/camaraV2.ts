@@ -235,7 +235,20 @@ export function resimularSeguimientoV2(ruta: RutaCoreografiaV2, fraccionTrazoObj
 // y la grilla ancha ya elegida (ver grillaAncha.ts). No modifica datos GPS,
 // solo proyecta a Z17 y calcula distancias (distanciaHaversineKm, de
 // geo.ts, sin tocar).
-export function construirRutaCoreografiaV2(puntos: PuntoGps[], grillaAncha: GrillaAnchaResultado): RutaCoreografiaV2 {
+//
+// `distanciaTotalKmOficial` (opcional): la distancia real guardada del
+// recorrido (datos.distanciaKm), para que el video muestre y escale sus
+// fracciones contra el MISMO número que la imagen resumen y la ruta
+// oficial -- nunca uno recalculado acá. `distanciaAcumuladaKm` se sigue
+// derivando de `puntos` (lo necesita la interpolación por fracción para
+// ubicar cada posición a lo largo del trazo real); si no se pasa (debug-
+// video-v2, que no tiene un valor oficial de referencia), se mantiene el
+// comportamiento anterior de autocalcularla sumando los mismos puntos.
+export function construirRutaCoreografiaV2(
+  puntos: PuntoGps[],
+  grillaAncha: GrillaAnchaResultado,
+  distanciaTotalKmOficial?: number,
+): RutaCoreografiaV2 {
   const puntosZ17 = puntos.map((p) => ({
     x: lonAPixelX(p.lon, ZOOM_SEGUIMIENTO),
     y: latAPixelY(p.lat, ZOOM_SEGUIMIENTO),
@@ -244,7 +257,7 @@ export function construirRutaCoreografiaV2(puntos: PuntoGps[], grillaAncha: Gril
   for (let i = 1; i < puntos.length; i++) {
     distanciaAcumuladaKm.push(distanciaAcumuladaKm[i - 1] + distanciaHaversineKm(puntos[i - 1], puntos[i]));
   }
-  const distanciaTotalKm = distanciaAcumuladaKm[distanciaAcumuladaKm.length - 1];
+  const distanciaTotalKm = distanciaTotalKmOficial ?? distanciaAcumuladaKm[distanciaAcumuladaKm.length - 1];
 
   const factorAncho = 2 ** (grillaAncha.zoom - ZOOM_SEGUIMIENTO);
   const anchoWidePx = (grillaAncha.tileXMax - grillaAncha.tileXMin + 1) * TAM_TILE;

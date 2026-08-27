@@ -160,8 +160,40 @@ function FichaRecorrido({
   const [confirmandoEliminar, setConfirmandoEliminar] = useState(false);
   const [eliminando, setEliminando] = useState(false);
   const [mostrarCompartir, setMostrarCompartir] = useState(false);
+  const [cargandoCompartir, setCargandoCompartir] = useState(false);
+  const [errorCompartir, setErrorCompartir] = useState("");
+  // Geometría completa (sin decimar) de ESTE recorrido puntual, cargada
+  // recién al tocar "Compartir" -- la lista de Mis Rutas sigue funcionando
+  // con `recorrido.puntos` decimado (misRecorridos() en el backend, tope de
+  // 50). La tarjeta/imagen y el Video 2D necesitan los puntos reales para
+  // que la distancia y clasificarTramos no se calculen sobre una muestra
+  // reducida (ver diagnóstico ruta 99 -- ahí se originaban tanto el
+  // desfase de distancia como los cortes falsos del trazado en el video).
+  const [puntosCompletos, setPuntosCompletos] = useState<PuntoGps[] | null>(null);
 
   const puntos = recorrido.puntos;
+
+  async function abrirCompartir() {
+    setErrorCompartir("");
+    setCargandoCompartir(true);
+    try {
+      const resultado = await apiGet<{ puntos: PuntoGps[] }>(
+        `/mapa/recorridos/${recorrido.id}/puntos-completos`,
+        token,
+      );
+      setPuntosCompletos(resultado.puntos);
+      setMostrarCompartir(true);
+    } catch (err) {
+      // No rompe el resto de "Mis rutas": el error queda solo en esta
+      // tarjeta, el listado y el resto de las acciones (favorito, eliminar)
+      // siguen funcionando igual.
+      setErrorCompartir(
+        err instanceof ApiError ? err.message : "No se pudo cargar el recorrido completo. Intenta de nuevo.",
+      );
+    } finally {
+      setCargandoCompartir(false);
+    }
+  }
 
   const fechaCompleta = new Date(recorrido.createdAt).toLocaleDateString("es-CL", {
     weekday: "long",
@@ -314,19 +346,21 @@ function FichaRecorrido({
 
       <button
         type="button"
-        onClick={() => setMostrarCompartir(true)}
-        className="btn-hero flex items-center justify-center gap-1.5 rounded-app px-3 py-2 text-xs"
+        onClick={abrirCompartir}
+        disabled={cargandoCompartir}
+        className="btn-hero flex items-center justify-center gap-1.5 rounded-app px-3 py-2 text-xs disabled:opacity-60"
       >
         <IconShare size={14} />
-        Compartir
+        {cargandoCompartir ? "Cargando..." : "Compartir"}
       </button>
+      {errorCompartir && <p className="text-center text-xs text-red-400">{errorCompartir}</p>}
 
-      {mostrarCompartir && (
+      {mostrarCompartir && puntosCompletos && (
         <CompartirRecorridoModal
           token={token}
           recorridoId={recorrido.id}
           datos={{
-            puntos,
+            puntos: puntosCompletos,
             distanciaKm: recorrido.distanciaKm,
             duracionSeg: recorrido.duracionSeg,
             velocidadPromedio,
