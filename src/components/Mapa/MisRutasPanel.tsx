@@ -163,24 +163,66 @@ function FichaRecorrido({
   const [mostrarCompartir, setMostrarCompartir] = useState(false);
   const [cargandoCompartir, setCargandoCompartir] = useState(false);
   const [errorCompartir, setErrorCompartir] = useState("");
-  // Geometría completa (sin decimar) de ESTE recorrido puntual, cargada
-  // recién al tocar "Compartir" -- la lista de Mis Rutas sigue funcionando
-  // con `recorrido.puntos` decimado (misRecorridos() en el backend, tope de
-  // 50). La tarjeta/imagen y el Video 2D necesitan los puntos reales para
-  // que la distancia y clasificarTramos no se calculen sobre una muestra
-  // reducida (ver diagnóstico ruta 99 -- ahí se originaban tanto el
-  // desfase de distancia como los cortes falsos del trazado en el video).
-  const [puntosCompletos, setPuntosCompletos] = useState<PuntoGps[] | null>(null);
-  // Velocidad máxima calculada sobre los puntos completos (ver diagnóstico
-  // ruta 99, parte 2: velocidadMaximaKmH sobre `puntos` decimado daba una
-  // cifra artificialmente baja). Solo se usa para lo que recibe Compartir
-  // -- la "Vel. máxima" siempre visible en la ficha (más abajo) sigue
-  // calculándose sobre `puntos` decimado, sin cambios, fuera de alcance.
-  const [velocidadMaximaCompleta, setVelocidadMaximaCompleta] = useState<number | null>(null);
+  // Geometría completa (sin decimar) de ESTE recorrido puntual -- la lista
+  // de Mis Rutas sigue funcionando con `recorrido.puntos` decimado
+  // (misRecorridos() en el backend, tope de 50); solo esta ficha (una
+  // ruta a la vez) pide la geometría real, apenas se abre (ver el
+  // useEffect más abajo). La tarjeta/imagen y el Video 2D necesitan los
+  // puntos reales para que la distancia y clasificarTramos no se calculen
+  // sobre una muestra reducida (ver diagnóstico ruta 99 -- ahí se
+  // originaban el desfase de distancia, los cortes falsos del trazado y
+  // la "Vel. máxima" artificialmente baja).
+  //
+  // Se guarda junto con el `recorridoId` para el que se pidió (en vez de
+  // resetear el estado con setState al arrancar cada corrida del efecto,
+  // lo que dispara un render en cascada) -- `puntosCompletos`/
+  // `velocidadMaximaCompleta` de abajo son derivados: solo son válidos si
+  // coinciden con `recorrido.id` ACTUAL. Si el usuario cambia de ruta
+  // antes de que la respuesta llegue, ese chequeo por id ya alcanza para
+  // que la respuesta (tardía o no) de la ruta anterior nunca se muestre
+  // como si fuera de la ruta nueva -- el guard `cancelado` de abajo evita
+  // además guardar esa respuesta descartada.
+  const [datosCompletos, setDatosCompletos] = useState<{
+    recorridoId: number;
+    puntos: PuntoGps[];
+    velocidadMaxima: number;
+  } | null>(null);
+  const puntosCompletos = datosCompletos?.recorridoId === recorrido.id ? datosCompletos.puntos : null;
+  const velocidadMaximaCompleta = datosCompletos?.recorridoId === recorrido.id ? datosCompletos.velocidadMaxima : null;
 
   const puntos = recorrido.puntos;
 
+  // Carga los puntos completos apenas se abre la ficha (no solo al tocar
+  // "Compartir") para que "Vel. máxima" pueda corregirse a la cifra
+  // validada -- ver diagnóstico ruta 99, parte 3.
+  useEffect(() => {
+    let cancelado = false;
+    apiGet<{ puntos: PuntoGps[] }>(`/mapa/recorridos/${recorrido.id}/puntos-completos`, token)
+      .then((resultado) => {
+        if (cancelado) return;
+        setDatosCompletos({
+          recorridoId: recorrido.id,
+          puntos: resultado.puntos,
+          velocidadMaxima: velocidadMaximaValidadaV2(resultado.puntos).kmh,
+        });
+      })
+      .catch(() => {
+        // Silencioso: la ficha se queda con el valor estimado sobre puntos
+        // decimados (ver `velocidadMaxima` más abajo) como fallback -- no
+        // se muestra ningún error acá, "Compartir" ya tiene su propio
+        // manejo de error si hace falta reintentar el fetch.
+      });
+    return () => {
+      cancelado = true;
+    };
+  }, [recorrido.id, token]);
+
   async function abrirCompartir() {
+    if (puntosCompletos) {
+      // Ya se cargaron al abrir la ficha -- no repetir el fetch.
+      setMostrarCompartir(true);
+      return;
+    }
     setErrorCompartir("");
     setCargandoCompartir(true);
     try {
@@ -188,8 +230,11 @@ function FichaRecorrido({
         `/mapa/recorridos/${recorrido.id}/puntos-completos`,
         token,
       );
-      setPuntosCompletos(resultado.puntos);
-      setVelocidadMaximaCompleta(velocidadMaximaValidadaV2(resultado.puntos).kmh);
+      setDatosCompletos({
+        recorridoId: recorrido.id,
+        puntos: resultado.puntos,
+        velocidadMaxima: velocidadMaximaValidadaV2(resultado.puntos).kmh,
+      });
       setMostrarCompartir(true);
     } catch (err) {
       // No rompe el resto de "Mis rutas": el error queda solo en esta
@@ -304,7 +349,7 @@ function FichaRecorrido({
         <TarjetaStat etiqueta="Distancia" valor={`${recorrido.distanciaKm.toFixed(2)} km`} destacada />
         <TarjetaStat etiqueta="Tiempo total" valor={`${Math.round(recorrido.duracionSeg / 60)} min`} />
         <TarjetaStat etiqueta="Vel. promedio" valor={`${Math.round(velocidadPromedio)} km/h`} />
-        <TarjetaStat etiqueta="Vel. máxima" valor={`${Math.round(velocidadMaxima)} km/h`} />
+        <TarjetaStat etiqueta="Vel. máxima" valor={`${Math.round(velocidadMaximaCompleta ?? velocidadMaxima)} km/h`} />
       </div>
 
       {/* Elemento principal: el Recorrido en sí, en su propia tarjeta (mismo
