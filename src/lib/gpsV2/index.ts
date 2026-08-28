@@ -40,6 +40,18 @@ export interface ResumenGpsV2 {
   entradasRecuperacion: { indiceFix: number; fixTime: number | null }[];
   candidatosPendientes: number;
   rechazados: { motivo: string; cantidad: number }[];
+  // Instrumentación adicional (auditoría ruta 100) -- ninguno de los dos
+  // cambia ningún criterio/umbral del pipeline, solo lo hacen visible:
+  // cuántos fixes se clasificaron "ruido" (antes invisibles en el resumen:
+  // fixesRecibidos - puntosConfiables - candidatosPendientes - rechazados
+  // ya los incluía por eliminación, pero sin exponerlos directamente) y
+  // cuál fue el mayor intervalo real entre dos fixes crudos consecutivos
+  // recibidos por V2, medido ANTES de cualquier filtro/estado del pipeline
+  // (no espejea `ultimoFixRecibidoTime` de pipeline.ts a propósito: esa
+  // variable queda congelada mientras el estado es RECUPERANDO, así que
+  // espejearla reproduciría el mismo punto ciego que esto busca cerrar).
+  ruido: number;
+  maxIntervaloEntreFixesCrudosSeg: number;
 }
 
 const pipeline = crearPipelineV2();
@@ -48,6 +60,9 @@ let modoActualV2: "patinando" | "ruta" | null = null;
 let mapeadoActualV2 = false;
 let fixesRecibidosV2 = 0;
 let candidatosPendientesV2 = 0;
+let ruidoV2 = 0;
+let ultimoFixCrudoTimeV2: number | null = null;
+let maxIntervaloEntreFixesCrudosSegV2 = 0;
 const entradasRecuperacionV2: { indiceFix: number; fixTime: number | null }[] = [];
 const rechazadosV2 = new Map<string, number>();
 let callbackPosicionConfiable: ((p: PuntoConfiableV2) => void) | null = null;
@@ -65,6 +80,22 @@ export function alimentarFixCrudoV2(pos: PosicionSimple): void {
   if (!activoV2) return;
   fixesRecibidosV2++;
   const indiceEsteFix = fixesRecibidosV2 - 1;
+
+  // Intervalo real entre fixes crudos -- ANTES de tocar el pipeline (ver
+  // comentario en ResumenGpsV2). Si `pos.time` es null no hay con qué medir
+  // este fix en particular; no actualiza la referencia ni el máximo, pero
+  // tampoco rompe nada (el pipeline lo va a rechazar por su cuenta, sin
+  // cambios acá).
+  if (pos.time !== null) {
+    if (ultimoFixCrudoTimeV2 !== null) {
+      const intervaloSeg = (pos.time - ultimoFixCrudoTimeV2) / 1000;
+      if (intervaloSeg > maxIntervaloEntreFixesCrudosSegV2) {
+        maxIntervaloEntreFixesCrudosSegV2 = intervaloSeg;
+      }
+    }
+    ultimoFixCrudoTimeV2 = pos.time;
+  }
+
   const estadoAntes = pipeline.obtenerEstado();
   const resultado = pipeline.procesarFix(aFixCrudoV2(pos));
   if (resultado.tipo === "confiable") {
@@ -73,6 +104,8 @@ export function alimentarFixCrudoV2(pos: PosicionSimple): void {
     candidatosPendientesV2++;
   } else if (resultado.tipo === "rechazado") {
     rechazadosV2.set(resultado.motivo, (rechazadosV2.get(resultado.motivo) ?? 0) + 1);
+  } else if (resultado.tipo === "ruido") {
+    ruidoV2++;
   }
   const estadoDespues = pipeline.obtenerEstado();
   if (estadoDespues !== estadoAntes) {
@@ -94,6 +127,9 @@ export function iniciarPipelineV2(modo: "patinando" | "ruta", mapeado: boolean):
   mapeadoActualV2 = mapeado;
   fixesRecibidosV2 = 0;
   candidatosPendientesV2 = 0;
+  ruidoV2 = 0;
+  ultimoFixCrudoTimeV2 = null;
+  maxIntervaloEntreFixesCrudosSegV2 = 0;
   entradasRecuperacionV2.length = 0;
   rechazadosV2.clear();
   pipeline.iniciar();
@@ -147,5 +183,7 @@ export function obtenerResumenGpsV2(): ResumenGpsV2 {
     entradasRecuperacion: [...entradasRecuperacionV2],
     candidatosPendientes: candidatosPendientesV2,
     rechazados: Array.from(rechazadosV2.entries()).map(([motivo, cantidad]) => ({ motivo, cantidad })),
+    ruido: ruidoV2,
+    maxIntervaloEntreFixesCrudosSeg: maxIntervaloEntreFixesCrudosSegV2,
   };
 }

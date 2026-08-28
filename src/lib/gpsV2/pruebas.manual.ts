@@ -11,6 +11,7 @@
 import assert from "node:assert/strict";
 import { crearPipelineV2 } from "./pipeline";
 import type { FixCrudoV2 } from "./tipos";
+import { iniciarPipelineV2, alimentarFixCrudoV2, obtenerResumenGpsV2, detenerPipelineV2 } from "./index";
 
 const LAT0 = -41.4693;
 const LON0 = -72.9424;
@@ -358,6 +359,50 @@ verificar("ruta98-5 -- salto real + speed contradictorio sigue sospechoso", () =
   // la posicion, pero no hace falta: factorSalto ya alcanza por si solo.
   const r = p.procesarFix(fix(129, 0, 21.5, { speed: 0 }));
   assert.equal(r.tipo, "candidato-pendiente", "un salto real sigue detectandose independientemente de si el speed tambien contradice");
+});
+
+// --- Instrumentacion adicional (auditoria ruta 100): ruido y
+// maxIntervaloEntreFixesCrudosSeg en ResumenGpsV2 -- ver gpsV2/index.ts.
+// A diferencia de las pruebas de arriba (crearPipelineV2() aislado), estas
+// usan la API publica del modulo (iniciarPipelineV2/alimentarFixCrudoV2/
+// obtenerResumenGpsV2/detenerPipelineV2), porque los contadores nuevos
+// viven en el estado de index.ts, no en pipeline.ts.
+
+verificar("index-ruido -- el contador ruido se incrementa exactamente con los fixes de movimiento insignificante", () => {
+  iniciarPipelineV2("patinando", true);
+  alimentarFixCrudoV2(fix(0, 0, 0)); // primer punto, confiable directo
+  alimentarFixCrudoV2(fix(1, 0, 5)); // 1m desde el ultimo confiable -- ruido
+  alimentarFixCrudoV2(fix(2, 0, 10)); // 2m desde el ultimo confiable -- ruido
+  alimentarFixCrudoV2(fix(40, 0, 20)); // 40m reales -- confiable
+  const resumen = obtenerResumenGpsV2();
+  assert.equal(resumen.ruido, 2, "deberian contarse exactamente los 2 fixes de movimiento insignificante");
+  assert.equal(resumen.puntosConfiables.length, 2, "los 2 fixes de ruido no deben haber entrado como confiables");
+  detenerPipelineV2();
+});
+
+verificar("index-maxIntervalo -- maxIntervaloEntreFixesCrudosSeg refleja el mayor dt real entre fixes crudos", () => {
+  iniciarPipelineV2("patinando", true);
+  alimentarFixCrudoV2(fix(0, 0, 0));
+  alimentarFixCrudoV2(fix(1, 0, 5)); // dt=5s
+  alimentarFixCrudoV2(fix(2, 0, 24)); // dt=19s -- el mayor, pero <30s (no dispara RECUPERANDO)
+  alimentarFixCrudoV2(fix(40, 0, 30)); // dt=6s
+  const resumen = obtenerResumenGpsV2();
+  assert.equal(resumen.maxIntervaloEntreFixesCrudosSeg, 19, "el mayor intervalo real fue 19s, entre el 2do y 3er fix crudo");
+  assert.deepEqual(resumen.entradasRecuperacion, [], "19s no debe disparar RECUPERANDO -- criterio existente sin cambios");
+  detenerPipelineV2();
+});
+
+verificar("index-recuperacion -- un intervalo >30s entre fixes crudos sigue activando exactamente la recuperacion existente", () => {
+  iniciarPipelineV2("patinando", true);
+  alimentarFixCrudoV2(fix(0, 0, 0));
+  alimentarFixCrudoV2(fix(500, 0, 301)); // ~301s de hueco real entre fixes crudos
+  const resumen = obtenerResumenGpsV2();
+  assert.equal(resumen.entradasRecuperacion.length, 1, "debe registrar exactamente 1 entrada a RECUPERANDO, igual que antes de este cambio");
+  assert.ok(
+    resumen.maxIntervaloEntreFixesCrudosSeg >= 301,
+    `el intervalo real (>=301s) debe quedar reflejado en el maximo, no enmascarado por RECUPERANDO -- fue ${resumen.maxIntervaloEntreFixesCrudosSeg}`,
+  );
+  detenerPipelineV2();
 });
 
 console.log(`\nTODO OK (${ok} verificaciones)`);
