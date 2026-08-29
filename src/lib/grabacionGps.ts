@@ -29,7 +29,12 @@ import { distanciaHaversineKm, type PuntoGps } from "./geo";
 // de este archivo -- V2 nunca crea uno propio (regla explícita: máximo un
 // watcher GPS real activo). Se le pasa cada fix crudo tal cual llega acá,
 // sin que V2 pueda influir en nada de lo de abajo.
-import { alimentarFixCrudoV2, detenerPipelineV2, iniciarPipelineV2 } from "./gpsV2";
+import { alimentarFixCrudoV2, detenerPipelineV2, iniciarPipelineV2, informarDisponibilidadUbicacionV2 } from "./gpsV2";
+// GPS V2 -- señal de disponibilidad de la fuente de ubicación del sistema
+// (ver diseño acordado / disponibilidadUbicacion.ts). Mismo criterio de
+// dueño único que el watcher real: se suscribe/desuscribe acá, en los mismos
+// dos puntos donde arranca/para el watcher, nunca en otro lugar.
+import { suscribirDisponibilidadUbicacion } from "./disponibilidadUbicacion";
 
 // LOGS TEMPORALES (a sacar una vez confirmado en dispositivo real que el
 // watcher sobrevive cambios de pestaña) -- ver también los logs espejo en
@@ -61,6 +66,7 @@ export interface EstadoGrabacionGps {
 
 let grabacionActiva: EstadoGrabacionGps | null = null;
 let detenerWatcherReal: (() => void) | null = null;
+let detenerSuscripcionDisponibilidad: (() => void) | null = null;
 // Ver KMH_SALTO_SOSPECHOSO: un punto que salta lejos del último confirmado
 // se retiene acá hasta que la lectura siguiente confirme o desmienta el
 // salto (ver registrarPuntoGrabado) -- mismo mecanismo, movido tal cual.
@@ -427,6 +433,13 @@ export function iniciarGrabacionGps(modo: "patinando" | "ruta", mapeado: boolean
   // watcher real -- nunca antes ni después por separado, para que V1 y V2
   // arranquen exactamente en el mismo instante de la grabación.
   iniciarPipelineV2(modo, mapeado);
+  // Se suscribe ANTES de arrancar el watcher real -- si Ubicación ya estaba
+  // apagada al momento de iniciar, GPS V2 se entera desde el primer instante
+  // (ver estaDisponible() en disponibilidadUbicacion.ts), no recién en el
+  // próximo cambio.
+  detenerSuscripcionDisponibilidad = suscribirDisponibilidadUbicacion((disponible) => {
+    informarDisponibilidadUbicacionV2(disponible);
+  });
   detenerWatcherReal = iniciarSeguimientoUbicacion(alRecibirPosicion, onError);
   log("watcher iniciado");
 }
@@ -440,6 +453,10 @@ export function detenerGrabacionGps(): PuntoGps[] {
     detenerWatcherReal();
     detenerWatcherReal = null;
     log("watcher detenido — fin de grabación");
+  }
+  if (detenerSuscripcionDisponibilidad) {
+    detenerSuscripcionDisponibilidad();
+    detenerSuscripcionDisponibilidad = null;
   }
   // GPS V2 -- FASE 1: se detiene junto con el watcher real. Su resultado
   // todavía no se usa para nada (no controla el recorrido oficial).

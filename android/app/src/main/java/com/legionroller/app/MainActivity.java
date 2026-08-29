@@ -9,6 +9,9 @@ import com.getcapacitor.BridgeActivity;
 public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        // Plugin local (no npm), ver DisponibilidadUbicacionPlugin.java --
+        // debe registrarse ANTES de super.onCreate().
+        registerPlugin(DisponibilidadUbicacionPlugin.class);
         super.onCreate(savedInstanceState);
         // Con targetSdkVersion 36 (Android 15+), el sistema fuerza el modo
         // edge-to-edge y android:statusBarColor/navigationBarColor del tema

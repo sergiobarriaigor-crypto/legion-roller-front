@@ -39,6 +39,11 @@ export interface ResumenGpsV2 {
   discontinuidades: DiscontinuidadV2[];
   entradasRecuperacion: { indiceFix: number; fixTime: number | null }[];
   candidatosPendientes: number;
+  // Resultados "candidato-recuperacion" (fixes recibidos MIENTRAS estado ===
+  // RECUPERANDO, que no bastaron por sí solos para confirmar ni romper la
+  // ventana) -- antes invisibles en el resumen. Necesario para que el
+  // invariante de abajo cierre en cualquier instante, no solo al finalizar.
+  candidatosRecuperacion: number;
   rechazados: { motivo: string; cantidad: number }[];
   // Instrumentación adicional (auditoría ruta 100) -- ninguno de los dos
   // cambia ningún criterio/umbral del pipeline, solo lo hacen visible:
@@ -52,7 +57,27 @@ export interface ResumenGpsV2 {
   // espejearla reproduciría el mismo punto ciego que esto busca cerrar).
   ruido: number;
   maxIntervaloEntreFixesCrudosSeg: number;
+  // Auditoría de disponibilidad de la fuente de ubicación del sistema (ver
+  // disponibilidadUbicacion.ts / informarDisponibilidadUbicacionV2) --
+  // cuántos callbacks crudos siguieron llegando MIENTRAS estaba declarada no
+  // disponible (bloqueados antes de tocar el pipeline, nunca cuentan como
+  // ruido/rechazado/candidato/confiable) y el registro completo de eventos
+  // false/true recibidos, para poder cruzar horarios con puntosConfiables /
+  // entradasRecuperacion en una prueba real.
+  fixesRecibidosFuenteNoDisponible: number;
+  eventosDisponibilidad: { disponible: boolean; hora: number }[];
 }
+
+// Invariante de auditoría (ver ResumenGpsV2 arriba) -- válido en CUALQUIER
+// instante de la grabación, no solo al finalizar: cada fix crudo recibido
+// mientras la fuente está disponible produce EXACTAMENTE uno de los 5 tipos
+// de ResultadoProcesarFix (confiable/candidato-pendiente/candidato-
+// recuperacion/rechazado/ruido -- partición completa, ver tipos.ts), y cada
+// fix recibido mientras la fuente NO está disponible se cuenta aparte, sin
+// llegar nunca al pipeline:
+//   fixesRecibidos === puntosConfiables.length + candidatosPendientes
+//     + candidatosRecuperacion + Σ rechazados[].cantidad + ruido
+//     + fixesRecibidosFuenteNoDisponible
 
 const pipeline = crearPipelineV2();
 let activoV2 = false;
@@ -60,11 +85,21 @@ let modoActualV2: "patinando" | "ruta" | null = null;
 let mapeadoActualV2 = false;
 let fixesRecibidosV2 = 0;
 let candidatosPendientesV2 = 0;
+let candidatosRecuperacionV2 = 0;
 let ruidoV2 = 0;
 let ultimoFixCrudoTimeV2: number | null = null;
 let maxIntervaloEntreFixesCrudosSegV2 = 0;
 const entradasRecuperacionV2: { indiceFix: number; fixTime: number | null }[] = [];
 const rechazadosV2 = new Map<string, number>();
+// Estado de disponibilidad de la fuente de ubicación del sistema operativo
+// (ver disponibilidadUbicacion.ts) -- deliberadamente vive ACÁ, no en
+// pipeline.ts: es una preocupación del sistema operativo, no del criterio de
+// convergencia/estabilización de la máquina de estados, que sigue sin saber
+// nada de esto. Arranca en true (se asume disponible al iniciar; si no lo
+// está, el propio plugin lo corrige con el primer evento real).
+let fuenteUbicacionDisponibleV2 = true;
+let fixesRecibidosFuenteNoDisponibleV2 = 0;
+const eventosDisponibilidadV2: { disponible: boolean; hora: number }[] = [];
 let callbackPosicionConfiable: ((p: PuntoConfiableV2) => void) | null = null;
 let callbackEstado: ((e: EstadoGpsV2) => void) | null = null;
 
@@ -96,12 +131,27 @@ export function alimentarFixCrudoV2(pos: PosicionSimple): void {
     ultimoFixCrudoTimeV2 = pos.time;
   }
 
+  // Fuente declarada no disponible por el sistema (ver
+  // informarDisponibilidadUbicacionV2): este fix NUNCA llega a
+  // pipeline.procesarFix(), sin importar qué contendría -- ver diseño
+  // acordado (ningún callback del plugin viejo puede confirmar ni romper una
+  // recuperación mientras Android sigue declarando la ubicación apagada).
+  // fixesRecibidos y maxIntervaloEntreFixesCrudosSeg ya se actualizaron
+  // arriba, ANTES de este punto -- deliberado, para que ambos sigan
+  // observando TODOS los callbacks crudos incluso los bloqueados acá.
+  if (!fuenteUbicacionDisponibleV2) {
+    fixesRecibidosFuenteNoDisponibleV2++;
+    return;
+  }
+
   const estadoAntes = pipeline.obtenerEstado();
   const resultado = pipeline.procesarFix(aFixCrudoV2(pos));
   if (resultado.tipo === "confiable") {
     callbackPosicionConfiable?.(resultado.punto);
   } else if (resultado.tipo === "candidato-pendiente") {
     candidatosPendientesV2++;
+  } else if (resultado.tipo === "candidato-recuperacion") {
+    candidatosRecuperacionV2++;
   } else if (resultado.tipo === "rechazado") {
     rechazadosV2.set(resultado.motivo, (rechazadosV2.get(resultado.motivo) ?? 0) + 1);
   } else if (resultado.tipo === "ruido") {
@@ -112,6 +162,36 @@ export function alimentarFixCrudoV2(pos: PosicionSimple): void {
     callbackEstado?.(estadoDespues);
     if (estadoDespues === "RECUPERANDO") {
       entradasRecuperacionV2.push({ indiceFix: indiceEsteFix, fixTime: pos.time });
+    }
+  }
+}
+
+// Llamado por grabacionGps.ts al recibir un cambio real de disponibilidad de
+// la fuente de ubicación del sistema (ver disponibilidadUbicacion.ts,
+// DisponibilidadUbicacionPlugin.java). Se registra CADA llamada para
+// auditoría, pero solo el flanco true→false actúa sobre el pipeline:
+//   - false (viniendo de true): pasa a RECUPERANDO sin semilla, con la
+//     ventana de estabilización pausada (ver marcarFuenteNoDisponible en
+//     pipeline.ts) -- desde acá, todo fix crudo que siga llegando queda
+//     bloqueado arriba, sin importar si vendría de un callback legítimo o de
+//     un plugin viejo que no se enteró del apagado.
+//   - true: NO toca el pipeline (sigue en RECUPERANDO, sin candidato). Solo
+//     reabre el gate de arriba -- el próximo fix real que pase se convierte
+//     en la semilla de recuperación y arranca la ventana recién ahí (ver
+//     procesarEnRecuperacion en pipeline.ts). Repetir false o true mientras
+//     ya está en ese mismo estado no dispara nada nuevo (evita reiniciar la
+//     ventana o el candidato por un evento duplicado del sistema).
+export function informarDisponibilidadUbicacionV2(disponible: boolean): void {
+  if (!activoV2) return;
+  eventosDisponibilidadV2.push({ disponible, hora: Date.now() });
+  const eraDisponible = fuenteUbicacionDisponibleV2;
+  fuenteUbicacionDisponibleV2 = disponible;
+  if (!disponible && eraDisponible) {
+    const estadoAntes = pipeline.obtenerEstado();
+    pipeline.marcarFuenteNoDisponible();
+    const estadoDespues = pipeline.obtenerEstado();
+    if (estadoDespues !== estadoAntes) {
+      callbackEstado?.(estadoDespues);
     }
   }
 }
@@ -127,11 +207,15 @@ export function iniciarPipelineV2(modo: "patinando" | "ruta", mapeado: boolean):
   mapeadoActualV2 = mapeado;
   fixesRecibidosV2 = 0;
   candidatosPendientesV2 = 0;
+  candidatosRecuperacionV2 = 0;
   ruidoV2 = 0;
   ultimoFixCrudoTimeV2 = null;
   maxIntervaloEntreFixesCrudosSegV2 = 0;
   entradasRecuperacionV2.length = 0;
   rechazadosV2.clear();
+  fuenteUbicacionDisponibleV2 = true;
+  fixesRecibidosFuenteNoDisponibleV2 = 0;
+  eventosDisponibilidadV2.length = 0;
   pipeline.iniciar();
   activoV2 = true;
   log("pipeline V2 iniciado (Fase 1 -- modo sombra, alimentado por el watcher de V1)");
@@ -182,8 +266,11 @@ export function obtenerResumenGpsV2(): ResumenGpsV2 {
     discontinuidades: pipeline.obtenerDiscontinuidades(),
     entradasRecuperacion: [...entradasRecuperacionV2],
     candidatosPendientes: candidatosPendientesV2,
+    candidatosRecuperacion: candidatosRecuperacionV2,
     rechazados: Array.from(rechazadosV2.entries()).map(([motivo, cantidad]) => ({ motivo, cantidad })),
     ruido: ruidoV2,
     maxIntervaloEntreFixesCrudosSeg: maxIntervaloEntreFixesCrudosSegV2,
+    fixesRecibidosFuenteNoDisponible: fixesRecibidosFuenteNoDisponibleV2,
+    eventosDisponibilidad: [...eventosDisponibilidadV2],
   };
 }

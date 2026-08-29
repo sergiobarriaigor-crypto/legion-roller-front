@@ -27,6 +27,13 @@ import {
 
 export interface PipelineV2 {
   procesarFix(fix: FixCrudoV2): ResultadoProcesarFix;
+  // Entrada a RECUPERANDO sin fix real (fuente de ubicación del sistema
+  // declarada no disponible, ver disponibilidadUbicacion.ts) -- NO arranca
+  // la ventana de estabilización acá (inicioRecuperacionTime queda en null,
+  // "pausada"): recién corre desde el primer fix real que se deje procesar
+  // después, ver procesarEnRecuperacion. Así el tiempo que la fuente estuvo
+  // apagada nunca cuenta como parte de VENTANA_ESTABILIZACION_SEG.
+  marcarFuenteNoDisponible(): void;
   iniciar(): void; // arranca GRABANDO, limpia todo estado de una grabación anterior
   finalizar(): PuntoConfiableV2[]; // pasa por FINALIZANDO, devuelve los puntos confiables acumulados
   obtenerEstado(): EstadoGpsV2;
@@ -112,12 +119,33 @@ export function crearPipelineV2(): PipelineV2 {
     return { tipo: "candidato-recuperacion" };
   }
 
+  function marcarFuenteNoDisponible(): void {
+    estado = "RECUPERANDO";
+    candidatoPendiente = null;
+    candidatosRecuperacion = [];
+    inicioRecuperacionTime = null;
+  }
+
   function procesarEnRecuperacion(fix: FixCrudoV2): ResultadoProcesarFix {
     if (fix.time === null) return { tipo: "rechazado", motivo: "sin-fix-time-en-recuperacion" };
     if (fix.accuracy > PRECISION_MAXIMA_PUNTO_GRABADO_M) {
       return { tipo: "candidato-recuperacion" }; // se ignora como candidato, pero no rompe la ventana
     }
     const nuevo: PuntoConfiableV2 = { lat: fix.lat, lon: fix.lon, timestamp: fix.time };
+    if (candidatosRecuperacion.length === 0) {
+      // Solo ocurre tras marcarFuenteNoDisponible() (recuperación sin fix
+      // semilla): este es el primer fix real que se deja pasar. Se toma como
+      // candidato inicial -- igual que ya hace entrarEnRecuperacion() para un
+      // hueco real -- y recién ACÁ arranca inicioRecuperacionTime, con
+      // fix.time (nunca Date.now()), para que el tiempo que la fuente estuvo
+      // declarada no disponible no cuente como parte de la ventana de
+      // estabilización.
+      candidatosRecuperacion = [nuevo];
+      if (inicioRecuperacionTime === null) {
+        inicioRecuperacionTime = fix.time;
+      }
+      return { tipo: "candidato-recuperacion" };
+    }
     const ultimo = candidatosRecuperacion[candidatosRecuperacion.length - 1];
     if (convergen(ultimo, nuevo)) {
       candidatosRecuperacion.push(nuevo);
@@ -360,6 +388,7 @@ export function crearPipelineV2(): PipelineV2 {
 
   return {
     procesarFix,
+    marcarFuenteNoDisponible,
     iniciar() {
       estado = "GRABANDO";
       puntosConfiables = [];

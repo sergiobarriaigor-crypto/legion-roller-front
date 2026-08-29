@@ -11,7 +11,14 @@
 import assert from "node:assert/strict";
 import { crearPipelineV2 } from "./pipeline";
 import type { FixCrudoV2 } from "./tipos";
-import { iniciarPipelineV2, alimentarFixCrudoV2, obtenerResumenGpsV2, detenerPipelineV2 } from "./index";
+import {
+  iniciarPipelineV2,
+  alimentarFixCrudoV2,
+  obtenerResumenGpsV2,
+  detenerPipelineV2,
+  informarDisponibilidadUbicacionV2,
+  obtenerGrabacionActivaV2,
+} from "./index";
 
 const LAT0 = -41.4693;
 const LON0 = -72.9424;
@@ -402,6 +409,154 @@ verificar("index-recuperacion -- un intervalo >30s entre fixes crudos sigue acti
     resumen.maxIntervaloEntreFixesCrudosSeg >= 301,
     `el intervalo real (>=301s) debe quedar reflejado en el maximo, no enmascarado por RECUPERANDO -- fue ${resumen.maxIntervaloEntreFixesCrudosSeg}`,
   );
+  detenerPipelineV2();
+});
+
+// --- Disponibilidad de la fuente de ubicación del sistema (ruta 102) ------
+// informarDisponibilidadUbicacionV2 (index.ts) + marcarFuenteNoDisponible
+// (pipeline.ts). El objetivo central de este bloque: jamás puede volverse a
+// GRABANDO_NORMAL mientras la fuente sigue declarada no disponible, y la
+// ventana de estabilización nunca cuenta el tiempo que estuvo apagada.
+
+verificar("disponibilidad-1 -- fixes que convergerian NO pueden confirmar recuperacion mientras la fuente sigue en false", () => {
+  iniciarPipelineV2("patinando", true);
+  alimentarFixCrudoV2(fix(0, 0, 0));
+  informarDisponibilidadUbicacionV2(false);
+  assert.equal(obtenerGrabacionActivaV2()?.estado, "RECUPERANDO");
+  // El peor caso: exactamente los datos que SI confirmarian la recuperacion
+  // si no estuvieran bloqueados (convergen entre si, dentro de 50m).
+  alimentarFixCrudoV2(fix(2, 1, 30));
+  alimentarFixCrudoV2(fix(2, 1, 31));
+  const resumen = obtenerResumenGpsV2();
+  assert.equal(obtenerGrabacionActivaV2()?.estado, "RECUPERANDO", "ningun fix bloqueado puede confirmar nada");
+  assert.equal(resumen.puntosConfiables.length, 1, "no debe haberse agregado ningun punto nuevo");
+  assert.equal(resumen.fixesRecibidosFuenteNoDisponible, 2);
+  detenerPipelineV2();
+});
+
+verificar("disponibilidad-2 -- true reabre el paso pero no acepta nada automaticamente", () => {
+  iniciarPipelineV2("patinando", true);
+  alimentarFixCrudoV2(fix(0, 0, 0));
+  informarDisponibilidadUbicacionV2(false);
+  alimentarFixCrudoV2(fix(2, 1, 10)); // bloqueado
+  informarDisponibilidadUbicacionV2(true);
+  assert.equal(obtenerGrabacionActivaV2()?.estado, "RECUPERANDO", "true no acepta nada por si solo, sigue esperando confirmacion");
+  assert.equal(obtenerResumenGpsV2().puntosConfiables.length, 1);
+  detenerPipelineV2();
+});
+
+verificar("disponibilidad-3 -- tras true, 2 fixes reales convergentes completan la recuperacion con la logica existente", () => {
+  iniciarPipelineV2("patinando", true);
+  alimentarFixCrudoV2(fix(0, 0, 0));
+  informarDisponibilidadUbicacionV2(false);
+  alimentarFixCrudoV2(fix(2, 1, 5)); // bloqueado, no cuenta como candidato
+  informarDisponibilidadUbicacionV2(true);
+  alimentarFixCrudoV2(fix(500, 0, 10)); // primer fix real permitido: semilla
+  assert.equal(obtenerGrabacionActivaV2()?.estado, "RECUPERANDO");
+  assert.equal(obtenerResumenGpsV2().puntosConfiables.length, 1, "la semilla todavia no es un punto confiable por si sola");
+  alimentarFixCrudoV2(fix(503, 1, 10.1)); // converge con la semilla
+  const resumen = obtenerResumenGpsV2();
+  assert.equal(obtenerGrabacionActivaV2()?.estado, "GRABANDO");
+  assert.equal(resumen.puntosConfiables.length, 2);
+  assert.equal(resumen.discontinuidades.length, 1);
+  assert.equal(resumen.discontinuidades[0].motivo, "hueco");
+  detenerPipelineV2();
+});
+
+verificar("disponibilidad-4 -- maxIntervaloEntreFixesCrudosSeg sigue observando aunque los fixes esten bloqueados (ruta 102)", () => {
+  iniciarPipelineV2("patinando", true);
+  alimentarFixCrudoV2(fix(0, 0, 0));
+  informarDisponibilidadUbicacionV2(false);
+  for (let t = 1; t <= 60; t++) {
+    alimentarFixCrudoV2(fix(0, 0, t)); // callbacks cada 1s, todos bloqueados
+  }
+  const resumen = obtenerResumenGpsV2();
+  assert.equal(resumen.fixesRecibidosFuenteNoDisponible, 60);
+  assert.equal(resumen.maxIntervaloEntreFixesCrudosSeg, 1, "debe seguir viendo el intervalo real de ~1s entre callbacks, aunque esten bloqueados");
+  assert.equal(resumen.ruido, 0);
+  assert.equal(resumen.rechazados.length, 0);
+  assert.equal(resumen.candidatosPendientes, 0);
+  assert.equal(resumen.candidatosRecuperacion, 0);
+  detenerPipelineV2();
+});
+
+verificar("disponibilidad-5 -- caso critico ruta102: 60s de callbacks bloqueados no cuentan para la ventana de estabilizacion", () => {
+  iniciarPipelineV2("patinando", true);
+  alimentarFixCrudoV2(fix(0, 0, 0));
+  informarDisponibilidadUbicacionV2(false);
+  for (let t = 1; t <= 60; t++) {
+    alimentarFixCrudoV2(fix(0, 0, t)); // bloqueados -- simulan el plugin viejo ticklando cada 1s
+  }
+  informarDisponibilidadUbicacionV2(true);
+  // Primer fix real permitido tras `true`: se vuelve semilla. Si los 60s
+  // bloqueados hubieran contado para la ventana, esto ya habria superado
+  // VENTANA_ESTABILIZACION_SEG=15s y se habria resuelto por timeout -- no
+  // debe pasar.
+  alimentarFixCrudoV2(fix(500, 0, 61));
+  let resumen = obtenerResumenGpsV2();
+  assert.equal(obtenerGrabacionActivaV2()?.estado, "RECUPERANDO", "no debe resolverse por timeout: la ventana recien empieza con este fix");
+  assert.equal(resumen.puntosConfiables.length, 1, "la semilla todavia no es un punto confiable por si sola");
+
+  // Segundo fix, bien dentro de los 15s reales desde la semilla (no desde el
+  // apagado), que SI converge -- recien aca debe completar la recuperacion.
+  alimentarFixCrudoV2(fix(503, 1, 61.5));
+  resumen = obtenerResumenGpsV2();
+  assert.equal(obtenerGrabacionActivaV2()?.estado, "GRABANDO");
+  assert.equal(resumen.puntosConfiables.length, 2);
+  assert.equal(resumen.discontinuidades[resumen.discontinuidades.length - 1].motivo, "hueco");
+  detenerPipelineV2();
+});
+
+verificar("disponibilidad-6 -- la duracion del apagado (5 minutos) no altera el criterio de estabilizacion", () => {
+  iniciarPipelineV2("patinando", true);
+  alimentarFixCrudoV2(fix(0, 0, 0));
+  informarDisponibilidadUbicacionV2(false);
+  // 5 minutos apagado, sin ningun callback intermedio esta vez -- prueba el
+  // caso false...true solo, independiente de si el plugin viejo siguio
+  // mandando algo mientras tanto (ver disponibilidad-5 para ese caso).
+  informarDisponibilidadUbicacionV2(true);
+  alimentarFixCrudoV2(fix(500, 0, 300)); // primer fix real, 300s (5min) despues del false
+  assert.equal(obtenerGrabacionActivaV2()?.estado, "RECUPERANDO", "5 minutos de apagado no deben resolverse por timeout: la ventana ni habia empezado");
+  alimentarFixCrudoV2(fix(503, 1, 300.5)); // converge, 0.5s despues de la semilla real
+  const resumen = obtenerResumenGpsV2();
+  assert.equal(obtenerGrabacionActivaV2()?.estado, "GRABANDO", "misma logica de siempre, sin importar cuanto duro el apagado");
+  assert.equal(resumen.puntosConfiables.length, 2);
+  detenerPipelineV2();
+});
+
+verificar("disponibilidad-7 -- decisivo: jamas vuelve a GRABANDO mientras la fuente sigue en false, ni con datos que si confirmarian", () => {
+  iniciarPipelineV2("patinando", true);
+  alimentarFixCrudoV2(fix(0, 0, 0));
+  informarDisponibilidadUbicacionV2(false);
+  for (let i = 1; i <= 100; i++) {
+    // Todos convergen entre si -- el peor caso posible.
+    alimentarFixCrudoV2(fix(2, 1, i));
+    assert.equal(obtenerGrabacionActivaV2()?.estado, "RECUPERANDO", `fix bloqueado #${i} no debe poder sacar el pipeline de RECUPERANDO`);
+    assert.equal(obtenerResumenGpsV2().puntosConfiables.length, 1, `fix bloqueado #${i} no debe poder agregar un punto confiable`);
+  }
+  assert.equal(obtenerResumenGpsV2().fixesRecibidosFuenteNoDisponible, 100);
+  detenerPipelineV2();
+});
+
+verificar("disponibilidad-8 -- invariante de conteo cierra en cualquier instante, incluyendo candidatosRecuperacion y fixesRecibidosFuenteNoDisponible", () => {
+  iniciarPipelineV2("patinando", true);
+  alimentarFixCrudoV2(fix(0, 0, 0)); // confiable
+  alimentarFixCrudoV2(fix(500, 0, 301)); // hueco real -> candidato-recuperacion
+  informarDisponibilidadUbicacionV2(false); // reinicia la recuperacion sin semilla
+  alimentarFixCrudoV2(fix(2, 1, 302)); // bloqueado
+  alimentarFixCrudoV2(fix(2, 1, 303)); // bloqueado
+  informarDisponibilidadUbicacionV2(true);
+  alimentarFixCrudoV2(fix(500, 0, 304)); // primer fix real -> nueva semilla, candidato-recuperacion
+  const resumen = obtenerResumenGpsV2();
+  const sumaRechazados = resumen.rechazados.reduce((acc, r) => acc + r.cantidad, 0);
+  const total =
+    resumen.puntosConfiables.length +
+    resumen.candidatosPendientes +
+    resumen.candidatosRecuperacion +
+    sumaRechazados +
+    resumen.ruido +
+    resumen.fixesRecibidosFuenteNoDisponible;
+  assert.equal(total, resumen.fixesRecibidos, "el invariante de conteo debe cerrar exactamente, incluyendo candidatosRecuperacion");
   detenerPipelineV2();
 });
 
