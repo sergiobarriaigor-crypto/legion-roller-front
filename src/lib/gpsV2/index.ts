@@ -9,7 +9,9 @@
 import { crearPipelineV2 } from "./pipeline";
 import { aFixCrudoV2 } from "./watcher";
 import type { PosicionSimple } from "../geolocacionNativa";
-import type { DiscontinuidadV2, EstadoGpsV2, PuntoConfiableV2 } from "./tipos";
+import type { DiagnosticoNativoV2, DiscontinuidadV2, EstadoGpsV2, PuntoConfiableV2 } from "./tipos";
+// Instrumentación diagnóstica (auditoría ruta 103) -- ver ese archivo.
+import { obtenerDiagnosticoNativo, resetDiagnosticoNativo } from "./diagnosticoNativo";
 
 export type { DiscontinuidadV2, EstadoGpsV2, FixCrudoV2, PuntoConfiableV2, ResultadoProcesarFix } from "./tipos";
 export { crearPipelineV2 } from "./pipeline";
@@ -66,6 +68,12 @@ export interface ResumenGpsV2 {
   // entradasRecuperacion en una prueba real.
   fixesRecibidosFuenteNoDisponible: number;
   eventosDisponibilidad: { disponible: boolean; hora: number }[];
+  // Instrumentación diagnóstica (auditoría ruta 103) -- OPCIONAL a
+  // propósito: solo lo llena obtenerResumenGpsV2ConDiagnosticoNativo() (ver
+  // más abajo), nunca obtenerResumenGpsV2() -- que queda intacta para no
+  // alterar ningún caller/prueba existente. Puramente observacional, ver
+  // tipos.ts.
+  diagnosticoNativo?: DiagnosticoNativoV2;
 }
 
 // Invariante de auditoría (ver ResumenGpsV2 arriba) -- válido en CUALQUIER
@@ -273,4 +281,27 @@ export function obtenerResumenGpsV2(): ResumenGpsV2 {
     fixesRecibidosFuenteNoDisponible: fixesRecibidosFuenteNoDisponibleV2,
     eventosDisponibilidad: [...eventosDisponibilidadV2],
   };
+}
+
+// Instrumentación diagnóstica (auditoría ruta 103) -- debe llamarse una
+// única vez al iniciar cada grabación nueva, ANTES de que pueda existir el
+// primer callback nativo real de esa grabación (ver DiagnosticoNativo.reset()
+// en el patch de BackgroundGeolocationService.java). Único caller legítimo:
+// grabacionGps.ts, que hace `await` de esto ANTES de arrancar el watcher
+// real -- ver comentario ahí sobre la garantía de orden. Deliberadamente
+// nombrada como el inicio de una sesión diagnóstica V2, no escondida como
+// efecto secundario de iniciarPipelineV2 (que sigue sin tocarse).
+export async function iniciarSesionDiagnosticoNativoV2(): Promise<void> {
+  await resetDiagnosticoNativo();
+}
+
+// Variante de obtenerResumenGpsV2() que además incluye la instrumentación
+// diagnóstica nativa (auditoría ruta 103). Separada a propósito de la
+// función de arriba, que queda 100% intacta -- así ninguna prueba/caller
+// existente (síncrono) se ve afectado; solo el caller real que la necesita
+// (finalizarModo en MapaView.tsx, ya async) pasa a usar esta.
+export async function obtenerResumenGpsV2ConDiagnosticoNativo(): Promise<ResumenGpsV2> {
+  const base = obtenerResumenGpsV2();
+  const diagnosticoNativo = await obtenerDiagnosticoNativo();
+  return { ...base, diagnosticoNativo };
 }

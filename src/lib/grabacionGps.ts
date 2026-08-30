@@ -29,7 +29,13 @@ import { distanciaHaversineKm, type PuntoGps } from "./geo";
 // de este archivo -- V2 nunca crea uno propio (regla explícita: máximo un
 // watcher GPS real activo). Se le pasa cada fix crudo tal cual llega acá,
 // sin que V2 pueda influir en nada de lo de abajo.
-import { alimentarFixCrudoV2, detenerPipelineV2, iniciarPipelineV2, informarDisponibilidadUbicacionV2 } from "./gpsV2";
+import {
+  alimentarFixCrudoV2,
+  detenerPipelineV2,
+  iniciarPipelineV2,
+  informarDisponibilidadUbicacionV2,
+  iniciarSesionDiagnosticoNativoV2,
+} from "./gpsV2";
 // GPS V2 -- señal de disponibilidad de la fuente de ubicación del sistema
 // (ver diseño acordado / disponibilidadUbicacion.ts). Mismo criterio de
 // dueño único que el watcher real: se suscribe/desuscribe acá, en los mismos
@@ -405,7 +411,16 @@ function alRecibirPosicion(pos: PosicionSimple): void {
 // debe haber más de un watcher real activo a la vez. `mapeado` solo se usa
 // para la grabación NUEVA; si ya hay una en curso, se ignora (la existente
 // manda).
-export function iniciarGrabacionGps(modo: "patinando" | "ruta", mapeado: boolean, onError: () => void): void {
+// ASYNC desde la instrumentación diagnóstica de auditoría ruta 103 (ver
+// gpsV2/diagnosticoNativo.ts): el único cambio de fondo es el `await`
+// agregado más abajo, para garantizar con orden real (no fire-and-forget)
+// que el reset de diagnóstico nativo termine antes de que pueda crearse el
+// watcher real. Se revisaron los dos callers existentes (MapaView.tsx,
+// ninguno hace await ni depende del retorno) -- ninguno cambia de
+// comportamiento: todo el estado síncrono de V1 (grabacionActiva y el resto
+// de abajo) se sigue asignando ANTES del primer await, exactamente en el
+// mismo orden que ya existía.
+export async function iniciarGrabacionGps(modo: "patinando" | "ruta", mapeado: boolean, onError: () => void): Promise<void> {
   if (detenerWatcherReal) {
     log("iniciarGrabacionGps: ya había un watcher activo -- se reutiliza, no se crea otro");
     return;
@@ -429,6 +444,10 @@ export function iniciarGrabacionGps(modo: "patinando" | "ruta", mapeado: boolean
   // llegó a llamar limpiarDiagnosticoGps() al terminar la ruta anterior,
   // esto evita que una grabación nueva arrastre datos de la anterior.
   limpiarDiagnosticoGps();
+  // Instrumentación diagnóstica (auditoría ruta 103) -- reset nativo
+  // AWAITED, antes de inicializar V2 y de crear el watcher real. Ver
+  // gpsV2/diagnosticoNativo.ts / iniciarSesionDiagnosticoNativoV2().
+  await iniciarSesionDiagnosticoNativoV2();
   // GPS V2 -- FASE 1: arranca el pipeline en modo sombra junto con el único
   // watcher real -- nunca antes ni después por separado, para que V1 y V2
   // arranquen exactamente en el mismo instante de la grabación.

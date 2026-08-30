@@ -1,0 +1,177 @@
+diff --git a/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocationService.java b/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocationService.java
+index fafbb86..4a03c1e 100644
+--- a/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocationService.java
++++ b/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocationService.java
+@@ -17,7 +17,13 @@ import com.google.android.gms.location.LocationRequest;
+ import com.google.android.gms.location.LocationResult;
+ import com.google.android.gms.location.LocationServices;
+ 
++import org.json.JSONArray;
++import org.json.JSONException;
++import org.json.JSONObject;
++
++import java.util.ArrayList;
+ import java.util.HashSet;
++import java.util.List;
+ 
+ import androidx.localbroadcastmanager.content.LocalBroadcastManager;
+ 
+@@ -33,6 +39,134 @@ public class BackgroundGeolocationService extends Service {
+     // Must be unique for this application.
+     private static final int NOTIFICATION_ID = 28351;
+ 
++    // ---------------------------------------------------------------------
++    // PARCHE DE INSTRUMENTACION DIAGNOSTICA (Legion Roller, patch-package) --
++    // NO forma parte de la libreria original. Unica responsabilidad: dejar
++    // visible, para diagnostico, cuantos callbacks onLocationResult()/
++    // onLocationAvailability() ocurren realmente del lado nativo y con que
++    // timing -- para poder comparar contra lo que efectivamente llega a JS
++    // (alimentarFixCrudoV2 en gpsV2/index.ts) y distinguir un silencio real
++    // del proveedor de un silencio en la entrega nativo->bridge->JS.
++    // Puramente observacional: no altera ningun parametro de
++    // requestLocationUpdates, no cambia que se entrega a los watchers reales
++    // (el codigo original de abajo queda intacto), no crea ninguna
++    // suscripcion de ubicacion nueva. Ver frontend/android/app/src/main/java/
++    // com/legionroller/app/DiagnosticoProveedorPlugin.java, que expone esto a
++    // JS mediante consultas puntuales (nunca streaming), y
++    // DiagnosticoNativoBuffer.java (lifecycle de MainActivity, separado).
++    public static class DiagnosticoNativo {
++        private static final Object lock = new Object();
++        // Cuantos eventos de hueco/disponibilidad se retienen como maximo --
++        // acotado a proposito, nunca crece sin limite (ver diseño acordado:
++        // "evitar almacenar miles de fixes, bastan contadores/eventos").
++        private static final int LIMITE_EVENTOS = 200;
++        // Umbral de hueco SOLO para esta instrumentacion -- duplica a mano
++        // UMBRAL_HUECO_SEG de frontend/src/lib/gpsV2/constantes.ts (30s).
++        // Si ese valor cambia alguna vez, actualizar tambien esta constante.
++        // No participa en ningun criterio real de aceptacion/recuperacion de
++        // V1/V2 -- es unicamente para que la lista de huecos nativos sea
++        // comparable con las discontinuidades "hueco" que V2 ya calcula.
++        private static final long UMBRAL_HUECO_DIAGNOSTICO_MS = 30_000;
++
++        private static long total = 0;
++        private static long ultimoTimestamp = -1;
++        private static double maxIntervaloSeg = 0;
++        private static final List<long[]> huecos = new ArrayList<>();
++        private static final List<Object[]> disponibilidad = new ArrayList<>();
++
++        // Llamado desde onLocationResult() de abajo, con la hora de reloj
++        // nativa (System.currentTimeMillis()) tomada en el momento exacto
++        // del callback -- no el location.getTime() del propio fix (que
++        // puede venir cacheado/derivado, ver comentario de
++        // DisponibilidadUbicacionPlugin.java) -- para medir si el callback
++        // en si esta ocurriendo, independientemente de que tan fresca sea la
++        // posicion que trae.
++        static void registrarCallback(long horaNativaMs) {
++            synchronized (lock) {
++                total++;
++                if (ultimoTimestamp >= 0) {
++                    long intervaloMs = horaNativaMs - ultimoTimestamp;
++                    double intervaloSeg = intervaloMs / 1000.0;
++                    if (intervaloSeg > maxIntervaloSeg) {
++                        maxIntervaloSeg = intervaloSeg;
++                    }
++                    if (intervaloMs >= UMBRAL_HUECO_DIAGNOSTICO_MS) {
++                        if (huecos.size() >= LIMITE_EVENTOS) {
++                            huecos.remove(0);
++                        }
++                        huecos.add(new long[]{ultimoTimestamp, horaNativaMs});
++                    }
++                }
++                ultimoTimestamp = horaNativaMs;
++            }
++        }
++
++        // Llamado desde onLocationAvailability() de abajo. Puramente
++        // observacional -- quien llama NO decide nada en base a esto, solo
++        // deja registro para diagnostico posterior.
++        static void registrarDisponibilidad(boolean disponible, long horaNativaMs) {
++            synchronized (lock) {
++                if (disponibilidad.size() >= LIMITE_EVENTOS) {
++                    disponibilidad.remove(0);
++                }
++                disponibilidad.add(new Object[]{disponible, horaNativaMs});
++            }
++        }
++
++        // Debe llamarse una unica vez al arrancar una grabacion nueva, ANTES
++        // de que pueda existir el primer callback real de esa grabacion --
++        // ver DiagnosticoProveedorPlugin.resetDiagnosticoNativo() y el
++        // ordenamiento awaited en frontend/src/lib/grabacionGps.ts.
++        // Publico: llamado desde DiagnosticoProveedorPlugin.java, en el
++        // paquete com.legionroller.app (distinto al de esta clase).
++        public static void reset() {
++            synchronized (lock) {
++                total = 0;
++                ultimoTimestamp = -1;
++                maxIntervaloSeg = 0;
++                huecos.clear();
++                disponibilidad.clear();
++            }
++        }
++
++        // Snapshot de solo lectura -- copias primitivas/inmutables, nunca la
++        // referencia a las listas internas (evita ConcurrentModificationException
++        // si un callback nativo escribe mientras esto se serializa).
++        // Publico por el mismo motivo que reset() -- ver arriba.
++        public static JSONObject snapshot() {
++            synchronized (lock) {
++                JSONObject out = new JSONObject();
++                try {
++                    out.put("total", total);
++                    out.put("ultimoTimestamp", ultimoTimestamp);
++                    out.put("maxIntervaloSeg", maxIntervaloSeg);
++                    JSONArray huecosJson = new JSONArray();
++                    for (long[] h : huecos) {
++                        JSONObject e = new JSONObject();
++                        e.put("anteriorTimestamp", h[0]);
++                        e.put("actualTimestamp", h[1]);
++                        e.put("intervaloSeg", (h[1] - h[0]) / 1000.0);
++                        huecosJson.put(e);
++                    }
++                    out.put("huecosNativos", huecosJson);
++                    JSONArray dispJson = new JSONArray();
++                    for (Object[] d : disponibilidad) {
++                        JSONObject e = new JSONObject();
++                        e.put("disponible", (Boolean) d[0]);
++                        e.put("horaNativa", (Long) d[1]);
++                        dispJson.put(e);
++                    }
++                    out.put("eventosDisponibilidadProveedor", dispJson);
++                } catch (JSONException ex) {
++                    Logger.error("DiagnosticoNativo.snapshot", ex);
++                }
++                return out;
++            }
++        }
++    }
++    // Fin del parche de instrumentacion diagnostica.
++    // ---------------------------------------------------------------------
++
+     private class Watcher {
+         public String id;
+         public FusedLocationProviderClient client;
+@@ -89,6 +223,10 @@ public class BackgroundGeolocationService extends Service {
+             LocationCallback callback = new LocationCallback(){
+                 @Override
+                 public void onLocationResult(LocationResult locationResult) {
++                    // Instrumentacion diagnostica (patch-package, ver
++                    // DiagnosticoNativo arriba) -- solo observa, no altera
++                    // nada de lo que sigue.
++                    DiagnosticoNativo.registrarCallback(System.currentTimeMillis());
+                     Location location = locationResult.getLastLocation();
+                     Intent intent = new Intent(ACTION_BROADCAST);
+                     intent.putExtra("location", location);
+@@ -99,6 +237,12 @@ public class BackgroundGeolocationService extends Service {
+                 }
+                 @Override
+                 public void onLocationAvailability(LocationAvailability availability) {
++                    // Instrumentacion diagnostica -- puramente observacional,
++                    // ver DiagnosticoNativo arriba. NO reemplaza ni afecta el
++                    // Logger.debug original de abajo, y no toca en absoluto
++                    // la señal separada de LocationManager.MODE_CHANGED_ACTION
++                    // (systemLocationEnabled, DisponibilidadUbicacionPlugin.java).
++                    DiagnosticoNativo.registrarDisponibilidad(availability.isLocationAvailable(), System.currentTimeMillis());
+                     if (!availability.isLocationAvailable()) {
+                         Logger.debug("Location not available");
+                     }

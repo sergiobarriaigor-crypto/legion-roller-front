@@ -40,7 +40,7 @@ import {
   registrarCallbackPosicion,
   limpiarDiagnosticoGps,
 } from "@/lib/grabacionGps";
-import { obtenerResumenGpsV2 } from "@/lib/gpsV2";
+import { obtenerResumenGpsV2ConDiagnosticoNativo } from "@/lib/gpsV2";
 import { PatinadoresActivosPanel } from "@/components/Mapa/PatinadoresActivosPanel";
 import { MisRutasPanel } from "@/components/Mapa/MisRutasPanel";
 import { ChatFlotante } from "@/components/Mapa/ChatFlotante";
@@ -1077,8 +1077,10 @@ export function MapaView() {
     const eraMapeado = mapeadoRef.current;
     // GPS V2 (Fase 2, modo sombra) -- snapshot capturado ANTES de
     // detenerGrabacionGps(), que internamente llama detenerPipelineV2() y
-    // borra el estado del pipeline V2.
-    const resumenGpsV2 = obtenerResumenGpsV2();
+    // borra el estado del pipeline V2. Incluye la instrumentación
+    // diagnóstica nativa (auditoría ruta 103, ver gpsV2/diagnosticoNativo.ts)
+    // -- consulta puntual, no bloquea ni altera nada de lo que sigue.
+    const resumenGpsV2 = await obtenerResumenGpsV2ConDiagnosticoNativo();
     // Único lugar donde el watcher real se apaga -- ver grabacionGps.ts.
     // Devuelve los puntos ya confirmados (incluye el descarte de cualquier
     // punto pendiente de confirmar, mismo criterio de siempre: si la sesión
