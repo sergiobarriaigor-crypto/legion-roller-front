@@ -9,7 +9,7 @@
 import { crearPipelineV2 } from "./pipeline";
 import { aFixCrudoV2 } from "./watcher";
 import type { PosicionSimple } from "../geolocacionNativa";
-import type { DiagnosticoNativoV2, DiscontinuidadV2, EstadoGpsV2, PuntoConfiableV2 } from "./tipos";
+import type { DiagnosticoNativoV2, DiscontinuidadV2, EstadoGpsV2, IntentosIniciarGrabacionV2, PuntoConfiableV2 } from "./tipos";
 // Instrumentación diagnóstica (auditoría ruta 103) -- ver ese archivo.
 import { obtenerDiagnosticoNativo, resetDiagnosticoNativo } from "./diagnosticoNativo";
 
@@ -300,8 +300,20 @@ export async function iniciarSesionDiagnosticoNativoV2(): Promise<void> {
 // función de arriba, que queda 100% intacta -- así ninguna prueba/caller
 // existente (síncrono) se ve afectado; solo el caller real que la necesita
 // (finalizarModo en MapaView.tsx, ya async) pasa a usar esta.
-export async function obtenerResumenGpsV2ConDiagnosticoNativo(): Promise<ResumenGpsV2> {
+//
+// `intentosIniciarGrabacion` (opcional, auditoría ruta 104): evidencia
+// puramente de JS -- vive en grabacionGps.ts, no en el plugin nativo, así
+// que no puede venir de obtenerDiagnosticoNativo(). Se recibe como
+// parámetro en vez de importarse acá para no crear un import circular
+// (grabacionGps.ts ya importa DE este módulo) -- el único caller real
+// (MapaView.tsx) ya tiene ambos módulos importados y hace de puente.
+export async function obtenerResumenGpsV2ConDiagnosticoNativo(
+  intentosIniciarGrabacion?: IntentosIniciarGrabacionV2,
+): Promise<ResumenGpsV2> {
   const base = obtenerResumenGpsV2();
   const diagnosticoNativo = await obtenerDiagnosticoNativo();
+  if (intentosIniciarGrabacion) {
+    diagnosticoNativo.intentosIniciarGrabacion = intentosIniciarGrabacion;
+  }
   return { ...base, diagnosticoNativo };
 }

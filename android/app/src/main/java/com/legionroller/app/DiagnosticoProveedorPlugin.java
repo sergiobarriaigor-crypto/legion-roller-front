@@ -34,6 +34,15 @@ public class DiagnosticoProveedorPlugin extends Plugin {
             resultado.put("maxIntervaloSeg", nativo.getDouble("maxIntervaloSeg"));
             resultado.put("huecosNativos", nativo.getJSONArray("huecosNativos"));
             resultado.put("eventosDisponibilidadProveedor", nativo.getJSONArray("eventosDisponibilidadProveedor"));
+            // Instrumentacion adicional (auditoria ruta 104 -- hipotesis
+            // "doble watcher"). Ver DiagnosticoNativo.snapshot() en el patch.
+            resultado.put("watchersActivos", nativo.getInt("watchersActivos"));
+            resultado.put("maxWatchersSimultaneos", nativo.getInt("maxWatchersSimultaneos"));
+            resultado.put("eventosWatchers", nativo.getJSONArray("eventosWatchers"));
+            resultado.put("foregroundIntentos", nativo.getLong("foregroundIntentos"));
+            resultado.put("foregroundExitos", nativo.getLong("foregroundExitos"));
+            resultado.put("foregroundErrores", nativo.getJSONArray("foregroundErrores"));
+            resultado.put("threadsRequestUpdates", nativo.getJSONArray("threadsRequestUpdates"));
         } catch (JSONException ex) {
             call.reject("No se pudo leer el diagnostico nativo", ex);
             return;

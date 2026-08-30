@@ -98,6 +98,21 @@ const FIXES_A_ETIQUETAR_POST_HUECO = 10;
 let ultimoFixRecibidoDiag: PosicionSimple | null = null;
 let fixesRestantesEtiquetarPostHueco = 0;
 
+// DIAGNÓSTICO TEMPORAL (auditoría ruta 104 -- investigación de la hipótesis
+// "doble watcher" tras el hallazgo de ráfagas onLocationAvailability
+// false/true). Puramente observacional: NO cambia el guard de idempotencia
+// de iniciarGrabacionGps ni agrega ningún flag nuevo de control -- solo
+// cuenta, desde afuera, cuántas veces ese guard existente se cruza. Se
+// resetean en detenerGrabacionGps() (fin real de una grabación), nunca
+// dentro de iniciarGrabacionGps() -- resetearlos ahí sería exactamente el
+// punto que se quiere poder auditar sin distorsionar (si una segunda
+// invocación concurrente también reseteara, borraría la evidencia de que
+// una primera ya había pasado el guard). Sacar junto con el resto del
+// bloque de diagnóstico temporal de arriba.
+let diagIniciarGrabacionEntradas = 0;
+let diagIniciarGrabacionPasaronGuard = 0;
+let diagIniciarGrabacionLlegaronAWatcher = 0;
+
 function logDiagnosticoFix(pos: PosicionSimple): {
   horaRecepcion: number;
   retrasoMs: number | null;
@@ -421,10 +436,19 @@ function alRecibirPosicion(pos: PosicionSimple): void {
 // de abajo) se sigue asignando ANTES del primer await, exactamente en el
 // mismo orden que ya existía.
 export async function iniciarGrabacionGps(modo: "patinando" | "ruta", mapeado: boolean, onError: () => void): Promise<void> {
+  // DIAGNÓSTICO TEMPORAL (auditoría ruta 104) -- cuenta TODA entrada a la
+  // función, incluidas las que el guard de abajo bloquea. Ver comentario en
+  // la declaración de estas variables.
+  diagIniciarGrabacionEntradas++;
   if (detenerWatcherReal) {
     log("iniciarGrabacionGps: ya había un watcher activo -- se reutiliza, no se crea otro");
     return;
   }
+  // DIAGNÓSTICO TEMPORAL -- solo las invocaciones que pasan el guard de
+  // arriba llegan acá. Si esto llega a valer >1 en una misma grabación,
+  // confirma que el guard no bastó para evitar una segunda invocación
+  // concurrente.
+  diagIniciarGrabacionPasaronGuard++;
   grabacionActiva = {
     modo,
     puntos: [],
@@ -459,8 +483,31 @@ export async function iniciarGrabacionGps(modo: "patinando" | "ruta", mapeado: b
   detenerSuscripcionDisponibilidad = suscribirDisponibilidadUbicacion((disponible) => {
     informarDisponibilidadUbicacionV2(disponible);
   });
+  // DIAGNÓSTICO TEMPORAL -- justo antes de crear el watcher real. Si esto
+  // llega a valer >1 en una misma grabación, hubo más de un
+  // iniciarSeguimientoUbicacion()/addWatcher() real -- evidencia directa e
+  // inequívoca del lado JS de la hipótesis "doble watcher" (a cruzar contra
+  // watchersActivos/maxWatchersSimultaneos del lado nativo).
+  diagIniciarGrabacionLlegaronAWatcher++;
   detenerWatcherReal = iniciarSeguimientoUbicacion(alRecibirPosicion, onError);
   log("watcher iniciado");
+}
+
+// DIAGNÓSTICO TEMPORAL (auditoría ruta 104) -- snapshot de solo lectura de
+// los 3 contadores de arriba, para que MapaView.tsx lo pase a
+// obtenerResumenGpsV2ConDiagnosticoNativo() y viaje junto con el resto del
+// diagnóstico nativo de esta misma grabación. No expone las variables
+// mutables directamente.
+export function obtenerDiagnosticoIniciarGrabacion(): {
+  entradas: number;
+  pasaronGuard: number;
+  llegaronAWatcher: number;
+} {
+  return {
+    entradas: diagIniciarGrabacionEntradas,
+    pasaronGuard: diagIniciarGrabacionPasaronGuard,
+    llegaronAWatcher: diagIniciarGrabacionLlegaronAWatcher,
+  };
 }
 
 // Único lugar donde el watcher real se apaga -- debe llamarse solo al
@@ -486,6 +533,13 @@ export function detenerGrabacionGps(): PuntoGps[] {
   // DIAGNÓSTICO TEMPORAL -- ver comentario en iniciarGrabacionGps.
   ultimoFixRecibidoDiag = null;
   fixesRestantesEtiquetarPostHueco = 0;
+  // DIAGNÓSTICO TEMPORAL (auditoría ruta 104) -- se resetean acá, al
+  // terminar de verdad la grabación (mismo criterio que el resto de este
+  // bloque), NUNCA dentro de iniciarGrabacionGps -- ver comentario en la
+  // declaración de estas variables.
+  diagIniciarGrabacionEntradas = 0;
+  diagIniciarGrabacionPasaronGuard = 0;
+  diagIniciarGrabacionLlegaronAWatcher = 0;
   return puntos;
 }
 

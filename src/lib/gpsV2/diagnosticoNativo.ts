@@ -28,6 +28,13 @@ const DIAGNOSTICO_VACIO: DiagnosticoNativoV2 = {
   huecosNativos: [],
   eventosDisponibilidadProveedor: [],
   eventosPauseResumeActivity: [],
+  watchersActivos: 0,
+  maxWatchersSimultaneos: 0,
+  eventosWatchers: [],
+  foregroundIntentos: 0,
+  foregroundExitos: 0,
+  foregroundErrores: [],
+  threadsRequestUpdates: [],
 };
 
 // Solo tiene efecto real en la app nativa Android -- en web no existe

@@ -76,6 +76,36 @@ export interface EventoPauseResumeActivityV2 {
   hora: number;
 }
 
+// Instrumentación adicional (auditoría ruta 104 -- investigación de la
+// hipótesis "doble watcher" tras el hallazgo de ráfagas onLocationAvailability
+// false/true). Puramente observacional -- ver comentario en el patch de
+// BackgroundGeolocationService.java.
+export interface EventoWatcherV2 {
+  hora: number;
+  // watchers.size() real del lado nativo, JUSTO después de add()/remove().
+  cantidad: number;
+}
+
+export interface ForegroundErrorV2 {
+  mensaje: string;
+  hora: number;
+}
+
+export interface ThreadRequestUpdatesV2 {
+  nombreThread: string;
+  hora: number;
+}
+
+// Lado JS de la misma investigación -- ver grabacionGps.ts. NO viene del
+// plugin nativo (por eso no tiene equivalente en DiagnosticoNativo.snapshot()
+// del patch); se fusiona acá por obtenerResumenGpsV2ConDiagnosticoNativo()
+// en index.ts para que toda la evidencia de una misma grabación quede junta.
+export interface IntentosIniciarGrabacionV2 {
+  entradas: number;
+  pasaronGuard: number;
+  llegaronAWatcher: number;
+}
+
 export interface DiagnosticoNativoV2 {
   total: number;
   ultimoTimestamp: number;
@@ -83,4 +113,15 @@ export interface DiagnosticoNativoV2 {
   huecosNativos: HuecoNativoV2[];
   eventosDisponibilidadProveedor: EventoDisponibilidadProveedorV2[];
   eventosPauseResumeActivity: EventoPauseResumeActivityV2[];
+  // Instrumentación adicional (auditoría ruta 104) -- ver arriba.
+  watchersActivos: number;
+  maxWatchersSimultaneos: number;
+  eventosWatchers: EventoWatcherV2[];
+  foregroundIntentos: number;
+  foregroundExitos: number;
+  foregroundErrores: ForegroundErrorV2[];
+  threadsRequestUpdates: ThreadRequestUpdatesV2[];
+  // Opcional a propósito -- solo obtenerResumenGpsV2ConDiagnosticoNativo()
+  // lo completa (viene de JS, no del plugin nativo). Ver index.ts.
+  intentosIniciarGrabacion?: IntentosIniciarGrabacionV2;
 }

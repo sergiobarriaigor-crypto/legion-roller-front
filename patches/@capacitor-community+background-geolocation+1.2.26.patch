@@ -1,5 +1,5 @@
 diff --git a/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocationService.java b/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocationService.java
-index fafbb86..4a03c1e 100644
+index fafbb86..f300a36 100644
 --- a/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocationService.java
 +++ b/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocationService.java
 @@ -17,7 +17,13 @@ import com.google.android.gms.location.LocationRequest;
@@ -16,7 +16,7 @@ index fafbb86..4a03c1e 100644
  
  import androidx.localbroadcastmanager.content.LocalBroadcastManager;
  
-@@ -33,6 +39,134 @@ public class BackgroundGeolocationService extends Service {
+@@ -33,6 +39,247 @@ public class BackgroundGeolocationService extends Service {
      // Must be unique for this application.
      private static final int NOTIFICATION_ID = 28351;
  
@@ -54,6 +54,19 @@ index fafbb86..4a03c1e 100644
 +        private static double maxIntervaloSeg = 0;
 +        private static final List<long[]> huecos = new ArrayList<>();
 +        private static final List<Object[]> disponibilidad = new ArrayList<>();
++
++        // Instrumentacion adicional (auditoria ruta 104 -- investigacion de
++        // la hipotesis "doble watcher"). Puramente observacional: ninguno de
++        // estos campos participa en la creacion/eliminacion real de
++        // watchers, en requestLocationUpdates, ni en startForeground -- solo
++        // se lee lo que YA iba a pasar, en el mismo punto donde ya pasaba.
++        private static int watchersActivos = 0;
++        private static int maxWatchersSimultaneos = 0;
++        private static final List<long[]> eventosWatchers = new ArrayList<>(); // {hora, cantidad}
++        private static long foregroundIntentos = 0;
++        private static long foregroundExitos = 0;
++        private static final List<Object[]> foregroundErrores = new ArrayList<>(); // {mensaje, hora}
++        private static final List<Object[]> threadsRequestUpdates = new ArrayList<>(); // {nombreThread, hora}
 +
 +        // Llamado desde onLocationResult() de abajo, con la hora de reloj
 +        // nativa (System.currentTimeMillis()) tomada en el momento exacto
@@ -94,6 +107,61 @@ index fafbb86..4a03c1e 100644
 +            }
 +        }
 +
++        // Llamado desde LocalBinder.addWatcher()/removeWatcher() de abajo,
++        // JUSTO despues de watchers.add()/watchers.remove() -- nunca decide
++        // si se agrega o se quita, solo observa el tamaño resultante. Unica
++        // forma de demostrar de forma inequivoca si en algun momento hubo
++        // mas de un watcher real activo a la vez.
++        static void registrarCambioWatchers(int cantidadActual) {
++            synchronized (lock) {
++                watchersActivos = cantidadActual;
++                if (cantidadActual > maxWatchersSimultaneos) {
++                    maxWatchersSimultaneos = cantidadActual;
++                }
++                if (eventosWatchers.size() >= LIMITE_EVENTOS) {
++                    eventosWatchers.remove(0);
++                }
++                eventosWatchers.add(new long[]{System.currentTimeMillis(), cantidadActual});
++            }
++        }
++
++        // Los siguientes tres metodos envuelven el try/catch de
++        // startForeground() de abajo SIN cambiar su comportamiento -- mismo
++        // catch, mismo Logger.error ya existente, esto solo agrega registro.
++        static void registrarForegroundIntento() {
++            synchronized (lock) {
++                foregroundIntentos++;
++            }
++        }
++
++        static void registrarForegroundExito() {
++            synchronized (lock) {
++                foregroundExitos++;
++            }
++        }
++
++        static void registrarForegroundError(String mensaje) {
++            synchronized (lock) {
++                if (foregroundErrores.size() >= LIMITE_EVENTOS) {
++                    foregroundErrores.remove(0);
++                }
++                foregroundErrores.add(new Object[]{mensaje == null ? "" : mensaje, System.currentTimeMillis()});
++            }
++        }
++
++        // Llamado justo antes de cada requestLocationUpdates() real de
++        // abajo (addWatcher y onPermissionsGranted) -- no cambia el Looper
++        // ni ningun otro parametro de esa llamada, solo deja registro de en
++        // que hilo se ejecuto.
++        static void registrarThreadRequestUpdates(String nombreThread) {
++            synchronized (lock) {
++                if (threadsRequestUpdates.size() >= LIMITE_EVENTOS) {
++                    threadsRequestUpdates.remove(0);
++                }
++                threadsRequestUpdates.add(new Object[]{nombreThread == null ? "" : nombreThread, System.currentTimeMillis()});
++            }
++        }
++
 +        // Debe llamarse una unica vez al arrancar una grabacion nueva, ANTES
 +        // de que pueda existir el primer callback real de esa grabacion --
 +        // ver DiagnosticoProveedorPlugin.resetDiagnosticoNativo() y el
@@ -107,6 +175,20 @@ index fafbb86..4a03c1e 100644
 +                maxIntervaloSeg = 0;
 +                huecos.clear();
 +                disponibilidad.clear();
++                // NO se resetea watchersActivos/maxWatchersSimultaneos a 0 a
++                // secas -- watchersActivos refleja un estado REAL (cuantos
++                // watchers siguen vivos en este instante), no algo que deba
++                // "olvidarse" al arrancar una grabacion nueva mientras un
++                // watcher de la sesion anterior todavia no se elimino. Se
++                // reinicia el MAXIMO observado (empieza a medirse de nuevo
++                // para esta grabacion) pero el conteo actual se preserva tal
++                // cual está.
++                maxWatchersSimultaneos = watchersActivos;
++                eventosWatchers.clear();
++                foregroundIntentos = 0;
++                foregroundExitos = 0;
++                foregroundErrores.clear();
++                threadsRequestUpdates.clear();
 +            }
 +        }
 +
@@ -138,6 +220,37 @@ index fafbb86..4a03c1e 100644
 +                        dispJson.put(e);
 +                    }
 +                    out.put("eventosDisponibilidadProveedor", dispJson);
++
++                    out.put("watchersActivos", watchersActivos);
++                    out.put("maxWatchersSimultaneos", maxWatchersSimultaneos);
++                    JSONArray eventosWatchersJson = new JSONArray();
++                    for (long[] w : eventosWatchers) {
++                        JSONObject e = new JSONObject();
++                        e.put("hora", w[0]);
++                        e.put("cantidad", w[1]);
++                        eventosWatchersJson.put(e);
++                    }
++                    out.put("eventosWatchers", eventosWatchersJson);
++
++                    out.put("foregroundIntentos", foregroundIntentos);
++                    out.put("foregroundExitos", foregroundExitos);
++                    JSONArray foregroundErroresJson = new JSONArray();
++                    for (Object[] f : foregroundErrores) {
++                        JSONObject e = new JSONObject();
++                        e.put("mensaje", (String) f[0]);
++                        e.put("hora", (Long) f[1]);
++                        foregroundErroresJson.put(e);
++                    }
++                    out.put("foregroundErrores", foregroundErroresJson);
++
++                    JSONArray threadsJson = new JSONArray();
++                    for (Object[] t : threadsRequestUpdates) {
++                        JSONObject e = new JSONObject();
++                        e.put("nombreThread", (String) t[0]);
++                        e.put("hora", (Long) t[1]);
++                        threadsJson.put(e);
++                    }
++                    out.put("threadsRequestUpdates", threadsJson);
 +                } catch (JSONException ex) {
 +                    Logger.error("DiagnosticoNativo.snapshot", ex);
 +                }
@@ -151,7 +264,7 @@ index fafbb86..4a03c1e 100644
      private class Watcher {
          public String id;
          public FusedLocationProviderClient client;
-@@ -89,6 +223,10 @@ public class BackgroundGeolocationService extends Service {
+@@ -89,6 +336,10 @@ public class BackgroundGeolocationService extends Service {
              LocationCallback callback = new LocationCallback(){
                  @Override
                  public void onLocationResult(LocationResult locationResult) {
@@ -162,7 +275,7 @@ index fafbb86..4a03c1e 100644
                      Location location = locationResult.getLastLocation();
                      Intent intent = new Intent(ACTION_BROADCAST);
                      intent.putExtra("location", location);
-@@ -99,6 +237,12 @@ public class BackgroundGeolocationService extends Service {
+@@ -99,6 +350,12 @@ public class BackgroundGeolocationService extends Service {
                  }
                  @Override
                  public void onLocationAvailability(LocationAvailability availability) {
@@ -175,3 +288,60 @@ index fafbb86..4a03c1e 100644
                      if (!availability.isLocationAvailable()) {
                          Logger.debug("Location not available");
                      }
+@@ -112,10 +369,16 @@ public class BackgroundGeolocationService extends Service {
+             watcher.locationCallback = callback;
+             watcher.backgroundNotification = backgroundNotification;
+             watchers.add(watcher);
++            // Instrumentacion diagnostica -- observa el tamaño resultante,
++            // no decide nada.
++            DiagnosticoNativo.registrarCambioWatchers(watchers.size());
+ 
+             // According to Android Studio, this method can throw a Security Exception if
+             // permissions are not yet granted. Rather than check the permissions, which is fiddly,
+             // we simply ignore the exception.
++            // Instrumentacion diagnostica -- registra el hilo ANTES de la
++            // llamada real, sin tocar el Looper (sigue null, sin cambios).
++            DiagnosticoNativo.registrarThreadRequestUpdates(Thread.currentThread().getName());
+             try {
+                 watcher.client.requestLocationUpdates(
+                         watcher.locationRequest,
+@@ -131,13 +394,18 @@ public class BackgroundGeolocationService extends Service {
+             // it appears that 'startForeground' is idempotent, so we just call it repeatedly
+             // each time a background watcher is added.
+             if (backgroundNotification != null) {
++                // Instrumentacion diagnostica -- mismo try/catch de siempre,
++                // sin retry, sin cambiar que pasa si falla.
++                DiagnosticoNativo.registrarForegroundIntento();
+                 try {
+                     // This method has been known to fail due to weird
+                     // permission bugs, so we prevent any exceptions from
+                     // crashing the app. See issue #86.
+                     startForeground(NOTIFICATION_ID, backgroundNotification);
++                    DiagnosticoNativo.registrarForegroundExito();
+                 } catch (Exception exception) {
+                     Logger.error("Failed to foreground service", exception);
++                    DiagnosticoNativo.registrarForegroundError(exception.getMessage());
+                 }
+             }
+         }
+@@ -147,6 +415,9 @@ public class BackgroundGeolocationService extends Service {
+                 if (watcher.id.equals(id)) {
+                     watcher.client.removeLocationUpdates(watcher.locationCallback);
+                     watchers.remove(watcher);
++                    // Instrumentacion diagnostica -- observa el tamaño
++                    // resultante tras la baja real, no decide nada.
++                    DiagnosticoNativo.registrarCambioWatchers(watchers.size());
+                     if (getNotification() == null) {
+                         stopForeground(true);
+                     }
+@@ -160,6 +431,10 @@ public class BackgroundGeolocationService extends Service {
+             // the Settings app, the watchers need restarting.
+             for (Watcher watcher : watchers) {
+                 watcher.client.removeLocationUpdates(watcher.locationCallback);
++                // Instrumentacion diagnostica -- mismo criterio que en
++                // addWatcher, este es el otro unico lugar del archivo
++                // original que llama requestLocationUpdates().
++                DiagnosticoNativo.registrarThreadRequestUpdates(Thread.currentThread().getName());
+                 watcher.client.requestLocationUpdates(
+                         watcher.locationRequest,
+                         watcher.locationCallback,
