@@ -73,6 +73,16 @@ export interface EstadoGrabacionGps {
 let grabacionActiva: EstadoGrabacionGps | null = null;
 let detenerWatcherReal: (() => void) | null = null;
 let detenerSuscripcionDisponibilidad: (() => void) | null = null;
+// Corrección del race confirmado por la ruta 105 (watchersActivos=2,
+// maxWatchersSimultaneos=2, dos watchers reales creados con 28ms de
+// diferencia). `detenerWatcherReal` solo se asigna DESPUÉS del primer
+// `await` de iniciarGrabacionGps -- eso dejaba una ventana real donde una
+// segunda invocación concurrente (ej. el useEffect de MapaView disparado
+// por el re-render de la primera) pasaba el mismo chequeo `if
+// (detenerWatcherReal)` antes de que la primera terminara. Este flag se
+// marca de forma SÍNCRONA, antes de cualquier await, cerrando esa ventana
+// por completo -- ver iniciarGrabacionGps.
+let arranqueEnCurso = false;
 // Ver KMH_SALTO_SOSPECHOSO: un punto que salta lejos del último confirmado
 // se retiene acá hasta que la lectura siguiente confirme o desmienta el
 // salto (ver registrarPuntoGrabado) -- mismo mecanismo, movido tal cual.
@@ -100,15 +110,15 @@ let fixesRestantesEtiquetarPostHueco = 0;
 
 // DIAGNÓSTICO TEMPORAL (auditoría ruta 104 -- investigación de la hipótesis
 // "doble watcher" tras el hallazgo de ráfagas onLocationAvailability
-// false/true). Puramente observacional: NO cambia el guard de idempotencia
-// de iniciarGrabacionGps ni agrega ningún flag nuevo de control -- solo
-// cuenta, desde afuera, cuántas veces ese guard existente se cruza. Se
+// false/true, confirmada por la ruta 105). Puramente observacional: estos
+// contadores no deciden nada por sí mismos -- la corrección real es
+// `arranqueEnCurso` (arriba). Cuentan, desde afuera, cuántas veces se cruza
+// el guard de iniciarGrabacionGps; con el fix, pasaronGuard/
+// llegaronAWatcher deberían quedar en 1 por grabación, nunca más. Se
 // resetean en detenerGrabacionGps() (fin real de una grabación), nunca
 // dentro de iniciarGrabacionGps() -- resetearlos ahí sería exactamente el
-// punto que se quiere poder auditar sin distorsionar (si una segunda
-// invocación concurrente también reseteara, borraría la evidencia de que
-// una primera ya había pasado el guard). Sacar junto con el resto del
-// bloque de diagnóstico temporal de arriba.
+// punto que se quiere poder auditar sin distorsionar. Sacar junto con el
+// resto del bloque de diagnóstico temporal de arriba.
 let diagIniciarGrabacionEntradas = 0;
 let diagIniciarGrabacionPasaronGuard = 0;
 let diagIniciarGrabacionLlegaronAWatcher = 0;
@@ -427,70 +437,107 @@ function alRecibirPosicion(pos: PosicionSimple): void {
 // para la grabación NUEVA; si ya hay una en curso, se ignora (la existente
 // manda).
 // ASYNC desde la instrumentación diagnóstica de auditoría ruta 103 (ver
-// gpsV2/diagnosticoNativo.ts): el único cambio de fondo es el `await`
-// agregado más abajo, para garantizar con orden real (no fire-and-forget)
-// que el reset de diagnóstico nativo termine antes de que pueda crearse el
-// watcher real. Se revisaron los dos callers existentes (MapaView.tsx,
-// ninguno hace await ni depende del retorno) -- ninguno cambia de
-// comportamiento: todo el estado síncrono de V1 (grabacionActiva y el resto
-// de abajo) se sigue asignando ANTES del primer await, exactamente en el
-// mismo orden que ya existía.
+// gpsV2/diagnosticoNativo.ts): hay un `await` antes de crear el watcher
+// real. La ruta 105 demostró que el guard de arriba (basado únicamente en
+// `detenerWatcherReal`, que solo se asigna DESPUÉS de ese await) no basta
+// por sí solo: dos invocaciones concurrentes de esta función (ej. una desde
+// activarModo y otra desde el useEffect de MapaView, que en condiciones
+// normales el guard distingue bien) pueden pasarlo las dos, porque ninguna
+// llegó todavía a asignar `detenerWatcherReal` cuando la otra hace su
+// propio chequeo. `arranqueEnCurso` (declarado arriba) cierra esa ventana:
+// se marca de forma SÍNCRONA, en la misma línea de ejecución que el
+// chequeo, antes de cualquier await -- una segunda invocación concurrente
+// ve el flag en `true` y retorna de inmediato, sin llegar ni al reset
+// diagnóstico ni a iniciarSeguimientoUbicacion(). Se revisaron los dos
+// callers existentes (MapaView.tsx, ninguno hace await ni depende del
+// retorno) -- ninguno cambia de comportamiento: todo el estado síncrono de
+// V1 (grabacionActiva y el resto de abajo) se sigue asignando ANTES del
+// primer await, exactamente en el mismo orden que ya existía.
 export async function iniciarGrabacionGps(modo: "patinando" | "ruta", mapeado: boolean, onError: () => void): Promise<void> {
   // DIAGNÓSTICO TEMPORAL (auditoría ruta 104) -- cuenta TODA entrada a la
   // función, incluidas las que el guard de abajo bloquea. Ver comentario en
   // la declaración de estas variables.
   diagIniciarGrabacionEntradas++;
-  if (detenerWatcherReal) {
-    log("iniciarGrabacionGps: ya había un watcher activo -- se reutiliza, no se crea otro");
+  // Guard SÍNCRONO -- se chequea Y se marca (arranqueEnCurso = true) en el
+  // mismo tramo de ejecución síncrona, sin ningún await entre medio, para
+  // que no exista ninguna ventana en la que una segunda invocación
+  // concurrente pueda leer el flag todavía en `false`. Ver comentario
+  // arriba de la función y en la declaración de arranqueEnCurso.
+  if (detenerWatcherReal || arranqueEnCurso) {
+    log("iniciarGrabacionGps: ya había un watcher activo o un arranque en curso -- se reutiliza, no se crea otro");
     return;
   }
+  arranqueEnCurso = true;
   // DIAGNÓSTICO TEMPORAL -- solo las invocaciones que pasan el guard de
-  // arriba llegan acá. Si esto llega a valer >1 en una misma grabación,
-  // confirma que el guard no bastó para evitar una segunda invocación
-  // concurrente.
+  // arriba llegan acá. Con el fix, esto debería quedar en exactamente 1 por
+  // grabación -- si alguna vez vuelve a valer >1, el guard síncrono en sí
+  // tendría un problema (no la ventana ya cerrada).
   diagIniciarGrabacionPasaronGuard++;
-  grabacionActiva = {
-    modo,
-    puntos: [],
-    inicioGrabacion: Date.now(),
-    mapeado,
-    rodadaUnidaId: null,
-    ultimoMovimientoEn: Date.now(),
-    avisoInactividadDesde: null,
-  };
-  puntoPendienteConfirmar = null;
-  // DIAGNÓSTICO TEMPORAL -- reinicia el estado de logDiagnosticoFix para que
-  // una grabación nueva no arrastre el "último fix" ni el contador
-  // post-hueco de una sesión anterior ya finalizada.
-  ultimoFixRecibidoDiag = null;
-  fixesRestantesEtiquetarPostHueco = 0;
-  // DIAGNÓSTICO TEMPORAL -- red de seguridad: si por lo que sea MapaView no
-  // llegó a llamar limpiarDiagnosticoGps() al terminar la ruta anterior,
-  // esto evita que una grabación nueva arrastre datos de la anterior.
-  limpiarDiagnosticoGps();
-  // Instrumentación diagnóstica (auditoría ruta 103) -- reset nativo
-  // AWAITED, antes de inicializar V2 y de crear el watcher real. Ver
-  // gpsV2/diagnosticoNativo.ts / iniciarSesionDiagnosticoNativoV2().
-  await iniciarSesionDiagnosticoNativoV2();
-  // GPS V2 -- FASE 1: arranca el pipeline en modo sombra junto con el único
-  // watcher real -- nunca antes ni después por separado, para que V1 y V2
-  // arranquen exactamente en el mismo instante de la grabación.
-  iniciarPipelineV2(modo, mapeado);
-  // Se suscribe ANTES de arrancar el watcher real -- si Ubicación ya estaba
-  // apagada al momento de iniciar, GPS V2 se entera desde el primer instante
-  // (ver estaDisponible() en disponibilidadUbicacion.ts), no recién en el
-  // próximo cambio.
-  detenerSuscripcionDisponibilidad = suscribirDisponibilidadUbicacion((disponible) => {
-    informarDisponibilidadUbicacionV2(disponible);
-  });
-  // DIAGNÓSTICO TEMPORAL -- justo antes de crear el watcher real. Si esto
-  // llega a valer >1 en una misma grabación, hubo más de un
-  // iniciarSeguimientoUbicacion()/addWatcher() real -- evidencia directa e
-  // inequívoca del lado JS de la hipótesis "doble watcher" (a cruzar contra
-  // watchersActivos/maxWatchersSimultaneos del lado nativo).
-  diagIniciarGrabacionLlegaronAWatcher++;
-  detenerWatcherReal = iniciarSeguimientoUbicacion(alRecibirPosicion, onError);
-  log("watcher iniciado");
+  try {
+    grabacionActiva = {
+      modo,
+      puntos: [],
+      inicioGrabacion: Date.now(),
+      mapeado,
+      rodadaUnidaId: null,
+      ultimoMovimientoEn: Date.now(),
+      avisoInactividadDesde: null,
+    };
+    puntoPendienteConfirmar = null;
+    // DIAGNÓSTICO TEMPORAL -- reinicia el estado de logDiagnosticoFix para
+    // que una grabación nueva no arrastre el "último fix" ni el contador
+    // post-hueco de una sesión anterior ya finalizada.
+    ultimoFixRecibidoDiag = null;
+    fixesRestantesEtiquetarPostHueco = 0;
+    // DIAGNÓSTICO TEMPORAL -- red de seguridad: si por lo que sea MapaView
+    // no llegó a llamar limpiarDiagnosticoGps() al terminar la ruta
+    // anterior, esto evita que una grabación nueva arrastre datos de la
+    // anterior.
+    limpiarDiagnosticoGps();
+    // Instrumentación diagnóstica (auditoría ruta 103) -- reset nativo
+    // AWAITED, antes de inicializar V2 y de crear el watcher real. Ver
+    // gpsV2/diagnosticoNativo.ts / iniciarSesionDiagnosticoNativoV2().
+    await iniciarSesionDiagnosticoNativoV2();
+    // GPS V2 -- FASE 1: arranca el pipeline en modo sombra junto con el
+    // único watcher real -- nunca antes ni después por separado, para que
+    // V1 y V2 arranquen exactamente en el mismo instante de la grabación.
+    iniciarPipelineV2(modo, mapeado);
+    // Se suscribe ANTES de arrancar el watcher real -- si Ubicación ya
+    // estaba apagada al momento de iniciar, GPS V2 se entera desde el
+    // primer instante (ver estaDisponible() en disponibilidadUbicacion.ts),
+    // no recién en el próximo cambio.
+    detenerSuscripcionDisponibilidad = suscribirDisponibilidadUbicacion((disponible) => {
+      informarDisponibilidadUbicacionV2(disponible);
+    });
+    // DIAGNÓSTICO TEMPORAL -- justo antes de crear el watcher real. Si esto
+    // llega a valer >1 en una misma grabación, hubo más de un
+    // iniciarSeguimientoUbicacion()/addWatcher() real -- evidencia directa e
+    // inequívoca del lado JS de la hipótesis "doble watcher" (a cruzar
+    // contra watchersActivos/maxWatchersSimultaneos del lado nativo).
+    diagIniciarGrabacionLlegaronAWatcher++;
+    detenerWatcherReal = iniciarSeguimientoUbicacion(alRecibirPosicion, onError);
+    log("watcher iniciado");
+    // A partir de acá, la protección contra una nueva invocación
+    // concurrente/posterior queda a cargo del guard normal de arriba
+    // (`detenerWatcherReal` ya no es null) -- `arranqueEnCurso` deliberadamente
+    // NO se baja a `false` en el camino de éxito: seguirá en `true` hasta
+    // detenerGrabacionGps(), que es quien la deja preparada para la próxima
+    // grabación (ver ahí). No hace falta que valga `false` para que el
+    // guard de arriba siga bloqueando correctamente mientras tanto.
+  } catch (err) {
+    // Si el arranque falla en cualquier punto ANTES de crear el watcher
+    // real (reset nativo o iniciarSeguimientoUbicacion), se libera el flag
+    // acá mismo -- sin esto, un fallo transitorio dejaría arranqueEnCurso
+    // en `true` para siempre, sin ningún watcher activo que lo justifique,
+    // bloqueando cualquier intento futuro de grabar. En la práctica ni
+    // iniciarSesionDiagnosticoNativoV2() (traga sus propios errores, ver
+    // diagnosticoNativo.ts) ni iniciarSeguimientoUbicacion() (síncrona,
+    // reporta fallas por su propio onError interno) deberían llegar a tirar
+    // acá -- este catch es la red de seguridad explícita para ese caso.
+    arranqueEnCurso = false;
+    log(`iniciarGrabacionGps: fallo antes de crear el watcher real -- ${err instanceof Error ? err.message : String(err)}`);
+    onError();
+  }
 }
 
 // DIAGNÓSTICO TEMPORAL (auditoría ruta 104) -- snapshot de solo lectura de
@@ -520,6 +567,9 @@ export function detenerGrabacionGps(): PuntoGps[] {
     detenerWatcherReal = null;
     log("watcher detenido — fin de grabación");
   }
+  // Deja el guard síncrono listo para una futura grabación -- ver
+  // arranqueEnCurso y el comentario en iniciarGrabacionGps.
+  arranqueEnCurso = false;
   if (detenerSuscripcionDisponibilidad) {
     detenerSuscripcionDisponibilidad();
     detenerSuscripcionDisponibilidad = null;
