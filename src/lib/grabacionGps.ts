@@ -32,6 +32,7 @@ import { distanciaHaversineKm, type PuntoGps } from "./geo";
 import {
   alimentarFixCrudoV2,
   detenerPipelineV2,
+  detenerSesionDiagnosticoNativoV2,
   iniciarPipelineV2,
   informarDisponibilidadUbicacionV2,
   iniciarSesionDiagnosticoNativoV2,
@@ -577,6 +578,11 @@ export function detenerGrabacionGps(): PuntoGps[] {
   // GPS V2 -- FASE 1: se detiene junto con el watcher real. Su resultado
   // todavía no se usa para nada (no controla el recorrido oficial).
   detenerPipelineV2();
+  // Heartbeat (auditoría ruta 107) -- fire-and-forget: detenerGrabacionGps
+  // es síncrona y esto es puramente diagnóstico, nunca debe bloquear ni
+  // poder fallar el cierre real de la grabación (ver try/catch interno en
+  // diagnosticoNativo.ts).
+  void detenerSesionDiagnosticoNativoV2();
   grabacionActiva = null;
   puntoPendienteConfirmar = null;
   callbackPosicionActual = null;

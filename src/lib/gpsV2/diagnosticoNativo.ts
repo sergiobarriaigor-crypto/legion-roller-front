@@ -17,6 +17,7 @@ import type { DiagnosticoNativoV2 } from "./tipos";
 interface DiagnosticoProveedorPlugin {
   obtenerDiagnosticoNativo(): Promise<DiagnosticoNativoV2>;
   resetDiagnosticoNativo(): Promise<void>;
+  detenerHeartbeat(): Promise<void>;
 }
 
 const DiagnosticoProveedor = registerPlugin<DiagnosticoProveedorPlugin>("DiagnosticoProveedor");
@@ -35,6 +36,10 @@ const DIAGNOSTICO_VACIO: DiagnosticoNativoV2 = {
   foregroundExitos: 0,
   foregroundErrores: [],
   threadsRequestUpdates: [],
+  totalHeartbeats: 0,
+  ultimoHeartbeatTimestamp: -1,
+  maxIntervaloHeartbeatSeg: 0,
+  huecosHeartbeat: [],
 };
 
 // Solo tiene efecto real en la app nativa Android -- en web no existe
@@ -62,5 +67,21 @@ export async function resetDiagnosticoNativo(): Promise<void> {
     // Si el reset falla (plugin no disponible por algún motivo), no debe
     // bloquear el arranque de la grabación real -- esto es instrumentación
     // diagnóstica, nunca puede impedir que V1/V2 funcionen.
+  }
+}
+
+// Heartbeat (auditoría ruta 107, ver DiagnosticoHeartbeat.java) -- debe
+// llamarse al terminar de verdad la grabación (detenerGrabacionGps), para
+// que el heartbeat no siga tickeando y contamine la próxima ruta. El
+// arranque no tiene una función propia acá: va incluido en
+// resetDiagnosticoNativo() de arriba, en el mismo momento en que ya se
+// resetea el resto de la sesión diagnóstica.
+export async function detenerHeartbeatNativo(): Promise<void> {
+  if (!Capacitor.isNativePlatform()) return;
+  try {
+    await DiagnosticoProveedor.detenerHeartbeat();
+  } catch {
+    // Mismo criterio que arriba -- nunca debe bloquear el cierre real de la
+    // grabación.
   }
 }

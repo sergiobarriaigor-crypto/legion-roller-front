@@ -43,6 +43,13 @@ public class DiagnosticoProveedorPlugin extends Plugin {
             resultado.put("foregroundExitos", nativo.getLong("foregroundExitos"));
             resultado.put("foregroundErrores", nativo.getJSONArray("foregroundErrores"));
             resultado.put("threadsRequestUpdates", nativo.getJSONArray("threadsRequestUpdates"));
+
+            // Heartbeat (auditoria ruta 107) -- ver DiagnosticoHeartbeat.
+            JSONObject heartbeat = DiagnosticoHeartbeat.snapshot();
+            resultado.put("totalHeartbeats", heartbeat.getLong("totalHeartbeats"));
+            resultado.put("ultimoHeartbeatTimestamp", heartbeat.getLong("ultimoHeartbeatTimestamp"));
+            resultado.put("maxIntervaloHeartbeatSeg", heartbeat.getDouble("maxIntervaloHeartbeatSeg"));
+            resultado.put("huecosHeartbeat", heartbeat.getJSONArray("huecosHeartbeat"));
         } catch (JSONException ex) {
             call.reject("No se pudo leer el diagnostico nativo", ex);
             return;
@@ -74,6 +81,20 @@ public class DiagnosticoProveedorPlugin extends Plugin {
     public void resetDiagnosticoNativo(PluginCall call) {
         BackgroundGeolocationService.DiagnosticoNativo.reset();
         DiagnosticoNativoBuffer.reset();
+        // Heartbeat (auditoria ruta 107): se resetea y arranca junto con el
+        // resto de la sesion diagnostica, ANTES del watcher real -- ver
+        // DiagnosticoHeartbeat.iniciar() para la justificacion del Looper.
+        DiagnosticoHeartbeat.reset();
+        DiagnosticoHeartbeat.iniciar(getContext());
+        call.resolve();
+    }
+
+    // Simetrico al arranque de arriba -- debe llamarse al terminar de
+    // verdad la grabacion (detenerGrabacionGps en el frontend), para que el
+    // heartbeat no siga tickeando y contamine la proxima ruta.
+    @PluginMethod
+    public void detenerHeartbeat(PluginCall call) {
+        DiagnosticoHeartbeat.detener();
         call.resolve();
     }
 }

@@ -11,7 +11,7 @@ import { aFixCrudoV2 } from "./watcher";
 import type { PosicionSimple } from "../geolocacionNativa";
 import type { DiagnosticoNativoV2, DiscontinuidadV2, EstadoGpsV2, IntentosIniciarGrabacionV2, PuntoConfiableV2 } from "./tipos";
 // Instrumentación diagnóstica (auditoría ruta 103) -- ver ese archivo.
-import { obtenerDiagnosticoNativo, resetDiagnosticoNativo } from "./diagnosticoNativo";
+import { detenerHeartbeatNativo, obtenerDiagnosticoNativo, resetDiagnosticoNativo } from "./diagnosticoNativo";
 
 export type { DiscontinuidadV2, EstadoGpsV2, FixCrudoV2, PuntoConfiableV2, ResultadoProcesarFix } from "./tipos";
 export { crearPipelineV2 } from "./pipeline";
@@ -293,6 +293,13 @@ export function obtenerResumenGpsV2(): ResumenGpsV2 {
 // efecto secundario de iniciarPipelineV2 (que sigue sin tocarse).
 export async function iniciarSesionDiagnosticoNativoV2(): Promise<void> {
   await resetDiagnosticoNativo();
+}
+
+// Heartbeat (auditoría ruta 107) -- simétrico a la función de arriba, debe
+// llamarse al terminar de verdad la grabación (detenerGrabacionGps), para
+// que el heartbeat nativo no siga tickeando y contamine la próxima ruta.
+export async function detenerSesionDiagnosticoNativoV2(): Promise<void> {
+  await detenerHeartbeatNativo();
 }
 
 // Variante de obtenerResumenGpsV2() que además incluye la instrumentación

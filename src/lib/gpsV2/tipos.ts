@@ -106,6 +106,21 @@ export interface IntentosIniciarGrabacionV2 {
   llegaronAWatcher: number;
 }
 
+// Heartbeat (auditoría ruta 107) -- ver DiagnosticoHeartbeat.java. Distingue
+// si el thread/proceso sigue vivo durante los huecos nativos de
+// onLocationResult, o si también queda congelado. Entrada anómala: sólo se
+// registra cuando el intervalo entre dos ticks (cada 5s) es >=20s -- los
+// 4 campos de estado se leen únicamente en ese momento, nunca en cada tick.
+export interface HuecoHeartbeatV2 {
+  anteriorTimestamp: number;
+  actualTimestamp: number;
+  intervaloSeg: number;
+  isDeviceIdleMode: boolean;
+  isInteractive: boolean;
+  memoryImportance: number;
+  nombreThread: string;
+}
+
 export interface DiagnosticoNativoV2 {
   total: number;
   ultimoTimestamp: number;
@@ -121,6 +136,11 @@ export interface DiagnosticoNativoV2 {
   foregroundExitos: number;
   foregroundErrores: ForegroundErrorV2[];
   threadsRequestUpdates: ThreadRequestUpdatesV2[];
+  // Heartbeat (auditoría ruta 107) -- ver HuecoHeartbeatV2 arriba.
+  totalHeartbeats: number;
+  ultimoHeartbeatTimestamp: number;
+  maxIntervaloHeartbeatSeg: number;
+  huecosHeartbeat: HuecoHeartbeatV2[];
   // Opcional a propósito -- solo obtenerResumenGpsV2ConDiagnosticoNativo()
   // lo completa (viene de JS, no del plugin nativo). Ver index.ts.
   intentosIniciarGrabacion?: IntentosIniciarGrabacionV2;
