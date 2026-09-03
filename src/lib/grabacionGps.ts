@@ -42,6 +42,10 @@ import {
 // dueño único que el watcher real: se suscribe/desuscribe acá, en los mismos
 // dos puntos donde arranca/para el watcher, nunca en otro lugar.
 import { suscribirDisponibilidadUbicacion } from "./disponibilidadUbicacion";
+// Fase 1 de la corrección de producción (auditoría ruta 107/108) -- ver
+// recursosGrabacion.ts. Mismo criterio de dueño único: se adquiere/libera
+// acá, en los mismos dos puntos donde arranca/para el watcher real.
+import { adquirirWakeLockNativo, liberarWakeLockNativo } from "./recursosGrabacion";
 
 // LOGS TEMPORALES (a sacar una vez confirmado en dispositivo real que el
 // watcher sobrevive cambios de pestaña) -- ver también los logs espejo en
@@ -510,6 +514,11 @@ export async function iniciarGrabacionGps(modo: "patinando" | "ruta", mapeado: b
     detenerSuscripcionDisponibilidad = suscribirDisponibilidadUbicacion((disponible) => {
       informarDisponibilidadUbicacionV2(disponible);
     });
+    // Fase 1 de la corrección de producción (auditoría ruta 107/108) --
+    // AWAITED, justo antes de crear el watcher real, para que el WakeLock
+    // ya esté sostenido desde el primer fix. Nunca puede impedir que el
+    // watcher real se cree (ver try/catch interno en recursosGrabacion.ts).
+    await adquirirWakeLockNativo();
     // DIAGNÓSTICO TEMPORAL -- justo antes de crear el watcher real. Si esto
     // llega a valer >1 en una misma grabación, hubo más de un
     // iniciarSeguimientoUbicacion()/addWatcher() real -- evidencia directa e
@@ -568,6 +577,12 @@ export function detenerGrabacionGps(): PuntoGps[] {
     detenerWatcherReal = null;
     log("watcher detenido — fin de grabación");
   }
+  // Fase 1 de la corrección de producción (auditoría ruta 107/108) --
+  // fire-and-forget: detenerGrabacionGps es síncrona, nunca debe bloquear
+  // ni poder fallar el cierre real de la grabación (ver try/catch interno
+  // en recursosGrabacion.ts). Se libera siempre, sin condicionar a que
+  // detenerWatcherReal fuera truthy -- adquirir()/liberar() son idempotentes.
+  void liberarWakeLockNativo();
   // Deja el guard síncrono listo para una futura grabación -- ver
   // arranqueEnCurso y el comentario en iniciarGrabacionGps.
   arranqueEnCurso = false;

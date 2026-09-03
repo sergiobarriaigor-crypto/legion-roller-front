@@ -15,6 +15,10 @@ public class MainActivity extends BridgeActivity {
         // Idem, ver DiagnosticoProveedorPlugin.java -- instrumentacion
         // diagnostica, señal separada de la de arriba.
         registerPlugin(DiagnosticoProveedorPlugin.class);
+        // Idem, ver GrabacionRecursosPlugin.java -- Fase 1 de la correccion
+        // de produccion (WakeLock parcial durante la grabacion), separada
+        // de las dos señales de arriba.
+        registerPlugin(GrabacionRecursosPlugin.class);
         super.onCreate(savedInstanceState);
         // Con targetSdkVersion 36 (Android 15+), el sistema fuerza el modo
         // edge-to-edge y android:statusBarColor/navigationBarColor del tema

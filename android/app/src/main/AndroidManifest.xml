@@ -44,6 +44,11 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Fase 1 de la corrección de producción (auditoría ruta 107/108, ver
+         GrabacionWakeLock.java): WakeLock parcial sostenido solo durante
+         una grabación GPS activa. Permiso normal, sin diálogo runtime. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
     <!-- Cámara Express (CamaraHistoria.tsx) usa getUserMedia() directo en el
          WebView, a diferencia de @capacitor/camera (que delega a la app de
          cámara del sistema vía Intent y no necesita este permiso). Sin esto
