@@ -1,18 +1,31 @@
 diff --git a/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocationService.java b/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocationService.java
-index fafbb86..5380b01 100644
+index fafbb86..25cae37 100644
 --- a/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocationService.java
 +++ b/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocationService.java
-@@ -7,7 +7,9 @@ import android.content.pm.ServiceInfo;
+@@ -1,23 +1,35 @@
+ package com.equimaps.capacitor_background_geolocation;
+ 
+ import android.app.Notification;
++import android.app.PendingIntent;
+ import android.app.Service;
++import android.content.BroadcastReceiver;
++import android.content.Context;
+ import android.content.Intent;
++import android.content.IntentFilter;
+ import android.content.pm.ServiceInfo;
  import android.location.Location;
  import android.os.Binder;
  import android.os.Build;
++import android.os.Handler;
 +import android.os.HandlerThread;
  import android.os.IBinder;
 +import android.os.Looper;
  
  import com.getcapacitor.Logger;
  import com.google.android.gms.location.FusedLocationProviderClient;
-@@ -17,7 +19,13 @@ import com.google.android.gms.location.LocationRequest;
+ import com.google.android.gms.location.LocationAvailability;
+-import com.google.android.gms.location.LocationCallback;
+ import com.google.android.gms.location.LocationRequest;
  import com.google.android.gms.location.LocationResult;
  import com.google.android.gms.location.LocationServices;
  
@@ -26,7 +39,7 @@ index fafbb86..5380b01 100644
  
  import androidx.localbroadcastmanager.content.LocalBroadcastManager;
  
-@@ -33,6 +41,280 @@ public class BackgroundGeolocationService extends Service {
+@@ -33,11 +45,369 @@ public class BackgroundGeolocationService extends Service {
      // Must be unique for this application.
      private static final int NOTIFICATION_ID = 28351;
  
@@ -304,13 +317,123 @@ index fafbb86..5380b01 100644
 +    // Fin del experimento ruta 111.
 +    // ---------------------------------------------------------------------
 +
++    // ---------------------------------------------------------------------
++    // EXPERIMENTO RUTA 112 (Legion Roller, patch-package) -- reemplaza la
++    // entrega de ubicacion de LocationCallback+Looper (ruta 111) por
++    // PendingIntent+BroadcastReceiver dinamico, para aislar si el MECANISMO
++    // de entrega en si influye en los congelamientos observados en 107-111.
++    // Reemplazo TOTAL, nunca suscripcion paralela: los dos
++    // requestLocationUpdates() de este archivo usan exclusivamente el
++    // overload con PendingIntent -- por eso Watcher ya no tiene un campo
++    // LocationCallback (ver mas abajo).
++    //
++    // Unica variable que cambia respecto de ruta 111: el HandlerThread
++    // "UbicacionGPS" se REUTILIZA (obtenerLooperUbicacion() de arriba, sin
++    // tocar) como Looper sobre el que se registra este receiver -- el
++    // thread de recepcion sigue siendo exactamente el mismo entre ambas
++    // rutas.
++    //
++    // Receiver DINAMICO (registerReceiver en runtime), NO declarado en
++    // manifest -- decision explicita de esta ronda: no se busca la
++    // capacidad de despertar un proceso muerto (eso requeriria un receiver
++    // en manifest, evaluado y descartado para esta ronda), solo aislar el
++    // mecanismo de entrega mientras el proceso sigue vivo. intent.setPackage()
++    // lo hace explicito hacia esta misma app, sin necesidad de exportarlo;
++    // en API 33+ se registra ademas con RECEIVER_NOT_EXPORTED (requerido
++    // por la plataforma a partir de esa version).
++    private static final String ACTION_LOCATION_UPDATE = (
++            BackgroundGeolocationService.class.getPackage().getName() + ".location_update_ruta112"
++    );
++    private static final int REQUEST_CODE_UBICACION = 4112;
++
++    private PendingIntent locationPendingIntent;
++    private BroadcastReceiver locationReceiver;
++    // Id del watcher activo -- reemplaza al closure que antes capturaba
++    // `id` dentro del LocationCallback anonimo (con PendingIntent no existe
++    // ese closure: el receiver es unico y compartido). Coherente con la
++    // regla ya existente de maximo 1 watcher real a la vez.
++    private String watcherIdActivo;
++
++    private PendingIntent obtenerPendingIntentUbicacion() {
++        if (locationPendingIntent == null) {
++            Intent intent = new Intent(ACTION_LOCATION_UPDATE);
++            intent.setPackage(getPackageName());
++            int flags = PendingIntent.FLAG_UPDATE_CURRENT
++                    | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? PendingIntent.FLAG_MUTABLE : 0);
++            locationPendingIntent = PendingIntent.getBroadcast(this, REQUEST_CODE_UBICACION, intent, flags);
++        }
++        return locationPendingIntent;
++    }
++
++    // Idempotente: si ya esta registrado, no vuelve a registrarse. Extrae
++    // LocationResult/LocationAvailability del Intent que Play Services
++    // entrega, registra en DiagnosticoNativo (mismos metodos que ya usaba
++    // el LocationCallback de ruta 111, sin cambiar su forma) y reemite el
++    // MISMO ACTION_BROADCAST con los mismos extras que ya consume
++    // BackgroundGeolocation.java -- el flujo hacia JS no se entera de este
++    // cambio.
++    private void asegurarReceiverUbicacion() {
++        if (locationReceiver != null) return;
++        locationReceiver = new BroadcastReceiver() {
++            @Override
++            public void onReceive(Context context, Intent intent) {
++                if (LocationResult.hasResult(intent)) {
++                    DiagnosticoNativo.registrarCallback(System.currentTimeMillis());
++                    Location location = LocationResult.extractResult(intent).getLastLocation();
++                    Intent broadcastIntent = new Intent(ACTION_BROADCAST);
++                    broadcastIntent.putExtra("location", location);
++                    broadcastIntent.putExtra("id", watcherIdActivo);
++                    LocalBroadcastManager.getInstance(getApplicationContext()).sendBroadcast(broadcastIntent);
++                }
++                if (LocationAvailability.hasLocationAvailability(intent)) {
++                    boolean disponible = LocationAvailability.extractLocationAvailability(intent).isLocationAvailable();
++                    DiagnosticoNativo.registrarDisponibilidad(disponible, System.currentTimeMillis());
++                }
++            }
++        };
++        Handler handler = new Handler(obtenerLooperUbicacion());
++        IntentFilter filter = new IntentFilter(ACTION_LOCATION_UPDATE);
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
++            registerReceiver(locationReceiver, filter, null, handler, Context.RECEIVER_NOT_EXPORTED);
++        } else {
++            registerReceiver(locationReceiver, filter, null, handler);
++        }
++    }
++    // Fin del experimento ruta 112.
++    // ---------------------------------------------------------------------
++
      private class Watcher {
          public String id;
          public FusedLocationProviderClient client;
-@@ -57,6 +339,13 @@ public class BackgroundGeolocationService extends Service {
-             watcher.client.removeLocationUpdates(watcher.locationCallback);
+         public LocationRequest locationRequest;
+-        public LocationCallback locationCallback;
+         public Notification backgroundNotification;
+     }
+     private HashSet<Watcher> watchers = new HashSet<Watcher>();
+@@ -54,9 +424,32 @@ public class BackgroundGeolocationService extends Service {
+     @Override
+     public boolean onUnbind(Intent intent) {
+         for (Watcher watcher : watchers) {
+-            watcher.client.removeLocationUpdates(watcher.locationCallback);
++            watcher.client.removeLocationUpdates(obtenerPendingIntentUbicacion());
          }
          watchers = new HashSet<Watcher>();
++        // Experimento ruta 112 -- limpieza del PendingIntent/receiver, red
++        // de seguridad adicional a la que ya hace removeWatcher() por cada
++        // watcher (ver ahi). Se usa un cliente nuevo -- FusedLocationProviderClient
++        // es un handle liviano, no ligado a una suscripcion en particular
++        // (documentado por Play Services), no hace falta el watcher.client
++        // original para cancelar. Debe ir ANTES de cerrar el HandlerThread
++        // de ruta 111, del que este receiver depende.
++        if (locationPendingIntent != null) {
++            LocationServices.getFusedLocationProviderClient(this).removeLocationUpdates(locationPendingIntent);
++            locationPendingIntent = null;
++        }
++        if (locationReceiver != null) {
++            unregisterReceiver(locationReceiver);
++            locationReceiver = null;
++        }
++        watcherIdActivo = null;
 +        // Experimento ruta 111 -- cierre seguro del HandlerThread dedicado,
 +        // en el mismo punto donde ya se hace la limpieza real y definitiva
 +        // del servicio (ver comentario en obtenerLooperUbicacion() arriba).
@@ -321,54 +444,63 @@ index fafbb86..5380b01 100644
          stopSelf();
          return false;
      }
-@@ -89,6 +378,10 @@ public class BackgroundGeolocationService extends Service {
-             LocationCallback callback = new LocationCallback(){
-                 @Override
-                 public void onLocationResult(LocationResult locationResult) {
-+                    // Instrumentacion diagnostica (patch-package, ver
-+                    // DiagnosticoNativo arriba) -- solo observa, no altera
-+                    // nada de lo que sigue.
-+                    DiagnosticoNativo.registrarCallback(System.currentTimeMillis());
-                     Location location = locationResult.getLastLocation();
-                     Intent intent = new Intent(ACTION_BROADCAST);
-                     intent.putExtra("location", location);
-@@ -99,6 +392,12 @@ public class BackgroundGeolocationService extends Service {
-                 }
-                 @Override
-                 public void onLocationAvailability(LocationAvailability availability) {
-+                    // Instrumentacion diagnostica -- puramente observacional,
-+                    // ver DiagnosticoNativo arriba. NO reemplaza ni afecta el
-+                    // Logger.debug original de abajo, y no toca en absoluto
-+                    // la señal separada de LocationManager.MODE_CHANGED_ACTION
-+                    // (systemLocationEnabled, DisponibilidadUbicacionPlugin.java).
-+                    DiagnosticoNativo.registrarDisponibilidad(availability.isLocationAvailable(), System.currentTimeMillis());
-                     if (!availability.isLocationAvailable()) {
-                         Logger.debug("Location not available");
-                     }
-@@ -112,15 +411,21 @@ public class BackgroundGeolocationService extends Service {
-             watcher.locationCallback = callback;
+@@ -86,41 +479,33 @@ public class BackgroundGeolocationService extends Service {
+             locationRequest.setPriority(LocationRequest.PRIORITY_HIGH_ACCURACY);
+             locationRequest.setSmallestDisplacement(distanceFilter);
+ 
+-            LocationCallback callback = new LocationCallback(){
+-                @Override
+-                public void onLocationResult(LocationResult locationResult) {
+-                    Location location = locationResult.getLastLocation();
+-                    Intent intent = new Intent(ACTION_BROADCAST);
+-                    intent.putExtra("location", location);
+-                    intent.putExtra("id", id);
+-                    LocalBroadcastManager.getInstance(
+-                            getApplicationContext()
+-                    ).sendBroadcast(intent);
+-                }
+-                @Override
+-                public void onLocationAvailability(LocationAvailability availability) {
+-                    if (!availability.isLocationAvailable()) {
+-                        Logger.debug("Location not available");
+-                    }
+-                }
+-            };
+-
+             Watcher watcher = new Watcher();
+             watcher.id = id;
+             watcher.client = client;
+             watcher.locationRequest = locationRequest;
+-            watcher.locationCallback = callback;
              watcher.backgroundNotification = backgroundNotification;
              watchers.add(watcher);
 +            // Instrumentacion diagnostica -- observa el tamaño resultante,
 +            // no decide nada.
 +            DiagnosticoNativo.registrarCambioWatchers(watchers.size());
++
++            // Experimento ruta 112 -- id del watcher activo para el
++            // receiver compartido (ver comentario junto a watcherIdActivo).
++            // Se actualiza ANTES de asegurar/usar el receiver.
++            watcherIdActivo = id;
++            asegurarReceiverUbicacion();
  
              // According to Android Studio, this method can throw a Security Exception if
              // permissions are not yet granted. Rather than check the permissions, which is fiddly,
              // we simply ignore the exception.
 +            // Instrumentacion diagnostica -- registra el hilo ANTES de la
-+            // llamada real, sin tocar el Looper (sigue null, sin cambios).
++            // llamada real (sigue siendo "CapacitorPlugins", quien invoca
++            // este metodo -- no cambia con el experimento ruta 112).
 +            DiagnosticoNativo.registrarThreadRequestUpdates(Thread.currentThread().getName());
              try {
                  watcher.client.requestLocationUpdates(
                          watcher.locationRequest,
-                         watcher.locationCallback,
+-                        watcher.locationCallback,
 -                        null
-+                        obtenerLooperUbicacion()
++                        obtenerPendingIntentUbicacion()
                  );
              } catch (SecurityException ignore) {}
  
-@@ -131,13 +436,18 @@ public class BackgroundGeolocationService extends Service {
+@@ -131,13 +516,18 @@ public class BackgroundGeolocationService extends Service {
              // it appears that 'startForeground' is idempotent, so we just call it repeatedly
              // each time a background watcher is added.
              if (backgroundNotification != null) {
@@ -387,9 +519,12 @@ index fafbb86..5380b01 100644
                  }
              }
          }
-@@ -147,6 +457,9 @@ public class BackgroundGeolocationService extends Service {
+@@ -145,8 +535,11 @@ public class BackgroundGeolocationService extends Service {
+         void removeWatcher(String id) {
+             for (Watcher watcher : watchers) {
                  if (watcher.id.equals(id)) {
-                     watcher.client.removeLocationUpdates(watcher.locationCallback);
+-                    watcher.client.removeLocationUpdates(watcher.locationCallback);
++                    watcher.client.removeLocationUpdates(obtenerPendingIntentUbicacion());
                      watchers.remove(watcher);
 +                    // Instrumentacion diagnostica -- observa el tamaño
 +                    // resultante tras la baja real, no decide nada.
@@ -397,19 +532,21 @@ index fafbb86..5380b01 100644
                      if (getNotification() == null) {
                          stopForeground(true);
                      }
-@@ -160,10 +473,14 @@ public class BackgroundGeolocationService extends Service {
+@@ -159,11 +552,14 @@ public class BackgroundGeolocationService extends Service {
+             // If permissions were granted while the app was in the background, for example in
              // the Settings app, the watchers need restarting.
              for (Watcher watcher : watchers) {
-                 watcher.client.removeLocationUpdates(watcher.locationCallback);
+-                watcher.client.removeLocationUpdates(watcher.locationCallback);
++                watcher.client.removeLocationUpdates(obtenerPendingIntentUbicacion());
 +                // Instrumentacion diagnostica -- mismo criterio que en
 +                // addWatcher, este es el otro unico lugar del archivo
 +                // original que llama requestLocationUpdates().
 +                DiagnosticoNativo.registrarThreadRequestUpdates(Thread.currentThread().getName());
                  watcher.client.requestLocationUpdates(
                          watcher.locationRequest,
-                         watcher.locationCallback,
+-                        watcher.locationCallback,
 -                        null
-+                        obtenerLooperUbicacion()
++                        obtenerPendingIntentUbicacion()
                  );
              }
          }
