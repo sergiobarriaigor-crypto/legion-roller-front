@@ -1,5 +1,47 @@
+diff --git a/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocation.java b/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocation.java
+index a92fcf9..5d756d0 100644
+--- a/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocation.java
++++ b/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocation.java
+@@ -248,16 +248,27 @@ public class BackgroundGeolocation extends Plugin {
+     private class ServiceReceiver extends BroadcastReceiver {
+         @Override
+         public void onReceive(Context context, Intent intent) {
+-            String id = intent.getStringExtra("id");
+-            PluginCall call = getBridge().getSavedCall(id);
+-            if (call == null) {
+-                return;
+-            }
+-            Location location = intent.getParcelableExtra("location");
+-            if (location != null) {
+-                call.resolve(formatLocation(location));
+-            } else {
+-                Logger.debug("No locations received");
++            // Fase 1 -- proteccion (Legion Roller, patch-package): si el
++            // Bridge/WebView ya no esta disponible (Activity destruida
++            // mientras el Service sigue vivo), cualquier paso de aca puede
++            // fallar. El fix ya quedo persistido nativamente ANTES de este
++            // punto (ver BackgroundGeolocationService.java, Fase 1) -- una
++            // falla aca nunca debe crashear el proceso, detener el Service
++            // ni perder el dato ya guardado.
++            try {
++                String id = intent.getStringExtra("id");
++                PluginCall call = getBridge().getSavedCall(id);
++                if (call == null) {
++                    return;
++                }
++                Location location = intent.getParcelableExtra("location");
++                if (location != null) {
++                    call.resolve(formatLocation(location));
++                } else {
++                    Logger.debug("No locations received");
++                }
++            } catch (Exception e) {
++                Logger.error("No se pudo entregar el fix a JS (Bridge/WebView no disponible)", e);
+             }
+         }
+     }
 diff --git a/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocationService.java b/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocationService.java
-index fafbb86..25cae37 100644
+index fafbb86..add7a9f 100644
 --- a/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocationService.java
 +++ b/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocationService.java
 @@ -1,23 +1,35 @@
@@ -39,7 +81,7 @@ index fafbb86..25cae37 100644
  
  import androidx.localbroadcastmanager.content.LocalBroadcastManager;
  
-@@ -33,11 +45,369 @@ public class BackgroundGeolocationService extends Service {
+@@ -33,11 +45,405 @@ public class BackgroundGeolocationService extends Service {
      // Must be unique for this application.
      private static final int NOTIFICATION_ID = 28351;
  
@@ -380,6 +422,21 @@ index fafbb86..25cae37 100644
 +                if (LocationResult.hasResult(intent)) {
 +                    DiagnosticoNativo.registrarCallback(System.currentTimeMillis());
 +                    Location location = LocationResult.extractResult(intent).getLastLocation();
++                    // Fase 1 -- persistencia nativa PARALELA, ANTES de
++                    // intentar la entrega al Bridge/JS de abajo -- garantiza
++                    // que el fix quede a salvo incluso si esa entrega falla
++                    // (ver proteccion en BackgroundGeolocation.java).
++                    // timestamp = location.getTime() (real del proveedor),
++                    // nunca System.currentTimeMillis().
++                    if (sesionNativaActiva != null) {
++                        Float accuracyFix = location.hasAccuracy() ? location.getAccuracy() : null;
++                        Float speedFix = location.hasSpeed() ? location.getSpeed() : null;
++                        Double altitudeFix = location.hasAltitude() ? location.getAltitude() : null;
++                        SesionGrabacionNativa.obtener(getApplicationContext()).registrarFix(
++                                sesionNativaActiva, location.getLatitude(), location.getLongitude(),
++                                location.getTime(), accuracyFix, speedFix, altitudeFix
++                        );
++                    }
 +                    Intent broadcastIntent = new Intent(ACTION_BROADCAST);
 +                    broadcastIntent.putExtra("location", location);
 +                    broadcastIntent.putExtra("id", watcherIdActivo);
@@ -402,6 +459,27 @@ index fafbb86..25cae37 100644
 +    // Fin del experimento ruta 112.
 +    // ---------------------------------------------------------------------
 +
++    // ---------------------------------------------------------------------
++    // FASE 1 -- PERSISTENCIA NATIVA PARALELA (Legion Roller, patch-package).
++    // Ver SesionGrabacionNativa.java (mismo paquete, este mismo patch --
++    // vive aca y no en com.legionroller.app porque este archivo se compila
++    // en el modulo Gradle del plugin, que no puede depender del modulo
++    // :app). Puramente aditiva: registra cada fix ANTES de
++    // intentar la entrega al Bridge/JS (ver receiver de ruta 112 mas
++    // abajo), para que un fallo en esa entrega (Activity/WebView
++    // destruidos) nunca pueda perder el dato. No cambia en absoluto el
++    // comportamiento oficial de la grabacion (V1/V2 siguen recibiendo
++    // exactamente lo mismo que hoy, por el mismo camino de siempre) -- esto
++    // es un registro EN PARALELO, todavia sin consumidor.
++    //
++    // sesionNativaActiva: id de la sesion nativa actual (UUID generado por
++    // SesionGrabacionNativa.iniciarSesion(), nunca recibido de JS). Se fija
++    // en addWatcher(), sin deduplicar todavia (esa proteccion -- watcher
++    // unico a nivel nativo -- es trabajo de una fase posterior).
++    private String sesionNativaActiva;
++    // Fin de Fase 1 (declaracion).
++    // ---------------------------------------------------------------------
++
      private class Watcher {
          public String id;
          public FusedLocationProviderClient client;
@@ -410,7 +488,7 @@ index fafbb86..25cae37 100644
          public Notification backgroundNotification;
      }
      private HashSet<Watcher> watchers = new HashSet<Watcher>();
-@@ -54,9 +424,32 @@ public class BackgroundGeolocationService extends Service {
+@@ -54,9 +460,32 @@ public class BackgroundGeolocationService extends Service {
      @Override
      public boolean onUnbind(Intent intent) {
          for (Watcher watcher : watchers) {
@@ -444,7 +522,7 @@ index fafbb86..25cae37 100644
          stopSelf();
          return false;
      }
-@@ -86,41 +479,33 @@ public class BackgroundGeolocationService extends Service {
+@@ -86,41 +515,40 @@ public class BackgroundGeolocationService extends Service {
              locationRequest.setPriority(LocationRequest.PRIORITY_HIGH_ACCURACY);
              locationRequest.setSmallestDisplacement(distanceFilter);
  
@@ -483,6 +561,13 @@ index fafbb86..25cae37 100644
 +            // Se actualiza ANTES de asegurar/usar el receiver.
 +            watcherIdActivo = id;
 +            asegurarReceiverUbicacion();
++
++            // Fase 1 -- nueva sesion nativa PARALELA para esta grabacion
++            // (ver SesionGrabacionNativa). Sin deduplicar todavia -- cada
++            // addWatcher() crea una sesion nueva (la proteccion de watcher
++            // unico a nivel nativo es trabajo de una fase posterior).
++            sesionNativaActiva = SesionGrabacionNativa.obtener(getApplicationContext())
++                    .iniciarSesion(id, System.currentTimeMillis());
  
              // According to Android Studio, this method can throw a Security Exception if
              // permissions are not yet granted. Rather than check the permissions, which is fiddly,
@@ -500,7 +585,7 @@ index fafbb86..25cae37 100644
                  );
              } catch (SecurityException ignore) {}
  
-@@ -131,13 +516,18 @@ public class BackgroundGeolocationService extends Service {
+@@ -131,13 +559,18 @@ public class BackgroundGeolocationService extends Service {
              // it appears that 'startForeground' is idempotent, so we just call it repeatedly
              // each time a background watcher is added.
              if (backgroundNotification != null) {
@@ -519,7 +604,7 @@ index fafbb86..25cae37 100644
                  }
              }
          }
-@@ -145,8 +535,11 @@ public class BackgroundGeolocationService extends Service {
+@@ -145,8 +578,11 @@ public class BackgroundGeolocationService extends Service {
          void removeWatcher(String id) {
              for (Watcher watcher : watchers) {
                  if (watcher.id.equals(id)) {
@@ -532,7 +617,7 @@ index fafbb86..25cae37 100644
                      if (getNotification() == null) {
                          stopForeground(true);
                      }
-@@ -159,11 +552,14 @@ public class BackgroundGeolocationService extends Service {
+@@ -159,11 +595,14 @@ public class BackgroundGeolocationService extends Service {
              // If permissions were granted while the app was in the background, for example in
              // the Settings app, the watchers need restarting.
              for (Watcher watcher : watchers) {
@@ -550,3 +635,212 @@ index fafbb86..25cae37 100644
                  );
              }
          }
+diff --git a/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/SesionGrabacionNativa.java b/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/SesionGrabacionNativa.java
+new file mode 100644
+index 0000000..3f04a1c
+--- /dev/null
++++ b/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/SesionGrabacionNativa.java
+@@ -0,0 +1,203 @@
++package com.equimaps.capacitor_background_geolocation;
++
++import android.content.ContentValues;
++import android.content.Context;
++import android.database.Cursor;
++import android.database.sqlite.SQLiteDatabase;
++import android.database.sqlite.SQLiteOpenHelper;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.UUID;
++
++// FASE 1 (Legion Roller, patch-package) -- persistencia nativa PARALELA de
++// los fixes GPS durante una grabacion, en SQLite directo (SQLiteOpenHelper,
++// sin ORM). Ver diseño de arquitectura combinada (Started Foreground
++// Service + persistencia + reconciliacion): esta fase es puramente
++// ADITIVA -- registra en paralelo, pensada para sobrevivir a la
++// destruccion de MainActivity/WebView y a la muerte del proceso Android,
++// pero NO influye en absoluto en la grabacion oficial (V1/V2), NO borra
++// nada, y todavia nadie la consume (eso es trabajo de una fase de
++// reconciliacion posterior, no autorizada aun).
++//
++// Distingue conceptualmente tres estados, ninguno confundido con otro:
++//   - fix persistido nativamente: cada fila de fix_gps YA lo es, por
++//     definicion, en el momento del INSERT (este archivo).
++//   - fix entregado/procesado por JS: columna `procesado` en fix_gps --
++//     en esta fase SIEMPRE queda en 0, nadie la actualiza todavia.
++//   - sesion/ruta confirmada en backend: columna `finalizada` en
++//     sesion_grabacion -- en esta fase SIEMPRE queda en 0, nadie la marca
++//     todavia.
++// Ninguna de las dos ultimas columnas se usa activamente en esta fase --
++// existen desde ya para no necesitar una migracion de schema cuando se
++// autorice la fase de reconciliacion/finalizacion.
++//
++// Vive DENTRO del paquete del plugin (no en com.legionroller.app) porque
++// este archivo se compila en el modulo Gradle del plugin vendorizado
++// (:capacitor-community-background-geolocation), un modulo Android library
++// separado del modulo :app -- un modulo library NUNCA puede depender del
++// modulo app que lo consume (dependencia inversa, no soportada por
++// Gradle). Mismo motivo por el que DiagnosticoNativo vive anidada dentro
++// de BackgroundGeolocationService.java en vez de en com.legionroller.app.
++// Publica para que las pruebas (modulo :app, que SI depende de este
++// modulo) puedan instanciarla y ejercitarla directamente.
++public final class SesionGrabacionNativa extends SQLiteOpenHelper {
++    private static final String NOMBRE_BD = "sesion_grabacion_gps.db";
++    private static final int VERSION_BD = 1;
++
++    private static SesionGrabacionNativa instancia;
++
++    // Punto de acceso de produccion -- singleton, para no abrir mas de una
++    // conexion al mismo archivo desde distintos lugares del Service.
++    public static synchronized SesionGrabacionNativa obtener(Context contexto) {
++        if (instancia == null) {
++            instancia = new SesionGrabacionNativa(contexto.getApplicationContext());
++        }
++        return instancia;
++    }
++
++    // Publico a proposito: permite que las pruebas (modulo :app) creen
++    // instancias propias apuntando al mismo archivo, para verificar que
++    // los datos sobreviven a la recreacion del objeto Java (ver prueba F)
++    // -- la produccion siempre debe usar obtener().
++    public SesionGrabacionNativa(Context contexto) {
++        super(contexto, NOMBRE_BD, null, VERSION_BD);
++    }
++
++    @Override
++    public void onCreate(SQLiteDatabase db) {
++        db.execSQL(
++            "CREATE TABLE sesion_grabacion (" +
++            "sesion_id TEXT PRIMARY KEY," +
++            "watcher_id TEXT," +
++            "inicio INTEGER NOT NULL," +
++            "ultimo_fix_timestamp INTEGER," +
++            "finalizada INTEGER NOT NULL DEFAULT 0)"
++        );
++        db.execSQL(
++            "CREATE TABLE fix_gps (" +
++            "id INTEGER PRIMARY KEY AUTOINCREMENT," +
++            "sesion_id TEXT NOT NULL," +
++            "lat REAL NOT NULL," +
++            "lon REAL NOT NULL," +
++            "timestamp INTEGER NOT NULL," +
++            "accuracy REAL," +
++            "speed REAL," +
++            "altitude REAL," +
++            "procesado INTEGER NOT NULL DEFAULT 0)"
++        );
++        db.execSQL("CREATE INDEX idx_fix_gps_sesion ON fix_gps(sesion_id, procesado)");
++    }
++
++    @Override
++    public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
++        // Fase 1 -- primera version del schema, sin migraciones todavia.
++    }
++
++    // Crea una fila de sesion nueva -- SIEMPRE crea una nueva en esta fase,
++    // sin deduplicar ni reutilizar (esa proteccion -- watcher unico a nivel
++    // nativo -- es trabajo de una fase posterior, no autorizada aun).
++    // Devuelve el id generado (UUID nativo, nunca recibido desde JS -- ver
++    // diseno: la fuente de verdad de "hay una sesion nativa activa" no
++    // puede depender de una variable JS).
++    public String iniciarSesion(String watcherId, long horaInicioMs) {
++        String sesionId = UUID.randomUUID().toString();
++        ContentValues valores = new ContentValues();
++        valores.put("sesion_id", sesionId);
++        valores.put("watcher_id", watcherId);
++        valores.put("inicio", horaInicioMs);
++        getWritableDatabase().insert("sesion_grabacion", null, valores);
++        return sesionId;
++    }
++
++    // Persiste un fix -- debe llamarse ANTES de intentar la entrega al
++    // Bridge/JS (ver onReceive() en BackgroundGeolocationService.java),
++    // para que un fallo en esa entrega nunca pueda perder el punto.
++    // `timestamp` es SIEMPRE el timestamp real del proveedor
++    // (location.getTime()), nunca System.currentTimeMillis() -- misma
++    // regla que ya rige para PuntoConfiableV2 del lado JS.
++    // accuracy/speed/altitude nulos cuando el Location no los trae (ver
++    // location.hasAccuracy()/hasSpeed()/hasAltitude()).
++    public void registrarFix(
++        String sesionId, double lat, double lon, long timestamp,
++        Float accuracy, Float speed, Double altitude
++    ) {
++        ContentValues valores = new ContentValues();
++        valores.put("sesion_id", sesionId);
++        valores.put("lat", lat);
++        valores.put("lon", lon);
++        valores.put("timestamp", timestamp);
++        if (accuracy != null) {
++            valores.put("accuracy", accuracy);
++        } else {
++            valores.putNull("accuracy");
++        }
++        if (speed != null) {
++            valores.put("speed", speed);
++        } else {
++            valores.putNull("speed");
++        }
++        if (altitude != null) {
++            valores.put("altitude", altitude);
++        } else {
++            valores.putNull("altitude");
++        }
++        getWritableDatabase().insert("fix_gps", null, valores);
++
++        ContentValues actualizacionSesion = new ContentValues();
++        actualizacionSesion.put("ultimo_fix_timestamp", timestamp);
++        getWritableDatabase().update(
++            "sesion_grabacion", actualizacionSesion, "sesion_id = ?", new String[]{sesionId}
++        );
++    }
++
++    // Solo lectura, para pruebas/diagnostico -- todavia no se usa desde el
++    // flujo real (eso es trabajo de la fase de reconciliacion).
++    public int contarFixes(String sesionId) {
++        Cursor c = getReadableDatabase().rawQuery(
++            "SELECT COUNT(*) FROM fix_gps WHERE sesion_id = ?", new String[]{sesionId}
++        );
++        try {
++            c.moveToFirst();
++            return c.getInt(0);
++        } finally {
++            c.close();
++        }
++    }
++
++    // Solo lectura, para pruebas/diagnostico -- ordenado por timestamp real
++    // (nunca por id de fila, que solo refleja orden de llegada, no orden
++    // cronologico del propio fix).
++    public List<FixPersistido> obtenerFixes(String sesionId) {
++        List<FixPersistido> resultado = new ArrayList<>();
++        Cursor c = getReadableDatabase().rawQuery(
++            "SELECT lat, lon, timestamp, accuracy, speed, altitude " +
++            "FROM fix_gps WHERE sesion_id = ? ORDER BY timestamp",
++            new String[]{sesionId}
++        );
++        try {
++            while (c.moveToNext()) {
++                FixPersistido f = new FixPersistido();
++                f.lat = c.getDouble(0);
++                f.lon = c.getDouble(1);
++                f.timestamp = c.getLong(2);
++                f.accuracy = c.isNull(3) ? null : c.getFloat(3);
++                f.speed = c.isNull(4) ? null : c.getFloat(4);
++                f.altitude = c.isNull(5) ? null : c.getDouble(5);
++                resultado.add(f);
++            }
++        } finally {
++            c.close();
++        }
++        return resultado;
++    }
++
++    public static final class FixPersistido {
++        public double lat;
++        public double lon;
++        public long timestamp;
++        public Float accuracy;
++        public Float speed;
++        public Double altitude;
++    }
++}
