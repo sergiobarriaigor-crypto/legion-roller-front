@@ -1,8 +1,34 @@
 diff --git a/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocation.java b/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocation.java
-index a92fcf9..5d756d0 100644
+index a92fcf9..3d48881 100644
 --- a/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocation.java
 +++ b/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocation.java
-@@ -248,16 +248,27 @@ public class BackgroundGeolocation extends Plugin {
+@@ -78,14 +78,25 @@ public class BackgroundGeolocation extends Plugin {
+         }
+         call.setKeepAlive(true);
+ 
++        // Fase 1.1 (auditoria sesion huerfana 061adcec) -- las dos ramas de
++        // abajo son condiciones que IMPIDEN crear el watcher (a diferencia
++        // de requestPermissionForAlias, que sigue su propio flujo asincrono
++        // vigente sin tocar). Antes de este fix, faltaba el `return` -- la
++        // ejecucion seguia de largo hasta service.addWatcher() mas abajo
++        // AUNQUE la PluginCall ya hubiera sido rechazada, creando un watcher
++        // nativo (y, desde Fase 1, una fila SesionGrabacionNativa) huerfano
++        // que JS nunca puede remover (idObservador nunca se asigna del lado
++        // de geolocacionNativa.ts porque la promesa se rechazo).
+         if (getPermissionState("location") != PermissionState.GRANTED) {
+             if (call.getBoolean("requestPermissions", true)) {
+                 requestPermissionForAlias("location", call, "locationPermissionsCallback");
+             } else {
+                 call.reject("Permission denied.", "NOT_AUTHORIZED");
++                return;
+             }
+         } else if (!isLocationEnabled(getContext())) {
+             call.reject("Location services disabled.", "NOT_AUTHORIZED");
++            return;
+         }
+         if (call.getBoolean("stale", false)) {
+             fetchLastLocation(call);
+@@ -248,16 +259,27 @@ public class BackgroundGeolocation extends Plugin {
      private class ServiceReceiver extends BroadcastReceiver {
          @Override
          public void onReceive(Context context, Intent intent) {

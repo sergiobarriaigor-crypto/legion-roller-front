@@ -68,6 +68,12 @@ dependencies {
     // compileSdk 36 (Baklava).
     testImplementation "org.robolectric:robolectric:4.16"
     testImplementation "androidx.test:core:1.6.1"
+    // Fase 1.1 (fix del control de flujo en BackgroundGeolocation.addWatcher)
+    // -- test-only, nunca se empaqueta en el APK. Necesaria para mockear
+    // PluginCall/MessageHandler/LocalBinder y verificar por comportamiento
+    // (no por inspeccion de codigo) que service.addWatcher() nunca se llama
+    // en las ramas de permiso rechazado / Location Services deshabilitado.
+    testImplementation "org.mockito:mockito-core:5.14.2"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')
