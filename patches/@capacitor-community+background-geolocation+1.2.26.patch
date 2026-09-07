@@ -1,5 +1,5 @@
 diff --git a/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocation.java b/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocation.java
-index a92fcf9..3d48881 100644
+index a92fcf9..c02c553 100644
 --- a/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocation.java
 +++ b/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocation.java
 @@ -78,14 +78,25 @@ public class BackgroundGeolocation extends Plugin {
@@ -28,7 +28,33 @@ index a92fcf9..3d48881 100644
          }
          if (call.getBoolean("stale", false)) {
              fetchLastLocation(call);
-@@ -248,16 +259,27 @@ public class BackgroundGeolocation extends Plugin {
+@@ -156,6 +167,25 @@ public class BackgroundGeolocation extends Plugin {
+ 
+             backgroundNotification = builder.build();
+         }
++        // FASE 2 (Legion Roller, patch-package) -- Started + Bound Foreground
++        // Service. Hasta aca, el Service solo dependia del bind creado en
++        // load() (atado al ciclo de vida de la Activity/Bridge): al
++        // destruirse la Activity, el ultimo unbind lo mataba junto con la
++        // grabacion en curso. Iniciarlo explicitamente lo desacopla de esa
++        // atadura -- ver el guard nuevo en
++        // BackgroundGeolocationService.onUnbind(), que ya no limpia nada
++        // mientras haya un watcher activo. NO crea una segunda instancia:
++        // startForegroundService()/startService() sobre un Service ya en
++        // ejecucion solo entrega el Intent a onStartCommand()
++        // (START_NOT_STICKY, no crea watcher ni toca SQLite/V1/V2 -- ver
++        // ese metodo). El bind existente se mantiene intacto, es el que el
++        // plugin sigue usando para obtener `service` (LocalBinder).
++        Intent startIntent = new Intent(getContext(), BackgroundGeolocationService.class);
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
++            getContext().startForegroundService(startIntent);
++        } else {
++            getContext().startService(startIntent);
++        }
+         service.addWatcher(
+                 call.getCallbackId(),
+                 backgroundNotification,
+@@ -248,16 +278,27 @@ public class BackgroundGeolocation extends Plugin {
      private class ServiceReceiver extends BroadcastReceiver {
          @Override
          public void onReceive(Context context, Intent intent) {
@@ -66,8 +92,27 @@ index a92fcf9..3d48881 100644
              }
          }
      }
+@@ -337,9 +378,17 @@ public class BackgroundGeolocation extends Plugin {
+         super.handleOnPause();
+     }
+ 
++    // FASE 2 -- si hay una grabacion nativa activa (al menos un watcher), NO
++    // se llama stopService() aca: la Activity/Bridge se esta destruyendo
++    // (rotacion, pantalla bloqueada, proceso movido a background), pero eso
++    // ya no debe terminar una grabacion en curso (ver arquitectura Started +
++    // Bound en BackgroundGeolocationService.onUnbind()/onStartCommand()).
++    // El Service sigue vivo porque fue iniciado explicitamente en
++    // addWatcher(). Sin grabacion activa, se preserva el comportamiento
++    // anterior exactamente igual.
+     @Override
+     protected void handleOnDestroy() {
+-        if (service != null) {
++        if (service != null && !service.hayWatchersActivos()) {
+             service.stopService();
+         }
+         super.handleOnDestroy();
 diff --git a/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocationService.java b/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocationService.java
-index fafbb86..add7a9f 100644
+index fafbb86..45062ab 100644
 --- a/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocationService.java
 +++ b/node_modules/@capacitor-community/background-geolocation/android/src/main/java/com/equimaps/capacitor_background_geolocation/BackgroundGeolocationService.java
 @@ -1,23 +1,35 @@
@@ -514,9 +559,51 @@ index fafbb86..add7a9f 100644
          public Notification backgroundNotification;
      }
      private HashSet<Watcher> watchers = new HashSet<Watcher>();
-@@ -54,9 +460,32 @@ public class BackgroundGeolocationService extends Service {
+@@ -47,16 +453,74 @@ public class BackgroundGeolocationService extends Service {
+         return binder;
+     }
+ 
++    // FASE 2 (Legion Roller, patch-package) -- Started + Bound Foreground
++    // Service. onStartCommand() es lo que permite que el Service exista
++    // "started" (independiente del binding) -- ver
++    // BackgroundGeolocation.addWatcher(), que llama a
++    // startForegroundService()/startService() explicitamente antes de
++    // delegar en el bind existente. START_NOT_STICKY a proposito: si
++    // Android mata el proceso completo, NO se quiere que el sistema
++    // recree este Service solo, sin watcher, sin contexto JS y sin
++    // reconciliacion (todavia no implementada, ver fases posteriores).
++    // Este metodo en si NO crea ningun watcher, NO llama
++    // requestLocationUpdates, NO crea sesion SQLite ni toca V1/V2 -- el
++    // unico camino para eso sigue siendo addWatcher() (ver LocalBinder
++    // mas abajo), nunca invocado desde aca.
++    @Override
++    public int onStartCommand(Intent intent, int flags, int startId) {
++        return START_NOT_STICKY;
++    }
++
+     // Some devices allow a foreground service to outlive the application's main
+     // activity, leading to nasty crashes as reported in issue #59. If we learn
+     // that the application has been killed, all watchers are stopped and the
+     // service is terminated immediately.
++    //
++    // FASE 2 -- antes, este metodo desmontaba TODO incondicionalmente en
++    // cuanto el ultimo cliente (la Activity/Bridge) se desbindeaba --
++    // exactamente lo que Fase 2 busca evitar: la Activity puede
++    // destruirse (rotacion, pantalla bloqueada, proceso movido a
++    // background) sin que eso deba terminar una grabacion en curso.
++    // Mientras exista al menos un watcher activo, no se toca nada -- ni
++    // LocationUpdates, ni el PendingIntent/receiver, ni el HandlerThread,
++    // ni la sesion SQLite (Fase 1, sin cambios), ni stopSelf(). El
++    // Service ya fue iniciado explicitamente (ver onStartCommand() y
++    // BackgroundGeolocation.addWatcher()), asi que sobrevive sin bindings
++    // mientras siga "started". Sin ningun watcher activo, se preserva
++    // exactamente el comportamiento anterior (limpieza total + stopSelf())
++    // -- cubre el caso normal de "la app se cerro sin estar grabando".
      @Override
      public boolean onUnbind(Intent intent) {
++        if (!watchers.isEmpty()) {
++            return false;
++        }
          for (Watcher watcher : watchers) {
 -            watcher.client.removeLocationUpdates(watcher.locationCallback);
 +            watcher.client.removeLocationUpdates(obtenerPendingIntentUbicacion());
@@ -548,7 +635,7 @@ index fafbb86..add7a9f 100644
          stopSelf();
          return false;
      }
-@@ -86,41 +515,40 @@ public class BackgroundGeolocationService extends Service {
+@@ -86,41 +550,40 @@ public class BackgroundGeolocationService extends Service {
              locationRequest.setPriority(LocationRequest.PRIORITY_HIGH_ACCURACY);
              locationRequest.setSmallestDisplacement(distanceFilter);
  
@@ -611,7 +698,7 @@ index fafbb86..add7a9f 100644
                  );
              } catch (SecurityException ignore) {}
  
-@@ -131,13 +559,18 @@ public class BackgroundGeolocationService extends Service {
+@@ -131,13 +594,18 @@ public class BackgroundGeolocationService extends Service {
              // it appears that 'startForeground' is idempotent, so we just call it repeatedly
              // each time a background watcher is added.
              if (backgroundNotification != null) {
@@ -630,7 +717,7 @@ index fafbb86..add7a9f 100644
                  }
              }
          }
-@@ -145,8 +578,11 @@ public class BackgroundGeolocationService extends Service {
+@@ -145,25 +613,53 @@ public class BackgroundGeolocationService extends Service {
          void removeWatcher(String id) {
              for (Watcher watcher : watchers) {
                  if (watcher.id.equals(id)) {
@@ -643,7 +730,34 @@ index fafbb86..add7a9f 100644
                      if (getNotification() == null) {
                          stopForeground(true);
                      }
-@@ -159,11 +595,14 @@ public class BackgroundGeolocationService extends Service {
++                    // FASE 2 -- simetrico con el startForegroundService()/
++                    // startService() explicito de
++                    // BackgroundGeolocation.addWatcher(): sin ningun
++                    // watcher restante, el Service deja de tener motivo
++                    // para seguir "started". Si todavia esta bound (caso
++                    // normal: la Activity sigue en foreground cuando se
++                    // detiene la grabacion), esto NO lo destruye -- sigue
++                    // vivo por el binding hasta que tambien se desbindee
++                    // (ver onUnbind() arriba). No toca SesionGrabacionNativa
++                    // -- la sesion puede seguir con finalizada=0, eso es
++                    // trabajo de una fase posterior.
++                    if (watchers.isEmpty()) {
++                        stopSelf();
++                    }
+                     return;
+                 }
+             }
+         }
+ 
++        // FASE 2 -- consultado desde BackgroundGeolocation.handleOnDestroy()
++        // para decidir si corresponde stopService() al destruirse la
++        // Activity/Bridge. Solo lectura -- no crea, no borra, no modifica
++        // ningun watcher.
++        boolean hayWatchersActivos() {
++            return !watchers.isEmpty();
++        }
++
+         void onPermissionsGranted() {
              // If permissions were granted while the app was in the background, for example in
              // the Settings app, the watchers need restarting.
              for (Watcher watcher : watchers) {

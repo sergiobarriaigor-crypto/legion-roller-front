@@ -74,6 +74,16 @@ dependencies {
     // (no por inspeccion de codigo) que service.addWatcher() nunca se llama
     // en las ramas de permiso rechazado / Location Services deshabilitado.
     testImplementation "org.mockito:mockito-core:5.14.2"
+    // Fase 2 (Started + Bound Foreground Service) -- test-only, nunca se
+    // empaqueta en el APK. Necesaria solo para que el test compile contra
+    // los tipos de Play Services (FusedLocationProviderClient,
+    // LocationServices) que BackgroundGeolocationService ya usa en
+    // produccion (implementation, no expuesta al classpath de :app) --
+    // el test mockea LocationServices.getFusedLocationProviderClient()
+    // (Mockito.mockStatic) para no depender de Play Services real bajo
+    // Robolectric. Misma version que Gradle ya resuelve transitivamente
+    // para el modulo del plugin (declarado 21.0.1, resuelto a 21.3.0).
+    testImplementation "com.google.android.gms:play-services-location:21.3.0"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')
