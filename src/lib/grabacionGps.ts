@@ -419,7 +419,17 @@ function alRecibirPosicion(pos: PosicionSimple): void {
   alimentarFixCrudoV2(pos);
 
   if (grabacionActiva && pos.accuracy <= PRECISION_MAXIMA_PUNTO_GRABADO_M) {
-    const puntoGrabado: PuntoGps = { lat: pos.lat, lon: pos.lon, timestamp: Date.now() };
+    // FASE 3.1 (auditoría de reconciliación) -- usa el timestamp real del fix
+    // (pos.time, mismo epoch-ms que Date.now(), confirmado por el propio
+    // contrato del plugin: "Time the location was produced, in milliseconds
+    // since the unix epoch") en vez de la hora de recepción en JS. Mismo
+    // criterio que ya usa V2 (ver gpsV2/tipos.ts: "SIEMPRE fix.time real --
+    // nunca Date.now()"). Fallback a Date.now() solo si pos.time viniera
+    // null -- ya contemplado como caso válido en todo el resto del código
+    // (diagnóstico, V2). Sin esto, un fix reconciliado desde SQLite (fuera
+    // de esta fase) quedaría con el timestamp del momento de la
+    // reconciliación en vez de su captura real.
+    const puntoGrabado: PuntoGps = { lat: pos.lat, lon: pos.lon, timestamp: pos.time ?? Date.now() };
     const ultimoGrabado = grabacionActiva.puntos[grabacionActiva.puntos.length - 1];
     if (!ultimoGrabado) {
       if (pos.accuracy <= PRECISION_INICIAL_MAXIMA_M) {
